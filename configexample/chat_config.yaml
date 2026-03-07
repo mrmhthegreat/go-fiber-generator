@@ -1,0 +1,328 @@
+project:
+  module: github.com/username/my_api
+  user_model_name: User  # Name of the user model struct
+  repository_name: UserRepository  # Repository interface name to use
+
+# ============================================================================
+# CHAT CONFIGURATION - Fully Dynamic
+# ============================================================================
+chat:
+  enabled: true
+  
+  # ──────────────────────────────────────────────────────────────────────────
+  # Chat Modes - Enable/Disable Features
+  # ──────────────────────────────────────────────────────────────────────────
+  modes:
+    support: false  # Admin-to-user support chat
+    user_to_user: true  # User-to-user messaging (OPTIONAL!)
+    group: false  # Group chat (future feature)
+  
+  # ──────────────────────────────────────────────────────────────────────────
+  # Models Configuration - Define ANY Fields
+  # ──────────────────────────────────────────────────────────────────────────
+  models:
+    conversation:
+      enabled: true
+      timestamps: true  # Add CreatedAt, UpdatedAt
+      soft_delete: true  # Add DeletedAt
+      
+      fields:
+        - name: id
+          type: uint
+          primary_key: true
+          auto_increment: true
+          json_tag: id
+        
+        - name: user_id
+          type: uint
+          required: true
+          index: true
+          json_tag: user_id
+          description: "Primary user in conversation"
+        
+        - name: receiver_id
+          type: "*uint"  # Pointer = optional
+          index: true
+          json_tag: receiver_id
+          description: "For user-to-user chat (optional)"
+        
+        - name: status
+          type: string
+          gorm_type: varchar(20)
+          default: open
+          json_tag: status
+          validation:
+            enum: [open, closed, archived]
+        
+        - name: conv_type
+          type: string
+          gorm_type: varchar(20)
+          default: chat
+          json_tag: conv_type
+          validation:
+            enum: [chat, support, group]
+        
+        - name: is_read_only
+          type: bool
+          default: false
+          json_tag: is_read_only
+        
+        - name: last_message
+          type: string
+          gorm_type: text
+          json_tag: last_message
+          required: false
+        
+        - name: priority
+          type: string
+          gorm_type: varchar(10)
+          default: normal
+          json_tag: priority
+          validation:
+            enum: [low, normal, high, urgent]
+        
+        # Custom fields - Add ANY fields you need!
+        - name: metadata
+          type: "*string"
+          gorm_type: json
+          json_tag: metadata
+          description: "Custom JSON metadata"
+        
+        - name: tags
+          type: "*string"
+          gorm_type: json
+          json_tag: tags
+          description: "Tags for categorization"
+      
+      # Relations
+      relations:
+        - name: User
+          model: User
+          foreign_key: UserID
+          preload: true
+          has_many: false
+        
+        - name: Receiver
+          model: User
+          foreign_key: ReceiverID
+          preload: true
+          has_many: false
+        
+        - name: Messages
+          model: Message
+          foreign_key: ConversationID
+          preload: false
+          has_many: true
+      
+      # Indexes
+      indexes:
+        - name: idx_user_receiver
+          fields: [user_id, receiver_id]
+          unique: false
+        
+        - name: idx_status_type
+          fields: [status, conv_type]
+          unique: false
+    
+    message:
+      enabled: true
+      timestamps: true
+      soft_delete: true
+      
+      fields:
+        - name: id
+          type: uint
+          primary_key: true
+          auto_increment: true
+        
+        - name: conversation_id
+          type: uint
+          required: true
+          index: true
+        
+        - name: sender_id
+          type: uint
+          required: true
+          index: true
+        
+        - name: sender_type
+          type: string
+          gorm_type: varchar(20)
+          default: user
+          validation:
+            enum: [user, admin, system]
+        
+        - name: content
+          type: string
+          gorm_type: text
+          required: true
+        
+        - name: is_read
+          type: bool
+          default: false
+        
+        - name: search_data
+          type: "*string"
+          gorm_type: json
+          description: "Search/location data for support"
+        
+        # Custom fields
+        - name: attachments
+          type: "*string"
+          gorm_type: json
+          description: "File attachments metadata"
+        
+        - name: reply_to_id
+          type: "*uint"
+          index: true
+          description: "For threaded replies"
+      
+      relations:
+        - name: Conversation
+          model: Conversation
+          foreign_key: ConversationID
+          preload: false
+        
+        - name: Sender
+          model: User
+          foreign_key: SenderID
+          preload: true
+  
+  # ──────────────────────────────────────────────────────────────────────────
+  # Repository Configuration
+  # ──────────────────────────────────────────────────────────────────────────
+  repository:
+    # Search fields for conversations
+    search_fields:
+      conversation: [status, conv_type, last_message]
+      message: [content]
+    
+    # Default sorting
+    default_sort:
+      conversation:
+        field: updated_at
+        order: desc
+      message:
+        field: created_at
+        order: asc
+    
+    # Pagination
+    pagination:
+      default_limit: 20
+      max_limit: 100
+    
+    # Custom methods (optional)
+    custom_methods:
+      - name: FindActiveConversations
+        description: "Find all active conversations"
+      - name: FindUnreadMessages
+        description: "Find unread messages for user"
+  
+  # ──────────────────────────────────────────────────────────────────────────
+  # Controller Configuration
+  # ──────────────────────────────────────────────────────────────────────────
+  controller:
+    enabled: true
+    base_path: /api/v1/chat
+    
+    # Endpoints - Enable/Disable
+    endpoints:
+      list_conversations:
+        enabled: true
+        path: /conversations
+        method: GET
+        middleware: ["auth"]
+      
+      list_messages:
+        enabled: true
+        path: /conversations/:id/messages
+        method: GET
+        middleware: ["auth"]
+      
+      send_message:
+        enabled: true
+        path: /conversations/:id/messages
+        method: POST
+        middleware: ["auth"]
+      
+      mark_as_read:
+        enabled: true
+        path: /conversations/:id/read
+        method: POST
+        middleware: ["auth"]
+    
+    # Validation rules
+    validation:
+      message:
+        content:
+          required: true
+          min_length: 1
+          max_length: 5000
+      
+      conversation:
+        receiver_id:
+          required_if: conv_type=chat
+  
+  # ──────────────────────────────────────────────────────────────────────────
+  # Web Handler Configuration (for server-side rendering)
+  # ──────────────────────────────────────────────────────────────────────────
+  web_handler:
+    enabled: true
+    base_path: /chat
+    template_dir: views/chat
+    permission: chat.view
+    middleware: ["auth"]
+    context:
+      needs_user: true
+      needs_csrf: true
+      needs_perms: true
+      needs_dashbase: true
+      needs_translations: true
+      user_config:
+        use_repo: true
+        repo_name: userRepo
+        method: GetByID
+    send_message:
+      enabled: true
+      path: /send-message
+      method: POST
+      permission: [chat.send]
+      middleware: ["auth"]
+    list_conversations:
+      enabled: true
+      path: /conversations
+      method: GET
+      permission: [chat.view]
+      middleware: ["auth"]
+    list_messages:
+      enabled: true
+      path: /conversations/:id/messages
+      method: GET
+      permission: [chat.view]
+      middleware: ["auth"]
+    mark_as_read:
+      enabled: true
+      path: /conversations/:id/read
+      method: POST
+      permission: [chat.view]
+      middleware: ["auth"]
+    close_conversation:
+      enabled: true
+      path: /conversations/:id/close
+      method: POST
+      permission: [chat.view]
+      middleware: ["auth"]
+    serach_user:
+      enabled: true
+      path: /search-user
+      method: GET
+      permission: [chat.view]
+      middleware: ["auth"]
+      
+  # ──────────────────────────────────────────────────────────────────────────
+  # WebSocket Integration
+  # ──────────────────────────────────────────────────────────────────────────
+  websocket:
+    enabled: false
+    path: /ws/chat
+    admin_path: /ws/admin/chat

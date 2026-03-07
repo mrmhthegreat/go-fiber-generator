@@ -1,0 +1,180 @@
+project:
+  module: github.com/username/my_api
+  user_model_name: User  # Name of your user model
+  repository_name: UserRepository  # Repository interface name to use
+  
+# ============================================================================
+# NOTIFICATIONS CONFIGURATION - Fully Dynamic
+# ============================================================================
+notifications:
+  enabled: true
+  
+  # ──────────────────────────────────────────────────────────────────────────
+  # Model Configuration
+  # ──────────────────────────────────────────────────────────────────────────
+  model:
+    timestamps: true
+    soft_delete: true
+    
+    fields:
+      - name: id
+        type: uint
+        primary_key: true
+        auto_increment: true
+      
+      - name: user_id
+        type: uint
+        required: true
+        index: true
+      
+      - name: title
+        type: string
+        gorm_type: varchar(200)
+        required: true
+      
+      - name: message
+        type: string
+        gorm_type: text
+        required: true
+      
+      - name: type
+        type: string
+        gorm_type: varchar(50)
+        required: true
+        validation:
+          enum: [info, warning, error, success, chat, order, system]
+      
+      - name: priority
+        type: string
+        gorm_type: varchar(10)
+        default: normal
+        validation:
+          enum: [low, normal, high, urgent]
+      
+      - name: reference_id
+        type: "*uint"
+        index: true
+        description: "ID of related entity (order, conversation, etc)"
+      
+      - name: reference_type
+        type: "*string"
+        gorm_type: varchar(50)
+        description: "Type of related entity"
+      
+      - name: is_read
+        type: bool
+        default: false
+      
+      - name: action_url
+        type: "*string"
+        gorm_type: varchar(500)
+        description: "URL to navigate on click"
+      
+      - name: metadata
+        type: "*string"
+        gorm_type: json
+        description: "Additional custom data"
+    
+    relations:
+      - name: User
+        model: User
+        foreign_key: UserID
+        preload: false
+  
+  # ──────────────────────────────────────────────────────────────────────────
+  # Repository Configuration
+  # ──────────────────────────────────────────────────────────────────────────
+  repository:
+    batch_operations: true  # Enable batch create/update
+    
+    custom_methods:
+      - name: MarkAllAsRead
+        description: "Mark all notifications as read for user"
+      - name: DeleteOldNotifications
+        description: "Delete notifications older than X days"
+  
+  # ──────────────────────────────────────────────────────────────────────────
+  # Controller Configuration
+  # ──────────────────────────────────────────────────────────────────────────
+  controller:
+    enabled: true
+    base_path: /api/v1/notifications
+    middleware: ["auth"]
+    endpoints:
+      list:
+        enabled: true
+        method: GET
+        path: /list
+      
+      mark_as_read:
+        enabled: true
+        method: POST
+        path: /:id/read
+        # id is needed in path
+      
+      mark_all_as_read:
+        enabled: false
+        method: POST
+      bulk_mark_read:
+        enabled: true
+        method: POST
+        path: /bulk-read
+      unread_count:
+        enabled: true
+        method: GET
+        path: /unread-count
+      delete:
+        enabled: true
+        method: DELETE
+        path: /:id
+        # id is needed in path
+      delete_all:
+        enabled: true
+        method: DELETE
+        path: /all
+  # ──────────────────────────────────────────────────────────────────────────
+  # WebSocket Integration
+  # ──────────────────────────────────────────────────────────────────────────
+  websocket:
+    enabled: false
+  
+  # Push Notifications (FCM)
+  # ──────────────────────────────────────────────────────────────────────────
+  push:
+    enabled: true
+    # When to send push notifications
+    triggers:
+      - event: notification_created
+        condition: user_offline  # always | user_offline | custom
+        custom_condition_function: ""
+      - event: message_sent
+        condition: user_offline  # always | user_offline | custom
+        custom_condition_function: ""
+  # ──────────────────────────────────────────────────────────────────────────
+  # Notification Triggers (Auto-create notifications)
+  # ──────────────────────────────────────────────────────────────────────────
+  triggers:
+    # Chat-related triggers
+    - event: message_sent
+      condition: receiver_offline
+      notification:
+        type: chat
+        title_template: "New message from {sender_name}"
+        message_template: "{message_content}"
+        reference_type: conversation
+        reference_id_field: conversation_id
+    - event: order_init
+      enabled: true
+      notification:
+        type: order
+        title_template: "New order #{order_id}"
+        message_template: "Your order has been created"
+    # Order-related triggers
+    - event: order_created
+      condition: receiver_offline
+      notification:
+        type: order
+        title_template: "New order from {sender_name}"
+        message_template: "{message_content}"
+        reference_type: order
+        reference_id_field: order_id

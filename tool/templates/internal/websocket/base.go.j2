@@ -1,0 +1,283 @@
+package websocket
+
+import (
+	"fmt"
+	"os"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/gofiber/contrib/websocket"
+	"github.com/golang-jwt/jwt/v5"
+
+	"{{ config.project.module }}/config"
+)
+
+type WSWriter interface {
+	WriteJSON(v interface{}) error
+	WriteMessage(messageType int, data []byte) error
+	ReadJSON(v interface{}) error
+	SetPingHandler(h func(appData string) error)
+	SetPongHandler(h func(appData string) error)
+	SetReadDeadline(t time.Time) error
+	SetWriteDeadline(t time.Time) error
+	Locals(key string, value ...interface{}) interface{}
+	Close() error
+}
+
+// SafeConn provides thread-safe access to a WebSocket connection.
+type SafeConn struct {
+	conn *websocket.Conn
+	mu   sync.Mutex
+}
+
+func NewSafeConn(c *websocket.Conn) *SafeConn {
+	return &SafeConn{conn: c}
+}
+
+func (s *SafeConn) WriteJSON(v interface{}) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.conn.WriteJSON(v)
+}
+
+func (s *SafeConn) WriteMessage(messageType int, data []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.conn.WriteMessage(messageType, data)
+}
+
+func (s *SafeConn) SetPingHandler(h func(appData string) error) {
+	s.conn.SetPingHandler(h)
+}
+
+func (s *SafeConn) SetPongHandler(h func(appData string) error) {
+	s.conn.SetPongHandler(h)
+}
+
+func (s *SafeConn) SetReadDeadline(t time.Time) error {
+	return s.conn.SetReadDeadline(t)
+}
+
+func (s *SafeConn) SetWriteDeadline(t time.Time) error {
+	return s.conn.SetWriteDeadline(t)
+}
+
+func (s *SafeConn) Locals(key string, value ...interface{}) interface{} {
+	return s.conn.Locals(key, value...)
+}
+
+func (s *SafeConn) ReadJSON(v interface{}) error {
+	return s.conn.ReadJSON(v)
+}
+
+func (s *SafeConn) Close() error {
+	return s.conn.Close()
+}
+
+{% if config.websocket.enabled and config.websocket.authentication.method in ['jwt', 'unified'] %}
+{# ────────────────────────────────────────────────────────────── #}
+{# Dynamic JWT Secret Loading                                     #}
+{# ────────────────────────────────────────────────────────────── #}
+// getJWTSecret retrieves JWT secret from configured source
+func getJWTSecret() ([]byte, error) {
+	secret := viper.GetString("{{ config.websocket.authentication.jwt.secret_key }}")
+	if secret == "" {
+		return nil, fmt.Errorf("JWT secret not found in environment variable {{ config.websocket.authentication.jwt.secret_key }}")
+	}
+	return []byte(secret), nil
+
+}
+
+{% if config.websocket.authentication.app_token.enabled %}
+// getAppTokenSecret retrieves app token secret from configured source
+func getAppTokenSecret() ([]byte, error) {
+	secret := viper.GetString("{{ config.websocket.authentication.app_token.secret_key }}")
+	if secret == "" {
+		return nil, fmt.Errorf("App token secret not found in environment variable {{ config.websocket.authentication.app_token.env_var }}")
+	}
+	return []byte(secret), nil
+
+}
+{% endif %}
+
+{# ────────────────────────────────────────────────────────────── #}
+{# Dynamic JWT Validation with Configurable Claims                #}
+{# ────────────────────────────────────────────────────────────── #}
+// ValidateUnifiedTokens validates JWT tokens with dynamic configuration
+func ValidateUnifiedTokens(appToken, authHeader string) (uint, error) {
+{% if config.websocket.authentication.app_token.enabled %}
+	// Validate app token if provided
+	if appToken != "" {
+		appSecret, err := getAppTokenSecret()
+		if err != nil {
+			return 0, err
+		}
+
+		appJWT, err := jwt.Parse(appToken, func(token *jwt.Token) (interface{}, error) {
+			// Validate algorithm
+			if token.Method.Alg() != "{{ config.websocket.authentication.jwt.algorithm }}" {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+			return appSecret, nil
+		})
+		if err != nil || !appJWT.Valid {
+			return 0, fmt.Errorf("invalid_app_token: %w", err)
+		}
+	}{% if config.websocket.authentication.app_token.required %} else {
+		return 0, fmt.Errorf("app_token_required")
+	}{% endif %}
+{% endif %}
+
+	// Extract JWT from header
+{% if config.websocket.authentication.jwt.extraction.header_prefix %}
+	if !strings.HasPrefix(authHeader, "{{ config.websocket.authentication.jwt.extraction.header_prefix }}") {
+		return 0, fmt.Errorf("invalid_auth_header_format")
+	}
+	bearerToken := strings.TrimPrefix(authHeader, "{{ config.websocket.authentication.jwt.extraction.header_prefix }}")
+{% else %}
+	bearerToken := authHeader
+{% endif %}
+
+	if bearerToken == "" {
+		return 0, fmt.Errorf("missing_auth_token")
+	}
+
+	// Get JWT secret
+	jwtSecret, err := getJWTSecret()
+	if err != nil {
+		return 0, err
+	}
+
+	// Parse and validate JWT
+	userJWT, err := jwt.Parse(bearerToken, func(token *jwt.Token) (interface{}, error) {
+		// Validate algorithm
+		if token.Method.Alg() != "{{ config.websocket.authentication.jwt.algorithm }}" {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return jwtSecret, nil
+	})
+	if err != nil || !userJWT.Valid {
+		return 0, fmt.Errorf("invalid_user_token: %w", err)
+	}
+
+	claims, ok := userJWT.Claims.(jwt.MapClaims)
+	if !ok {
+		return 0, fmt.Errorf("invalid_claims")
+	}
+
+	// Extract user_id from configured claim
+{% set user_id_claim = config.websocket.authentication.jwt.claims.user_id %}
+{% if user_id_claim.type == 'float64' %}
+	userIDFloat, ok := claims["{{ user_id_claim.claim_name }}"].(float64)
+	if !ok {
+{% if user_id_claim.required %}
+		return 0, fmt.Errorf("invalid_or_missing_user_id_claim")
+{% else %}
+		return 0, nil  // Optional claim not present
+{% endif %}
+	}
+	return uint(userIDFloat), nil
+{% elif user_id_claim.type == 'string' %}
+	userIDStr, ok := claims["{{ user_id_claim.claim_name }}"].(string)
+	if !ok {
+{% if user_id_claim.required %}
+		return 0, fmt.Errorf("invalid_or_missing_user_id_claim")
+{% else %}
+		return 0, nil
+{% endif %}
+	}
+	// Convert string to uint (you may need custom logic here)
+	var userID uint
+	fmt.Sscanf(userIDStr, "%d", &userID)
+	return userID, nil
+{% elif user_id_claim.type == 'int' %}
+	userIDInt, ok := claims["{{ user_id_claim.claim_name }}"].(int)
+	if !ok {
+{% if user_id_claim.required %}
+		return 0, fmt.Errorf("invalid_or_missing_user_id_claim")
+{% else %}
+		return 0, nil
+{% endif %}
+	}
+	return uint(userIDInt), nil
+{% endif %}
+}
+
+// ExtractClaim extracts a claim from JWT token (helper for custom handlers)
+func ExtractClaim(claims jwt.MapClaims, claimName string, claimType string) (interface{}, error) {
+	value, ok := claims[claimName]
+	if !ok {
+		return nil, fmt.Errorf("claim %s not found", claimName)
+	}
+	
+	// Type assertion based on configured type
+	switch claimType {
+	case "string":
+		if v, ok := value.(string); ok {
+			return v, nil
+		}
+	case "float64":
+		if v, ok := value.(float64); ok {
+			return v, nil
+		}
+	case "int":
+		if v, ok := value.(int); ok {
+			return v, nil
+		}
+	case "bool":
+		if v, ok := value.(bool); ok {
+			return v, nil
+		}
+	}
+	
+	return nil, fmt.Errorf("claim %s has unexpected type", claimName)
+}
+{% endif %}
+
+{% if config.websocket.handler_type == 'dedicated' %}
+{# ────────────────────────────────────────────────────────────── #}
+{# Broadcaster interface + registry                               #}
+{# Allows dedicated hubs in separate packages to call each other  #}
+{# without import cycles. Each hub registers itself on startup.   #}
+{# ────────────────────────────────────────────────────────────── #}
+
+// UserBroadcaster can deliver messages to a specific user.
+type UserBroadcaster interface {
+	BroadcastToUser(userID uint, msg interface{})
+	IsUserOnline(userID uint) bool
+}
+
+// AdminBroadcaster can deliver messages to all connected admins.
+type AdminBroadcaster interface {
+	BroadcastToAdmins(msg interface{})
+}
+
+// BroadcastRegistry holds references to dedicated hub instances
+// so EventsHub and others can route across package boundaries.
+var BroadcastRegistry struct {
+	User  UserBroadcaster
+	Admin AdminBroadcaster
+}
+
+// RegisterUserBroadcaster is called by ChatHub on startup.
+func RegisterUserBroadcaster(b UserBroadcaster) {
+	BroadcastRegistry.User = b
+}
+
+// RegisterAdminBroadcaster is called by SupportHub on startup.
+func RegisterAdminBroadcaster(b AdminBroadcaster) {
+	BroadcastRegistry.Admin = b
+}
+{% endif %}
+
+{% if config.websocket.handler_type == 'dedicated' %}
+// IsUserOnline is available in the base websocket package so notification_logic
+// and other base-package code can check presence without importing chat.
+func IsUserOnline(userID uint) bool {
+	if BroadcastRegistry.User != nil {
+		return BroadcastRegistry.User.IsUserOnline(userID)
+	}
+	return false
+}
+{% endif %}

@@ -1,0 +1,841 @@
+package repository
+
+import (
+    "errors"
+    "fmt"
+    "strings"
+    "time"
+
+    "gorm.io/gorm"
+
+    "{{ config.project.module }}/internal/domain"
+)
+
+// ============================================================================
+// {{ model.name }} Repository Interface
+// ============================================================================
+
+type {{ model.name }}Repository interface {
+    // CRUD Operations
+    Create({{ model.name | lower }} *models.{{ model.name }}) error
+    GetByID(id uint) (*models.{{ model.name }}, error)
+    Update({{ model.name | lower }} *models.{{ model.name }}) error
+    Delete(id uint) error
+{% if model.soft_delete and model.soft_delete.include_hard_delete %}
+    HardDelete(id uint) error
+{% endif %}
+{% if model.soft_delete and model.soft_delete.include_restore %}
+    Restore(id uint) error
+{% endif %}
+
+{% if model.pagination or model.filters or model.sort_by %}
+    // List with options
+    List(options List{{ model.name }}Options) ([]models.{{ model.name }}, bool, error)
+{% endif %}
+
+{% if model.custom_getters %}
+    // Custom getters
+{% for getter in model.custom_getters %}
+    {% if getter.pagination or getter.filters or getter.sort_by %}
+    {{ getter.name }}({% for field in getter.fields %}{{ field | lower }} {{ getter.field_types[loop.index0] | default('string') }}, {% endfor %}options {{ getter.name }}Options) ([]models.{{ model.name }}, bool, error)
+    {% else %}
+    {{ getter.name }}({% for field in getter.fields %}{{ field | lower }} {{ getter.field_types[loop.index0] | default('string') }}{% if not loop.last %}, {% endif %}{% endfor %}) ({% if getter.unique %}*models.{{ model.name }}{% else %}[]models.{{ model.name }}{% endif %}, error)
+    {% endif %}
+{% endfor %}
+{% endif %}
+
+{% if model.batch_operations %}
+    // Batch operations
+{% for batch_op in model.batch_operations %}
+    {% if batch_op.name.startswith('BulkUpdate') %}
+    {{ batch_op.name }}(ids []uint, updates map[string]interface{}) error
+    {% elif batch_op.name == 'DeleteMultiple' %}
+    DeleteMultiple(ids []uint) error
+    {% elif batch_op.name == 'BatchCreate' %}
+    BatchCreate(items []models.{{ model.name }}) error
+    {% endif %}
+{% endfor %}
+{% endif %}
+}
+
+// ============================================================================
+// {{ model.name }} Repository Implementation
+// ============================================================================
+
+type {{ model.name | lower }}Repository struct {
+    db *gorm.DB
+}
+
+// New{{ model.name }}Repository creates a new {{ model.name }} repository
+func New{{ model.name }}Repository(db *gorm.DB) {{ model.name }}Repository {
+    return &{{ model.name | lower }}Repository{db: db}
+}
+
+{% if model.pagination or model.filters or model.sort_by %}
+// List{{ model.name }}Options defines the options for filtering and sorting {{ model.name | lower }}s
+type List{{ model.name }}Options struct {
+{% if model.pagination %}
+    // Pagination
+    Page     int `json:"page" form:"page"`
+    PageSize int `json:"page_size" form:"page_size"`
+{% endif %}
+
+{% if model.filters %}
+    // Filters
+{% for filter in model.filters %}
+    {% if filter == 'id' %}
+    ID *uint `json:"id,omitempty" form:"id"`
+    {% elif filter == 'user_id' %}
+    UserID *uint `json:"user_id,omitempty" form:"user_id"`
+    {% elif filter.endswith('_id') %}
+    {{ filter | replace('_', ' ') | title | replace(' ', '') }} *uint `json:"{{ filter }},omitempty" form:"{{ filter }}"`
+    {% elif filter == 'status' %}
+    Status string `json:"status,omitempty" form:"status"`
+    {% elif filter == 'verified' %}
+    Verified *bool `json:"verified,omitempty" form:"verified"`
+    {% elif filter == 'email' %}
+    Email string `json:"email,omitempty" form:"email"`
+    {% elif filter == 'role' %}
+    Role string `json:"role,omitempty" form:"role"`
+    {% elif filter == 'search' %}
+    Search string `json:"search,omitempty" form:"search"`
+    {% else %}
+    {{ filter | replace('_', ' ') | title | replace(' ', '') }} string `json:"{{ filter }},omitempty" form:"{{ filter }}"`
+    {% endif %}
+{% endfor %}
+{% endif %}
+
+{% if model.sort_by %}
+    // Sorting
+    SortBy    string `json:"sort_by,omitempty" form:"sort_by"`
+    SortOrder string `json:"sort_order,omitempty" form:"sort_order"` // asc or desc
+{% endif %}
+
+{% if model.relations %}
+    // Preload options
+{% for relation in model.relations %}
+    Preload{{ relation.name }} bool `json:"preload_{{ relation.name | lower }},omitempty" form:"preload_{{ relation.name | lower }}"`
+{% endfor %}
+{% endif %}
+
+    // Date range filters
+    CreatedFrom *time.Time `json:"created_from,omitempty" form:"created_from"`
+    CreatedTo   *time.Time `json:"created_to,omitempty" form:"created_to"`
+    UpdatedFrom *time.Time `json:"updated_from,omitempty" form:"updated_from"`
+    UpdatedTo   *time.Time `json:"updated_to,omitempty" form:"updated_to"`
+}
+
+// List retrieves {{ model.name | lower }}s with filtering, sorting, and pagination
+func (r *{{ model.name | lower }}Repository) List(options List{{ model.name }}Options) ([]models.{{ model.name }}, bool, error) {
+    var {{ model.name | lower }}s []models.{{ model.name }}
+
+    // Build query
+    query := r.db.Model(&models.{{ model.name }}{})
+
+    // Apply filters
+    query = r.applyFilters(query, options)
+
+    // Apply sorting
+    query = r.applySorting(query, options)
+
+    // Apply preloading
+    query = r.applyPreloading(query, options)
+
+{% if model.pagination %}
+    // Apply pagination with has_more detection
+    hasMore := false
+    if options.PageSize > 0 {
+        offset := (options.Page - 1) * options.PageSize
+        if offset < 0 {
+            offset = 0
+        }
+        // Fetch one extra record to detect if there are more pages
+        query = query.Offset(offset).Limit(options.PageSize + 1)
+    }
+{% endif %}
+
+    // Execute query
+    if err := query.Find(&{{ model.name | lower }}s).Error; err != nil {
+        return nil, false, fmt.Errorf("failed to fetch {{ model.name | lower }}s: %w", err)
+    }
+
+{% if model.pagination %}
+    if options.PageSize > 0 && len({{ model.name | lower }}s) > options.PageSize {
+        hasMore = true
+        {{ model.name | lower }}s = {{ model.name | lower }}s[:options.PageSize]
+    }
+{% endif %}
+
+    return {{ model.name | lower }}s, hasMore, nil
+}
+
+// applyFilters applies all filters to the query
+func (r *{{ model.name | lower }}Repository) applyFilters(query *gorm.DB, options List{{ model.name }}Options) *gorm.DB {
+{% if model.filters %}
+{% for filter in model.filters %}
+    {% if filter == 'id' %}
+    if options.ID != nil {
+        query = query.Where("id = ?", *options.ID)
+    }
+    {% elif filter == 'user_id' %}
+    if options.UserID != nil {
+        query = query.Where("user_id = ?", *options.UserID)
+    }
+    {% elif filter.endswith('_id') %}
+    if options.{{ filter | replace('_', ' ') | title | replace(' ', '') }} != nil {
+        query = query.Where("{{ filter }} = ?", *options.{{ filter | replace('_', ' ') | title | replace(' ', '') }})
+    }
+    {% elif filter == 'status' %}
+    if options.Status != "" {
+        query = query.Where("status = ?", options.Status)
+    }
+    {% elif filter == 'verified' %}
+    if options.Verified != nil {
+        query = query.Where("verified = ?", *options.Verified)
+    }
+    {% elif filter == 'email' %}
+    if options.Email != "" {
+        query = query.Where("LOWER(email) = LOWER(?)", options.Email)
+    }
+    {% elif filter == 'role' %}
+    if options.Role != "" {
+        query = query.Where("role = ?", options.Role)
+    }
+    {% elif filter == 'search' %}
+    if options.Search != "" {
+        searchTerm := "%" + strings.ToLower(options.Search) + "%"
+        searchConditions := []string{}
+        searchValues := []interface{}{}
+        
+{% if model.search_fields %}
+{% for search_field in model.search_fields %}
+        searchConditions = append(searchConditions, "LOWER({{ search_field }}) LIKE ?")
+        searchValues = append(searchValues, searchTerm)
+{% endfor %}
+{% else %}
+        // Default search fields
+        searchConditions = append(searchConditions, "LOWER(id::text) LIKE ?")
+        searchValues = append(searchValues, searchTerm)
+{% endif %}
+        
+        query = query.Where(strings.Join(searchConditions, " OR "), searchValues...)
+    }
+    {% else %}
+    if options.{{ filter | replace('_', ' ') | title | replace(' ', '') }} != "" {
+        query = query.Where("{{ filter }} = ?", options.{{ filter | replace('_', ' ') | title | replace(' ', '') }})
+    }
+    {% endif %}
+{% endfor %}
+{% endif %}
+
+    // Date range filters
+    if options.CreatedFrom != nil {
+        query = query.Where("created_at >= ?", *options.CreatedFrom)
+    }
+    if options.CreatedTo != nil {
+        query = query.Where("created_at <= ?", *options.CreatedTo)
+    }
+    if options.UpdatedFrom != nil {
+        query = query.Where("updated_at >= ?", *options.UpdatedFrom)
+    }
+    if options.UpdatedTo != nil {
+        query = query.Where("updated_at <= ?", *options.UpdatedTo)
+    }
+
+    return query
+}
+
+// applySorting applies sorting to the query
+func (r *{{ model.name | lower }}Repository) applySorting(query *gorm.DB, options List{{ model.name }}Options) *gorm.DB {
+{% if model.sort_by %}
+    // Whitelist of allowed sort fields
+    allowedSortFields := map[string]bool{
+{% for sort_field in model.sort_by %}
+        "{{ sort_field }}": true,
+{% endfor %}
+    }
+
+    sortBy := options.SortBy
+    if sortBy == "" || !allowedSortFields[sortBy] {
+        sortBy = "{{ model.default_sort_field | default('created_at') }}"
+    }
+
+    sortOrder := strings.ToLower(options.SortOrder)
+    if sortOrder != "asc" && sortOrder != "desc" {
+        sortOrder = "{{ model.default_sort_order | default('desc') }}"
+    }
+
+    return query.Order(fmt.Sprintf("%s %s", sortBy, sortOrder))
+{% else %}
+    return query.Order("created_at desc")
+{% endif %}
+}
+
+// applyPreloading applies relation preloading to the query
+func (r *{{ model.name | lower }}Repository) applyPreloading(query *gorm.DB, options List{{ model.name }}Options) *gorm.DB {
+{% if model.relations %}
+{% for relation in model.relations %}
+    if options.Preload{{ relation.name }} {
+    {% if relation.select_fields or relation.order_by or relation.sort_by or relation.limit %}
+        query = query.Preload("{{ relation.name }}", func(db *gorm.DB) *gorm.DB {
+        {% if relation.select_fields %}
+            db = db.Select({{ relation.select_fields | map('tojson') | join(', ') }})
+        {% endif %}
+        {% if relation.order_by %}
+            db = db.Order("{{ relation.order_by }}")
+        {% elif relation.sort_by %}
+            db = db.Order("{{ relation.sort_by }}")
+        {% endif %}
+        {% if relation.limit %}
+            db = db.Limit({{ relation.limit }})
+        {% endif %}
+            return db
+        })
+    {% else %}
+        query = query.Preload("{{ relation.name }}")
+    {% endif %}
+    
+    {% if relation.nested_relations %}
+    {% for nested in relation.nested_relations %}
+        query = query.Preload("{{ relation.name }}.{{ nested.name | capitalize }}"{% if nested.select_fields or nested.order_by or nested.limit %}, func(db *gorm.DB) *gorm.DB {
+        {% if nested.select_fields %}
+            db = db.Select({{ nested.select_fields | map('tojson') | join(', ') }})
+        {% endif %}
+        {% if nested.order_by %}
+            db = db.Order("{{ nested.order_by }}")
+        {% endif %}
+        {% if nested.limit %}
+            db = db.Limit({{ nested.limit }})
+        {% endif %}
+            return db
+        }{% endif %})
+    {% endfor %}
+    {% endif %}
+    }
+{% endfor %}
+{% endif %}
+    return query
+}
+{% endif %}
+
+// ============================================================================
+// CRUD Operations
+// ============================================================================
+
+// Create creates a new {{ model.name | lower }}
+func (r *{{ model.name | lower }}Repository) Create({{ model.name | lower }} *models.{{ model.name }}) error {
+    if err := r.db.Create({{ model.name | lower }}).Error; err != nil {
+        return fmt.Errorf("failed to create {{ model.name | lower }}: %w", err)
+    }
+    return nil
+}
+
+// GetByID retrieves a {{ model.name | lower }} by ID
+func (r *{{ model.name | lower }}Repository) GetByID(id uint) (*models.{{ model.name }}, error) {
+    var {{ model.name | lower }} models.{{ model.name }}
+    if err := r.db.First(&{{ model.name | lower }}, id).Error; err != nil {
+        if errors.Is(err, gorm.ErrRecordNotFound) {
+            return nil, fmt.Errorf("{{ model.name | lower }} not found")
+        }
+        return nil, fmt.Errorf("failed to fetch {{ model.name | lower }}: %w", err)
+    }
+    return &{{ model.name | lower }}, nil
+}
+
+// Update updates an existing {{ model.name | lower }}
+func (r *{{ model.name | lower }}Repository) Update({{ model.name | lower }} *models.{{ model.name }}) error {
+    if err := r.db.Save({{ model.name | lower }}).Error; err != nil {
+        return fmt.Errorf("failed to update {{ model.name | lower }}: %w", err)
+    }
+    return nil
+}
+
+// Delete deletes a {{ model.name | lower }} by ID
+func (r *{{ model.name | lower }}Repository) Delete(id uint) error {
+{% if model.soft_delete %}
+    if err := r.db.Delete(&models.{{ model.name }}{}, id).Error; err != nil {
+        return fmt.Errorf("failed to delete {{ model.name | lower }}: %w", err)
+    }
+{% else %}
+    if err := r.db.Delete(&models.{{ model.name }}{}, id).Error; err != nil {
+        return fmt.Errorf("failed to delete {{ model.name | lower }}: %w", err)
+    }
+{% endif %}
+    return nil
+}
+
+{% if model.soft_delete and model.soft_delete.include_hard_delete %}
+// HardDelete permanently deletes a {{ model.name | lower }} by ID
+func (r *{{ model.name | lower }}Repository) HardDelete(id uint) error {
+    if err := r.db.Unscoped().Delete(&models.{{ model.name }}{}, id).Error; err != nil {
+        return fmt.Errorf("failed to hard delete {{ model.name | lower }}: %w", err)
+    }
+    return nil
+}
+{% endif %}
+
+{% if model.soft_delete and model.soft_delete.include_restore %}
+// Restore restores a soft-deleted {{ model.name | lower }} by ID
+func (r *{{ model.name | lower }}Repository) Restore(id uint) error {
+    result := r.db.Model(&models.{{ model.name }}{}).
+        Unscoped().
+        Where("id = ? AND deleted_at IS NOT NULL", id).
+        Update("deleted_at", nil)
+    
+    if result.Error != nil {
+        return fmt.Errorf("failed to restore {{ model.name | lower }}: %w", result.Error)
+    }
+    if result.RowsAffected == 0 {
+        return fmt.Errorf("{{ model.name | lower }} not found or not deleted")
+    }
+    return nil
+}
+{% endif %}
+
+{% if model.custom_getters %}
+// ============================================================================
+// Custom Getters
+// ============================================================================
+
+{% for getter in model.custom_getters %}
+{% if getter.pagination or getter.filters or getter.sort_by %}
+// {{ getter.name }}Options defines options for {{ getter.name }}
+type {{ getter.name }}Options struct {
+{% if getter.pagination %}
+    // Pagination
+    Page     int `json:"page" form:"page"`
+    PageSize int `json:"page_size" form:"page_size"`
+{% endif %}
+
+{% if getter.filters %}
+    // Filters
+{% for filter in getter.filters %}
+    {% if filter == 'id' %}
+    ID *uint `json:"id,omitempty" form:"id"`
+    {% elif filter.endswith('_id') %}
+    {{ filter | replace('_', ' ') | title | replace(' ', '') }} *uint `json:"{{ filter }},omitempty" form:"{{ filter }}"`
+    {% elif filter == 'status' %}
+    Status string `json:"status,omitempty" form:"status"`
+    {% elif filter == 'verified' %}
+    Verified *bool `json:"verified,omitempty" form:"verified"`
+    {% elif filter == 'search' %}
+    Search string `json:"search,omitempty" form:"search"`
+    {% else %}
+    {{ filter | replace('_', ' ') | title | replace(' ', '') }} string `json:"{{ filter }},omitempty" form:"{{ filter }}"`
+    {% endif %}
+{% endfor %}
+{% endif %}
+
+{% if getter.sort_by %}
+    // Sorting
+    SortBy    string `json:"sort_by,omitempty" form:"sort_by"`
+    SortOrder string `json:"sort_order,omitempty" form:"sort_order"`
+{% endif %}
+
+{% if getter.preload_options %}
+    // Preload options
+{% for preload_opt in getter.preload_options %}
+    Preload{{ preload_opt }} bool `json:"preload_{{ preload_opt | lower }},omitempty" form:"preload_{{ preload_opt | lower }}"`
+{% endfor %}
+{% endif %}
+
+    // Date range filters
+    CreatedFrom *time.Time `json:"created_from,omitempty" form:"created_from"`
+    CreatedTo   *time.Time `json:"created_to,omitempty" form:"created_to"`
+}
+
+// {{ getter.name }} retrieves {{ model.name | lower }}(s) by {{ getter.fields | join(', ') }} with advanced options
+func (r *{{ model.name | lower }}Repository) {{ getter.name }}({% for field in getter.fields %}{{ field | lower }} {{ getter.field_types[loop.index0] | default('string') }}, {% endfor %}options {{ getter.name }}Options) ([]models.{{ model.name }}, bool, error) {
+    var {{ model.name | lower }}s []models.{{ model.name }}
+    
+    query := r.db.Model(&models.{{ model.name }}{})
+    
+    // Base filters from parameters
+{% for field in getter.fields %}
+    query = query.Where("{{ field | lower }} = ?", {{ field | lower }})
+{% endfor %}
+    
+{% if getter.filters %}
+    // Apply additional filters
+    query = r.apply{{ getter.name }}Filters(query, options)
+{% endif %}
+    
+{% if getter.sort_by %}
+    // Apply sorting
+    query = r.apply{{ getter.name }}Sorting(query, options)
+{% elif getter.order_by %}
+    query = query.Order("{{ getter.order_by }}")
+{% endif %}
+    
+    // Apply preloading
+    query = r.apply{{ getter.name }}Preloading(query, options)
+    
+{% if getter.select_fields %}
+    // Select specific fields from main model
+    query = query.Select({{ getter.select_fields | map('tojson') | join(', ') }})
+{% endif %}
+    
+{% if getter.pagination %}
+    // Apply pagination with has_more detection
+    hasMore := false
+    if options.PageSize > 0 {
+        offset := (options.Page - 1) * options.PageSize
+        if offset < 0 {
+            offset = 0
+        }
+        query = query.Offset(offset).Limit(options.PageSize + 1)
+    }
+{% endif %}
+    
+    if err := query.Find(&{{ model.name | lower }}s).Error; err != nil {
+        return nil, false, fmt.Errorf("failed to fetch {{ model.name | lower }}s: %w", err)
+    }
+    
+{% if getter.pagination %}
+    if options.PageSize > 0 && len({{ model.name | lower }}s) > options.PageSize {
+        hasMore = true
+        {{ model.name | lower }}s = {{ model.name | lower }}s[:options.PageSize]
+    }
+{% endif %}
+    
+    return {{ model.name | lower }}s, hasMore, nil
+}
+
+{% if getter.filters %}
+// apply{{ getter.name }}Filters applies filters for {{ getter.name }}
+func (r *{{ model.name | lower }}Repository) apply{{ getter.name }}Filters(query *gorm.DB, options {{ getter.name }}Options) *gorm.DB {
+{% for filter in getter.filters %}
+    {% if filter == 'id' %}
+    if options.ID != nil {
+        query = query.Where("id = ?", *options.ID)
+    }
+    {% elif filter.endswith('_id') %}
+    if options.{{ filter | replace('_', ' ') | title | replace(' ', '') }} != nil {
+        query = query.Where("{{ filter }} = ?", *options.{{ filter | replace('_', ' ') | title | replace(' ', '') }})
+    }
+    {% elif filter == 'status' %}
+    if options.Status != "" {
+        query = query.Where("status = ?", options.Status)
+    }
+    {% elif filter == 'verified' %}
+    if options.Verified != nil {
+        query = query.Where("verified = ?", *options.Verified)
+    }
+    {% elif filter == 'search' %}
+    if options.Search != "" {
+        searchTerm := "%" + strings.ToLower(options.Search) + "%"
+        searchConditions := []string{}
+        searchValues := []interface{}{}
+        
+{% if getter.search_fields %}
+{% for search_field in getter.search_fields %}
+        searchConditions = append(searchConditions, "LOWER({{ search_field }}) LIKE ?")
+        searchValues = append(searchValues, searchTerm)
+{% endfor %}
+{% else %}
+        searchConditions = append(searchConditions, "LOWER(id::text) LIKE ?")
+        searchValues = append(searchValues, searchTerm)
+{% endif %}
+        
+        query = query.Where(strings.Join(searchConditions, " OR "), searchValues...)
+    }
+    {% else %}
+    if options.{{ filter | replace('_', ' ') | title | replace(' ', '') }} != "" {
+        query = query.Where("{{ filter }} = ?", options.{{ filter | replace('_', ' ') | title | replace(' ', '') }})
+    }
+    {% endif %}
+{% endfor %}
+
+    // Date range filters
+    if options.CreatedFrom != nil {
+        query = query.Where("created_at >= ?", *options.CreatedFrom)
+    }
+    if options.CreatedTo != nil {
+        query = query.Where("created_at <= ?", *options.CreatedTo)
+    }
+
+    return query
+}
+{% endif %}
+
+{% if getter.sort_by %}
+// apply{{ getter.name }}Sorting applies sorting for {{ getter.name }}
+func (r *{{ model.name | lower }}Repository) apply{{ getter.name }}Sorting(query *gorm.DB, options {{ getter.name }}Options) *gorm.DB {
+    allowedSortFields := map[string]bool{
+{% for sort_field in getter.sort_by %}
+        "{{ sort_field }}": true,
+{% endfor %}
+    }
+
+    sortBy := options.SortBy
+    if sortBy == "" || !allowedSortFields[sortBy] {
+        sortBy = "{{ getter.default_sort_field | default('created_at') }}"
+    }
+
+    sortOrder := strings.ToLower(options.SortOrder)
+    if sortOrder != "asc" && sortOrder != "desc" {
+        sortOrder = "{{ getter.default_sort_order | default('desc') }}"
+    }
+
+    return query.Order(fmt.Sprintf("%s %s", sortBy, sortOrder))
+}
+{% endif %}
+
+// apply{{ getter.name }}Preloading applies preloading for {{ getter.name }}
+func (r *{{ model.name | lower }}Repository) apply{{ getter.name }}Preloading(query *gorm.DB, options {{ getter.name }}Options) *gorm.DB {
+{% if getter.preloads %}
+{% for preload in getter.preloads %}
+    {% if getter.preload_options and preload.name in getter.preload_options %}
+    if options.Preload{{ preload.name }} {
+    {% endif %}
+    {% if preload.select_fields or preload.order_by or preload.sort_by or preload.limit %}
+        query = query.Preload("{{ preload.name }}", func(db *gorm.DB) *gorm.DB {
+        {% if preload.select_fields %}
+            {% if preload.select_all %}
+            // all fields
+            {% else %}
+            db = db.Select({{ preload.select_fields | map('tojson') | join(', ') }})
+            {% endif %}
+        {% endif %}
+        {% if preload.order_by %}
+            db = db.Order("{{ preload.order_by }}")
+        {% elif preload.sort_by %}
+            db = db.Order("{{ preload.sort_by }}")
+        {% endif %}
+        {% if preload.limit %}
+            db = db.Limit({{ preload.limit }})
+        {% endif %}
+            return db
+        })
+    {% else %}
+        query = query.Preload("{{ preload.name }}")
+    {% endif %}
+    
+    {% if preload.nested_relations %}
+    {% for nested in preload.nested_relations %}
+        {% if nested.select_fields or nested.order_by or nested.limit %}
+        query = query.Preload("{{ preload.name }}.{{ nested.name }}", func(db *gorm.DB) *gorm.DB {
+            {% if nested.select_fields %}
+            {% if nested.select_all %}
+            // all fields
+            {% else %}
+            db = db.Select({{ nested.select_fields | map('tojson') | join(', ') }})
+            {% endif %}
+            {% endif %}
+            {% if nested.order_by %}
+            db = db.Order("{{ nested.order_by }}")
+            {% endif %}
+            {% if nested.limit %}
+            db = db.Limit({{ nested.limit }})
+            {% endif %}
+            return db
+        })
+        {% else %}
+        query = query.Preload("{{ preload.name }}.{{ nested.name }}")
+        {% endif %}
+    {% endfor %}
+    {% endif %}
+    {% if getter.preload_options and preload.name in getter.preload_options %}
+    }
+    {% endif %}
+{% endfor %}
+{% endif %}
+    return query
+}
+
+{% else %}
+// {{ getter.name }} retrieves {{ model.name | lower }}(s) by {{ getter.fields | join(', ') }}
+func (r *{{ model.name | lower }}Repository) {{ getter.name }}({% for field in getter.fields %}{{ field | lower }} {{ getter.field_types[loop.index0] | default('string') }}{% if not loop.last %}, {% endif %}{% endfor %}) ({% if getter.unique %}*models.{{ model.name }}{% else %}[]models.{{ model.name }}{% endif %}, error) {
+    {% if getter.unique %}
+    var {{ model.name | lower }} models.{{ model.name }}
+    {% else %}
+    var {{ model.name | lower }}s []models.{{ model.name }}
+    {% endif %}
+    
+    query := r.db.Model(&models.{{ model.name }}{})
+    
+{% if getter.preloads %}
+{% for preload in getter.preloads %}
+    {% if preload.select_fields or preload.order_by or preload.sort_by or preload.limit %}
+    query = query.Preload("{{ preload.name }}", func(db *gorm.DB) *gorm.DB {
+        {% if preload.select_fields %}
+        {% if preload.select_all %}
+        // all fields
+        {% else %}
+        db = db.Select({{ preload.select_fields | map('tojson') | join(', ') }})
+        {% endif %}
+        {% endif %}
+        {% if preload.order_by %}
+        db = db.Order("{{ preload.order_by }}")
+        {% elif preload.sort_by %}
+        db = db.Order("{{ preload.sort_by }}")
+        {% endif %}
+        {% if preload.limit %}
+        db = db.Limit({{ preload.limit }})
+        {% endif %}
+        return db
+    })
+    {% else %}
+    query = query.Preload("{{ preload.name }}")
+    {% endif %}
+    
+    {% if preload.nested_relations %}
+    {% for nested in preload.nested_relations %}
+        {% if nested.select_fields or nested.order_by or nested.limit %}
+        query = query.Preload("{{ preload.name }}.{{ nested.name }}", func(db *gorm.DB) *gorm.DB {
+            {% if nested.select_fields %}
+            {% if nested.select_all %}
+            // all fields
+            {% else %}
+            db = db.Select({{ nested.select_fields | map('tojson') | join(', ') }})
+            {% endif %}
+            {% endif %}
+            {% if nested.order_by %}
+            db = db.Order("{{ nested.order_by }}")
+            {% endif %}
+            {% if nested.limit %}
+            db = db.Limit({{ nested.limit }})
+            {% endif %}
+            return db
+        })
+        {% else %}
+        query = query.Preload("{{ preload.name }}.{{ nested.name }}")
+        {% endif %}
+    {% endfor %}
+    {% endif %}
+{% endfor %}
+{% endif %}
+    
+{% for field in getter.fields %}
+    query = query.Where("{{ field | lower }} = ?", {{ field | lower }})
+{% endfor %}
+    
+{% if getter.order_by %}
+    query = query.Order("{{ getter.order_by }}")
+{% endif %}
+    
+{% if getter.select_fields %}
+    // Select specific fields from main model
+    query = query.Select({{ getter.select_fields | map('tojson') | join(', ') }})
+{% endif %}
+    
+    {% if getter.unique %}
+    if err := query.First(&{{ model.name | lower }}).Error; err != nil {
+        if errors.Is(err, gorm.ErrRecordNotFound) {
+            return nil, fmt.Errorf("{{ model.name | lower }} not found")
+        }
+        return nil, fmt.Errorf("failed to fetch {{ model.name | lower }}: %w", err)
+    }
+    return &{{ model.name | lower }}, nil
+    {% else %}
+    if err := query.Find(&{{ model.name | lower }}s).Error; err != nil {
+        return nil, fmt.Errorf("failed to fetch {{ model.name | lower }}s: %w", err)
+    }
+    return {{ model.name | lower }}s, nil
+    {% endif %}
+}
+
+{% endif %}
+{% endfor %}
+{% endif %}
+
+{% if model.batch_operations %}
+// ============================================================================
+// Batch Operations
+// ============================================================================
+
+{% for batch_op in model.batch_operations %}
+{% if batch_op.name.startswith('BulkUpdate') %}
+// {{ batch_op.name }} updates multiple {{ model.name | lower }}s
+func (r *{{ model.name | lower }}Repository) {{ batch_op.name }}(ids []uint, updates map[string]interface{}) error {
+    if len(ids) == 0 {
+        return errors.New("no IDs provided")
+    }
+    if len(updates) == 0 {
+        return errors.New("no updates provided")
+    }
+    
+{% if batch_op.update_fields %}
+    // Validate update fields
+    allowedFields := map[string]bool{
+{% for field in batch_op.update_fields %}
+        "{{ field }}": true,
+{% endfor %}
+    }
+    
+    for key := range updates {
+        if !allowedFields[key] {
+            return fmt.Errorf("field '%s' is not allowed for bulk update", key)
+        }
+    }
+{% endif %}
+    
+    result := r.db.Model(&models.{{ model.name }}{}).
+        Where("id IN ?", ids).
+        Updates(updates)
+    
+    if result.Error != nil {
+        return fmt.Errorf("failed to bulk update {{ model.name | lower }}s: %w", result.Error)
+    }
+    return nil
+}
+
+{% elif batch_op.name == 'DeleteMultiple' %}
+// DeleteMultiple deletes multiple {{ model.name | lower }}s by IDs
+func (r *{{ model.name | lower }}Repository) DeleteMultiple(ids []uint) error {
+    if len(ids) == 0 {
+        return errors.New("no IDs provided")
+    }
+    
+{% if batch_op.soft_delete %}
+    result := r.db.Delete(&models.{{ model.name }}{}, "id IN ?", ids)
+{% else %}
+    result := r.db.Unscoped().Delete(&models.{{ model.name }}{}, "id IN ?", ids)
+{% endif %}
+    
+    if result.Error != nil {
+        return fmt.Errorf("failed to delete multiple {{ model.name | lower }}s: %w", result.Error)
+    }
+    return nil
+}
+
+{% elif batch_op.name == 'BatchCreate' %}
+// BatchCreate creates multiple {{ model.name | lower }}s in a single transaction
+func (r *{{ model.name | lower }}Repository) BatchCreate(items []models.{{ model.name }}) error {
+    if len(items) == 0 {
+        return errors.New("no items provided")
+    }
+    
+    return r.db.CreateInBatches(&items, {{ batch_op.batch_size | default(100) }}).Error
+}
+{% endif %}
+{% endfor %}
+{% endif %}
+
+{% if model.admin_queries and model.admin_queries.enabled %}
+// ============================================================================
+// Admin Queries
+// ============================================================================
+
+// ListAdmin retrieves all {{ model.name | lower }}s for admin view (no user filtering)
+func (r *{{ model.name | lower }}Repository) ListAdmin(options List{{ model.name }}Options) ([]models.{{ model.name }}, int64, error) {
+    // Similar to List but without user_id filtering
+    // Implementation similar to List method
+    return r.List(options)
+}
+
+{% if model.admin_queries.stats_query %}
+// GetStats retrieves statistics for {{ model.name | lower }}s
+func (r *{{ model.name | lower }}Repository) GetStats() (map[string]interface{}, error) {
+    var stats map[string]interface{} = make(map[string]interface{})
+    
+    var totalCount int64
+    if err := r.db.Model(&models.{{ model.name }}{}).Count(&totalCount).Error; err != nil {
+        return nil, fmt.Errorf("failed to count {{ model.name | lower }}s: %w", err)
+    }
+    stats["total"] = totalCount
+    
+    return stats, nil
+}
+{% endif %}
+{% endif %}

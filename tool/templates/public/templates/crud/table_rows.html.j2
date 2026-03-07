@@ -1,0 +1,38 @@
+{% set display_fields = model.list_resppkg.fields if model.list_resppkg.enabled else model.fields %}
+{% if items %}
+{% for item in items %}
+<tr class="border-b border-gray-100 last:border-0 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-700/50">
+    {% for field in display_fields %}
+    {% if field.json != "-" and field.json_name != "-" %}
+    <td class="px-6 py-4">
+        {% set field_json = field.json_name if field.json_name else field.json %}
+        {% if 'avatar' in field_json or 'image' in field_json or 'profile' in field_json %}
+        <img src="{{ item[field_json] | default('/static/image/placeholder.png') }}" class="h-10 w-10 rounded-full border border-gray-200 dark:border-gray-600" alt="{{ field.name }}">
+        {% elif field.type == 'bool' %}
+        <span class="inline-flex items-center rounded-full px-2 py-1 text-xs font-medium {{ 'bg-green-100 text-green-700 dark:bg-green-900/10 dark:text-green-400' if item[field_json] else 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-400' }}">
+            {{ 'Active' if item[field_json] else 'Inactive' }}
+        </span>
+        {% elif 'role' in field_json %}
+        <span class="text-xs font-semibold uppercase text-gray-500 dark:text-gray-400">{{ item[field_json] }}</span>
+        {% else %}
+        <span class="text-sm text-gray-900 dark:text-white">{{ item[field_json] }}</span>
+        {% endif %}
+    </td>
+    {% endif %}
+    {% endfor %}
+    <td class="px-6 py-4 text-center">
+        <div class="flex items-center justify-center gap-2">
+            <a href="/dashboard/{{ model.name | lower }}/{{ item.id }}/edit" class="rounded-lg p-2 text-gray-500 hover:bg-gray-100 hover:text-primary dark:text-gray-400 dark:hover:bg-gray-700">
+                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-5M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+            </a>
+            <button hx-delete="/dashboard/{{ model.name | lower }}/{{ item.id }}" hx-confirm="Are you sure you want to delete this {{ model.name | lower }}?" hx-target="closest tr" hx-swap="outerHTML" class="rounded-lg p-2 text-gray-500 hover:bg-red-50 hover:text-red-600 dark:text-gray-400 dark:hover:bg-red-900/10">
+                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+            </button>
+        </div>
+</tr>
+{% endfor %}
+{% else %}
+<tr>
+    <td colspan="10" class="px-6 py-12 text-center text-gray-500 dark:text-gray-400">
+        No {{ model.name | lower }} results found.
+{% endif %}

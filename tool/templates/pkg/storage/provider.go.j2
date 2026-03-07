@@ -1,0 +1,269 @@
+package storage
+
+import (
+    "fmt"
+    "io"
+    "strings"
+{% if config.storage.provider == "local" or not config.storage.provider %}
+    "os"
+    "path/filepath"
+{% endif %}
+{% if config.storage.provider == "s3" or config.storage.provider == "minio" %}
+    "context"
+    "net/url"
+    "github.com/minio/minio-go/v7"
+    "github.com/minio/minio-go/v7/pkg/credentials"
+{% endif %}
+{% if config.storage.provider == "supabase" %}
+    "net/url"
+    storage_go "github.com/supabase-community/storage-go"
+{% endif %}
+    "{{ config.project.module }}/config"
+)
+
+// Provider defines the interface for file storage operations.
+type Provider interface {
+    Upload(content io.Reader, filename string, contentType string) (string, error)
+    Delete(publicURL string) error
+    Name() string
+}
+
+// Current is the active storage provider, initialised by Init().
+var Current Provider
+
+func Init() {
+    var err error
+{% if config.storage.provider == "s3" or config.storage.provider == "minio" %}
+    Current, err = NewS3Storage(config.AppConfig.Storage.S3)
+{% elif config.storage.provider == "supabase" %}
+    Current, err = NewSupabaseStorage(config.AppConfig.Storage.Supabase)
+{% else %}
+    Current, err = NewLocalStorage(config.AppConfig.Storage.Local)
+{% endif %}
+    if err != nil {
+        panic(fmt.Sprintf("storage: failed to initialise provider: %v", err))
+    }
+    fmt.Printf("✅ Storage provider initialised: %s\n", Current.Name())
+}
+
+{% if config.storage.provider == "local" or not config.storage.provider %}
+// ---------------------------------------------------------------------------
+// Local Storage
+// ---------------------------------------------------------------------------
+
+type LocalStorage struct {
+    UploadPath string
+    BaseURL    string
+}
+
+func NewLocalStorage(cfg config.LocalStorageConfig) (*LocalStorage, error) {
+    if _, err := os.Stat(cfg.UploadPath); os.IsNotExist(err) {
+        if err := os.MkdirAll(cfg.UploadPath, 0755); err != nil {
+            return nil, fmt.Errorf("storage/local: cannot create upload dir: %w", err)
+        }
+    }
+    return &LocalStorage{
+        UploadPath: cfg.UploadPath,
+        BaseURL:    strings.TrimRight(cfg.BaseURL, "/"),
+    }, nil
+}
+
+func (s *LocalStorage) Name() string { return "local" }
+
+func (s *LocalStorage) Upload(content io.Reader, filename string, _ string) (string, error) {
+    clean := filepath.Clean(filename)
+    if strings.Contains(clean, "..") {
+        return "", fmt.Errorf("storage/local: path traversal detected in %q", filename)
+    }
+    fullPath := filepath.Join(s.UploadPath, clean)
+    if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+        return "", fmt.Errorf("storage/local: mkdir: %w", err)
+    }
+    dst, err := os.Create(fullPath)
+    if err != nil {
+        return "", fmt.Errorf("storage/local: create file: %w", err)
+    }
+    defer dst.Close()
+    if _, err = io.Copy(dst, content); err != nil {
+        return "", fmt.Errorf("storage/local: write file: %w", err)
+    }
+    urlPath := filepath.ToSlash(clean)
+    return fmt.Sprintf("%s/%s", s.BaseURL, strings.TrimLeft(urlPath, "/")), nil
+}
+
+func (s *LocalStorage) Delete(publicURL string) error {
+    rel := strings.TrimPrefix(publicURL, s.BaseURL)
+    rel = strings.TrimPrefix(rel, "/")
+    if rel == "" {
+        return fmt.Errorf("storage/local: cannot derive file path from URL %q", publicURL)
+    }
+    fullPath := filepath.Join(s.UploadPath, filepath.FromSlash(rel))
+    if !strings.HasPrefix(filepath.Clean(fullPath), filepath.Clean(s.UploadPath)) {
+        return fmt.Errorf("storage/local: path traversal in Delete URL %q", publicURL)
+    }
+    if err := os.Remove(fullPath); err != nil && !os.IsNotExist(err) {
+        return fmt.Errorf("storage/local: remove %q: %w", fullPath, err)
+    }
+    return nil
+}
+
+{% elif config.storage.provider == "s3" or config.storage.provider == "minio" %}
+// ---------------------------------------------------------------------------
+// S3 / MinIO Storage
+// ---------------------------------------------------------------------------
+
+type S3Storage struct {
+    client   *minio.Client
+    bucket   string
+    endpoint string
+    region   string
+    useSSL   bool
+}
+
+func NewS3Storage(cfg config.S3StorageConfig) (*S3Storage, error) {
+    client, err := minio.New(cfg.Endpoint, &minio.Options{
+        Creds:  credentials.NewStaticV4(cfg.AccessKeyID, cfg.SecretAccessKey, ""),
+        Secure: cfg.UseSSL,
+        Region: cfg.Region,
+    })
+    if err != nil {
+        return nil, fmt.Errorf("storage/s3: create client: %w", err)
+    }
+    ctx := context.Background()
+    exists, err := client.BucketExists(ctx, cfg.Bucket)
+    if err != nil {
+        return nil, fmt.Errorf("storage/s3: check bucket: %w", err)
+    }
+    if !exists {
+        if err = client.MakeBucket(ctx, cfg.Bucket, minio.MakeBucketOptions{Region: cfg.Region}); err != nil {
+            return nil, fmt.Errorf("storage/s3: create bucket: %w", err)
+        }
+    }
+    return &S3Storage{
+        client:   client,
+        bucket:   cfg.Bucket,
+        endpoint: cfg.Endpoint,
+        region:   cfg.Region,
+        useSSL:   cfg.UseSSL,
+    }, nil
+}
+
+func (s *S3Storage) Name() string { return "s3" }
+
+func (s *S3Storage) Upload(content io.Reader, filename string, contentType string) (string, error) {
+    if contentType == "" {
+        contentType = "application/octet-stream"
+    }
+    info, err := s.client.PutObject(
+        context.Background(),
+        s.bucket, filename, content, -1,
+        minio.PutObjectOptions{ContentType: contentType},
+    )
+    if err != nil {
+        return "", fmt.Errorf("storage/s3: upload %q: %w", filename, err)
+    }
+    return s.publicURL(info.Key), nil
+}
+
+func (s *S3Storage) Delete(publicURL string) error {
+    key := s.keyFromURL(publicURL)
+    if key == "" {
+        return fmt.Errorf("storage/s3: cannot derive object key from URL %q", publicURL)
+    }
+    if err := s.client.RemoveObject(context.Background(), s.bucket, key, minio.RemoveObjectOptions{}); err != nil {
+        return fmt.Errorf("storage/s3: delete %q: %w", key, err)
+    }
+    return nil
+}
+
+func (s *S3Storage) publicURL(key string) string {
+    if strings.Contains(s.endpoint, "amazonaws.com") {
+        return fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", s.bucket, s.region, key)
+    }
+    scheme := "http"
+    if s.useSSL {
+        scheme = "https"
+    }
+    return fmt.Sprintf("%s://%s/%s/%s", scheme, s.endpoint, s.bucket, key)
+}
+
+func (s *S3Storage) keyFromURL(rawURL string) string {
+    parsed, err := url.Parse(rawURL)
+    if err != nil {
+        return ""
+    }
+    trimmed := strings.TrimPrefix(parsed.Path, "/")
+    if strings.HasPrefix(trimmed, s.bucket+"/") {
+        return strings.TrimPrefix(trimmed, s.bucket+"/")
+    }
+    return trimmed
+}
+
+{% elif config.storage.provider == "supabase" %}
+// ---------------------------------------------------------------------------
+// Supabase Storage
+// ---------------------------------------------------------------------------
+
+type SupabaseStorage struct {
+    client     *storage_go.Client
+    bucket     string
+    storageURL string
+}
+
+func NewSupabaseStorage(cfg config.SupabaseConfig) (*SupabaseStorage, error) {
+    if cfg.URL == "" || cfg.Token == "" {
+        return nil, fmt.Errorf("storage/supabase: URL and Token must not be empty")
+    }
+    if cfg.Bucket == "" {
+        return nil, fmt.Errorf("storage/supabase: Bucket must not be empty")
+    }
+    storageURL := strings.TrimRight(cfg.URL, "/") + "/storage/v1"
+    return &SupabaseStorage{
+        client:     storage_go.NewClient(storageURL, cfg.Token, nil),
+        bucket:     cfg.Bucket,
+        storageURL: storageURL,
+    }, nil
+}
+
+func (s *SupabaseStorage) Name() string { return "supabase" }
+
+func (s *SupabaseStorage) Upload(content io.Reader, filename string, contentType string) (string, error) {
+    if contentType == "" {
+        contentType = "application/octet-stream"
+    }
+    upsert := true
+    _, err := s.client.UploadFile(s.bucket, filename, content, storage_go.FileOptions{
+        ContentType: &contentType,
+        Upsert:      &upsert,
+    })
+    if err != nil {
+        return "", fmt.Errorf("storage/supabase: upload %q: %w", filename, err)
+    }
+    return s.publicURL(filename), nil
+}
+
+func (s *SupabaseStorage) Delete(publicURL string) error {
+    key := s.keyFromURL(publicURL)
+    if key == "" {
+        return fmt.Errorf("storage/supabase: cannot derive file key from URL %q", publicURL)
+    }
+    if _, err := s.client.RemoveFile(s.bucket, []string{key}); err != nil {
+        return fmt.Errorf("storage/supabase: delete %q: %w", key, err)
+    }
+    return nil
+}
+
+func (s *SupabaseStorage) publicURL(filename string) string {
+    return fmt.Sprintf("%s/object/public/%s/%s", s.storageURL, s.bucket, filename)
+}
+
+func (s *SupabaseStorage) keyFromURL(rawURL string) string {
+    prefix := fmt.Sprintf("%s/object/public/%s/", s.storageURL, s.bucket)
+    if idx := strings.Index(rawURL, prefix); idx != -1 {
+        return rawURL[idx+len(prefix):]
+    }
+    parsed, _ := url.Parse(rawURL)
+    return strings.TrimPrefix(parsed.Path, "/")
+}
+
+{% endif %}

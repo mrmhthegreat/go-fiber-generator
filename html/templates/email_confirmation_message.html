@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.trans.email_verification}}</title>
+</head>
+<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;background-color:#f5f5f5">
+    <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f5f5f5;padding:40px 20px">
+        <tr>
+            <td align="center">
+                <table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background-color:#ffffff;border-radius:8px;overflow:hidden">
+                    <!-- Header -->
+                    <tr>
+                        <td style="padding:40px 40px 30px;text-align:center;background-color:#ffffff">
+                            <h1 style="margin:0;font-size:28px;font-weight:600;color:#111827">{{.trans.email_verification}}</h1>
+                        </td>
+                    </tr>
+                    
+                    <!-- Content -->
+                    <tr>
+                        <td style="padding:0 40px 40px">
+                            <p style="margin:0 0 24px;font-size:16px;line-height:24px;color:#374151">{{.hey_user_display}}  {{.name}},</p>
+                            
+                            <p style="margin:0 0 32px;font-size:14px;line-height:22px;color:#6b7280">{{.trans.thank_you_for_choosing_site_name_company_use_the_f}} <strong style="color:#111827">5  {{.trans.minutes}}</strong> {{.trans.do_not_share_this_code_with_others_including_site_}}</p>
+                            
+                            <!-- OTP Code -->
+                            <table width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 32px">
+                                <tr>
+                                    <td align="center" style="padding:32px;background-color:#f9fafb;border-radius:8px;border:2px dashed #e5e7eb">
+                                        <div style="font-size:36px;font-weight:700;letter-spacing:8px;color:#111827">{{.code}}</div>
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <p style="margin:0 0 24px;font-size:13px;line-height:20px;color:#9ca3af">{{.trans.youre_receiving_this_email_because_user_user_displ}}</p>
+                            
+                            <!-- Help -->
+                            <table width="100%" cellpadding="0" cellspacing="0" style="margin:32px 0 0;padding:24px 0 0;border-top:1px solid #e5e7eb">
+                                <tr>
+                                    <td style="font-size:13px;color:#6b7280;text-align:center">
+                                        {{.trans.need_help_ask_at}} <a href="mailto:archisketch@gmail.com" style="color:#2563eb;text-decoration:none">{{.trans.archisketchgmailcom}}</a>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    
+                    <!-- Footer -->
+                    <tr>
+                        <td style="padding:24px 40px;background-color:#f9fafb;text-align:center;border-top:1px solid #e5e7eb">
+                            <p style="margin:0 0 8px;font-size:14px;font-weight:600;color:#111827">{{.trans.site_name_company}}</p>
+                            <p style="margin:0 0 16px;font-size:12px;color:#6b7280">{{.trans.address_540_city_state}}</p>
+                            <p style="margin:0;font-size:11px;color:#9ca3af">{{.trans.copyright_site_name_all_rights_reserved}}</p>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>

@@ -1,0 +1,155 @@
+package support
+
+import (
+	"log"
+	"sync"
+	"time"
+
+	"github.com/gofiber/contrib/websocket"
+
+	"{{ config.project.module }}/internal/domain"
+	resppkg "{{ config.project.module }}/pkg/response"
+	ws "{{ config.project.module }}/websocket"
+)
+
+{% if config.websocket.enabled %}
+{# ────────────────────────────────────────────────────────────── #}
+{# Resolve pool/channel names once at template level              #}
+{# ────────────────────────────────────────────────────────────── #}
+{% set ns = namespace(
+    admin_pool=None,
+    user_pool=None,
+    admin_chan=None,
+    user_chan=None,
+    status_chan=None,
+    notify_chan=None
+) %}
+{% for pool in config.websocket.hub.pools %}
+{% if pool.enabled %}
+    {% if 'admin' in pool.name | lower %}{% set ns.admin_pool = pool %}{% endif %}
+    {% if 'user' in pool.name | lower and 'admin' not in pool.name | lower %}{% set ns.user_pool = pool %}{% endif %}
+{% endif %}
+{% endfor %}
+{% for channel in config.websocket.hub.channels %}
+{% if channel.get('enabled', true) %}
+    {% if 'admin' in channel.name | lower %}{% set ns.admin_chan = channel %}{% endif %}
+    {% if 'user' in channel.name | lower and 'admin' not in channel.name | lower %}{% set ns.user_chan = channel %}{% endif %}
+    {% if 'status' in channel.name | lower %}{% set ns.status_chan = channel %}{% endif %}
+    {% if 'notify' in channel.name | lower %}{% set ns.notify_chan = channel %}{% endif %}
+{% endif %}
+{% endfor %}
+
+{# ────────────────────────────────────────────────────────────── #}
+{# Shared types (both modes)                                      #}
+{# ────────────────────────────────────────────────────────────── #}
+{% if config.websocket.get('presence', {}).get('enabled', false) %}
+type StatusUpdate struct {
+	UserID   uint `json:"user_id"`
+	IsOnline bool `json:"is_online"`
+}
+{% endif %}
+
+type UserConn struct {
+	UserID uint
+	Conn   WSWriter
+}
+
+{# 2. SupportHub — admin↔user support chat                         #}
+{# ──────────────────────────────────────────────────────────────── #}
+{% if config.chat.get('modes', {}).get('support', false) and config.websocket.get('dedicated', {}).get('support', {}).get('enabled', true) %}
+
+// SupportHub manages admin connections and support message broadcasting.
+type SupportHub struct {
+{% if ns.admin_pool %}
+	{{ ns.admin_pool.name }} map[*websocket.Conn]bool
+	register{{ ns.admin_pool.name | title }}   chan *websocket.Conn
+	unregister{{ ns.admin_pool.name | title }} chan *websocket.Conn
+{% endif %}
+{% if ns.admin_chan %}
+	{{ ns.admin_chan.name }} chan domain.Message
+{% endif %}
+	mu sync.RWMutex
+}
+
+var SupportHubInst = SupportHub{
+{% if ns.admin_pool %}
+	{{ ns.admin_pool.name }}: make(map[*websocket.Conn]bool),
+	register{{ ns.admin_pool.name | title }}:   make(chan *websocket.Conn),
+	unregister{{ ns.admin_pool.name | title }}: make(chan *websocket.Conn),
+{% endif %}
+{% if ns.admin_chan %}
+	{{ ns.admin_chan.name }}: make(chan domain.Message, {{ ns.admin_chan.buffer_size }}),
+{% endif %}
+}
+
+func (h *SupportHub) Run() {
+	for {
+		select {
+{% if ns.admin_pool %}
+		case conn := <-h.register{{ ns.admin_pool.name | title }}:
+			h.mu.Lock()
+			h.{{ ns.admin_pool.name }}[conn] = true
+			h.mu.Unlock()
+
+		case conn := <-h.unregister{{ ns.admin_pool.name | title }}:
+			h.mu.Lock()
+			if _, ok := h.{{ ns.admin_pool.name }}[conn]; ok {
+				delete(h.{{ ns.admin_pool.name }}, conn)
+				conn.Close()
+			}
+			h.mu.Unlock()
+{% endif %}
+
+{% if ns.admin_chan %}
+		case msg := <-h.{{ ns.admin_chan.name }}:
+			resp := resppkg.ConvertToMessageResponse(&msg)
+			h.mu.RLock()
+			var staleAdmins []*websocket.Conn
+{% if ns.admin_pool %}
+			for conn := range h.{{ ns.admin_pool.name }} {
+				if err := conn.WriteJSON(resp); err != nil {
+					staleAdmins = append(staleAdmins, conn)
+				}
+			}
+{% endif %}
+			h.mu.RUnlock()
+			if len(staleAdmins) > 0 {
+				h.mu.Lock()
+				for _, conn := range staleAdmins {
+					delete(h.{{ ns.admin_pool.name }}, conn)
+					conn.Close()
+				}
+				h.mu.Unlock()
+			}
+{% endif %}
+		}
+	}
+}
+
+func (h *SupportHub) BroadcastToAdmins(msg interface{}) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+{% if ns.admin_pool %}
+	for conn := range h.{{ ns.admin_pool.name }} {
+		_ = conn.WriteJSON(msg)
+	}
+{% endif %}
+}
+
+func NotifyAdmins(msg domain.Message) {
+{% if ns.admin_chan %}
+	select {
+	case SupportHubInst.{{ ns.admin_chan.name }} <- msg:
+	case <-time.After(100 * time.Millisecond):
+		log.Println("Dropped message to Admin channel (full)")
+	}
+{% endif %}
+}
+
+func StartSupportHub() {
+	ws.RegisterAdminBroadcaster(&SupportHubInst)
+	go SupportHubInst.Run()
+}
+
+{% endif %}{# dedicated.support #}
+{% endif %}{# websocket.enabled #}

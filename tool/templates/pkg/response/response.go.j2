@@ -1,0 +1,303 @@
+package response
+
+import (
+{% if model.has_time_fields or model.timestamps %}
+    "time"
+{% endif %}
+{% if model.has_json_fields %}
+    "gorm.io/datatypes"
+{% endif %}
+
+    "{{ config.project.module }}/internal/domain"
+)
+
+{% if model.list_response and model.list_resppkg.enabled %}
+// {{ model.name }}ListItem represents a {{ model.name | lower }} in list view
+type {{ model.name }}ListItem struct {
+{% for field in model.list_resppkg.fields %}
+{% if field.omitempty %}
+    {{ field.name }} {{ field.type }} `json:"{{ field.json_name }},omitempty"`
+{% else %}
+    {{ field.name }} {{ field.type }} `json:"{{ field.json_name }}"`
+{% endif %}
+{% endfor %}
+{% for relation in model.list_resppkg.get('include_relations', []) %}
+{% if relation.response_type == 'nested_list' %}
+    {{ relation.name }} []{{ relation.response_struct }} `json:"{{ relation.json_name }},omitempty"`
+{% elif relation.response_type == 'nested_detail' %}
+    {{ relation.name }} *{{ relation.response_struct }} `json:"{{ relation.json_name }},omitempty"`
+{% elif relation.response_type == 'id_only' %}
+    {{ relation.name }}ID *uint `json:"{{ relation.json_name }}_id,omitempty"`
+{% endif %}
+{% endfor %}
+}
+
+// To{{ model.name }}ListItem converts a model to list response
+func To{{ model.name }}ListItem(m *models.{{ model.name }}) {{ model.name }}ListItem {
+    if m == nil {
+        return {{ model.name }}ListItem{}
+    }
+
+    item := {{ model.name }}ListItem{
+{% for field in model.list_resppkg.fields %}
+        {{ field.name }}: m.{{ field.from_field }},
+{% endfor %}
+    }
+
+{% for relation in model.list_resppkg.get('include_relations', []) %}
+{% if relation.response_type == 'nested_list' %}
+    if len(m.{{ relation.name }}) > 0 {
+        item.{{ relation.name }} = To{{ relation.response_struct }}s(m.{{ relation.name }})
+    }
+{% elif relation.response_type == 'nested_detail' %}
+    if m.{{ relation.name }} != nil {
+        v := To{{ relation.response_struct }}(m.{{ relation.name }})
+        item.{{ relation.name }} = &v
+    }
+{% elif relation.response_type == 'id_only' %}
+    if m.{{ relation.foreign_key }} != nil && *m.{{ relation.foreign_key }} > 0 {
+        item.{{ relation.name }}ID = m.{{ relation.foreign_key }}
+    }
+{% endif %}
+{% endfor %}
+
+    return item
+}
+
+// To{{ model.name }}ListItems converts multiple models to list responses
+func To{{ model.name }}ListItems(ms []models.{{ model.name }}) []{{ model.name }}ListItem {
+    items := make([]{{ model.name }}ListItem, len(ms))
+    for i := range ms {
+        items[i] = To{{ model.name }}ListItem(&ms[i])
+    }
+    return items
+}
+
+// {{ model.name }}ListResponse represents a paginated list of {{ model.name | lower }}s
+type {{ model.name }}ListResponse struct {
+    Data     []{{ model.name }}ListItem `json:"data"`
+    HasMore  bool                       `json:"has_more"`
+    Page     int                        `json:"page,omitempty"`
+    PageSize int                        `json:"page_size,omitempty"`
+}
+
+// New{{ model.name }}ListResponse creates a paginated list response
+func New{{ model.name }}ListResponse(items []{{ model.name }}ListItem, hasMore bool, page, pageSize int) {{ model.name }}ListResponse {
+    return {{ model.name }}ListResponse{
+        Data:     items,
+        HasMore:  hasMore,
+        Page:     page,
+        PageSize: pageSize,
+    }
+}
+
+{% endif %}
+
+{% if model.detail_response and model.detail_resppkg.enabled %}
+// {{ model.name }}DetailResponse represents detailed {{ model.name | lower }} information
+type {{ model.name }}DetailResponse struct {
+{% for field in model.detail_resppkg.fields %}
+{% if field.get('omitempty') %}
+    {{ field.name }} {{ field.type }} `json:"{{ field.json_name }},omitempty"`
+{% else %}
+    {{ field.name }} {{ field.type }} `json:"{{ field.json_name }}"`
+{% endif %}
+{% endfor %}
+{% for relation in model.detail_resppkg.get('include_relations', []) %}
+{% if relation.response_type == 'nested_list' %}
+    {{ relation.name }} []{{ relation.response_struct }} `json:"{{ relation.json_name }},omitempty"`
+{% elif relation.response_type == 'nested_detail' %}
+    {{ relation.name }} *{{ relation.response_struct }} `json:"{{ relation.json_name }},omitempty"`
+{% elif relation.response_type == 'id_only' %}
+    {{ relation.name }}ID *uint `json:"{{ relation.json_name }}_id,omitempty"`
+{% endif %}
+{% endfor %}
+}
+
+// To{{ model.name }}DetailResponse converts a model to detail response with nil checks
+func To{{ model.name }}DetailResponse(m *models.{{ model.name }}) {{ model.name }}DetailResponse {
+    if m == nil {
+        return {{ model.name }}DetailResponse{}
+    }
+
+    resp := {{ model.name }}DetailResponse{
+{% for field in model.detail_resppkg.fields %}
+        {{ field.name }}: m.{{ field.from_field }},
+{% endfor %}
+    }
+
+{% for relation in model.detail_resppkg.get('include_relations', []) %}
+{% if relation.response_type == 'nested_list' %}
+    if len(m.{{ relation.name }}) > 0 {
+        resp.{{ relation.name }} = To{{ relation.response_struct }}s(m.{{ relation.name }})
+    }
+{% elif relation.response_type == 'nested_detail' %}
+    if m.{{ relation.name }} != nil {
+        v := To{{ relation.response_struct }}(m.{{ relation.name }})
+        resp.{{ relation.name }} = &v
+    }
+{% elif relation.response_type == 'id_only' %}
+    if m.{{ relation.foreign_key }} != nil && *m.{{ relation.foreign_key }} > 0 {
+        resp.{{ relation.name }}ID = m.{{ relation.foreign_key }}
+    }
+{% endif %}
+{% endfor %}
+
+    return resp
+}
+
+{% endif %}
+
+{% if model.custom_getters %}
+{% for getter in model.custom_getters %}
+{% if getter.response_type == 'custom' and getter.custom_response %}
+
+{% set cr = getter.custom_response %}
+
+{# ---- Nested sub-structs for each preload relation ---- #}
+{% for prel in cr.preload_relations %}
+
+{# -- Deep nested sub-structs (nested_responses inside this preload) -- #}
+{% for nr in prel.nested_responses %}
+// {{ nr.struct }} represents the nested {{ nr.name }} in {{ prel.struct }}
+type {{ nr.struct }} struct {
+{% for f in nr.typed_fields %}
+{% if f.omitempty %}
+    {{ f.go_name }} {{ f.type }} `json:"{{ f.json_name }},omitempty"`
+{% else %}
+    {{ f.go_name }} {{ f.type }} `json:"{{ f.json_name }}"`
+{% endif %}
+{% endfor %}
+}
+{% endfor %}
+
+// {{ prel.struct }} represents the {{ prel.name }} relation in {{ cr.name }}
+type {{ prel.struct }} struct {
+{% for f in prel.typed_fields %}
+{% if f.omitempty %}
+    {{ f.go_name }} {{ f.type }} `json:"{{ f.json_name }},omitempty"`
+{% else %}
+    {{ f.go_name }} {{ f.type }} `json:"{{ f.json_name }}"`
+{% endif %}
+{% endfor %}
+{% for nr in prel.nested_responses %}
+{% if nr.rel_type == 'list' %}
+    {{ nr.name }} []{{ nr.struct }} `json:"{{ nr.name | lower }},omitempty"`
+{% else %}
+    {{ nr.name }} *{{ nr.struct }} `json:"{{ nr.name | lower }},omitempty"`
+{% endif %}
+{% endfor %}
+}
+
+{% endfor %}
+
+{# ---- Main custom response struct ---- #}
+// {{ cr.name }} represents custom response for {{ getter.name }}
+type {{ cr.name }} struct {
+{% for field in cr.fields %}
+{% if field.get('omitempty') %}
+    {{ field.name }} {{ field.type }} `json:"{{ field.json_name }},omitempty"`
+{% else %}
+    {{ field.name }} {{ field.type }} `json:"{{ field.json_name }}"`
+{% endif %}
+{% endfor %}
+{% for prel in cr.preload_relations %}
+{% if prel.rel_type == 'list' %}
+    {{ prel.name }} []{{ prel.struct }} `json:"{{ prel.name | lower }},omitempty"`
+{% else %}
+    {{ prel.name }} *{{ prel.struct }} `json:"{{ prel.name | lower }},omitempty"`
+{% endif %}
+{% endfor %}
+}
+
+// To{{ cr.name }} converts model to custom response
+func To{{ cr.name }}(m *models.{{ model.name }}) {{ cr.name }} {
+    if m == nil {
+        return {{ cr.name }}{}
+    }
+    
+    resp := {{ cr.name }}{
+{% for field in cr.fields %}
+        {{ field.name }}: m.{{ field.from_field }},
+{% endfor %}
+    }
+    
+{% for prel in cr.preload_relations %}
+{% if prel.rel_type == 'list' %}
+    for _, src := range m.{{ prel.name }} {
+        nested := {{ prel.struct }}{
+{% for f in prel.typed_fields %}
+            {{ f.go_name }}: src.{{ f.from_field }},
+{% endfor %}
+        }
+{% for nr in prel.nested_responses %}
+{% if nr.rel_type == 'list' %}
+        for _, nsrc := range src.{{ nr.name }} {
+            nested.{{ nr.name }} = append(nested.{{ nr.name }}, {{ nr.struct }}{
+{% for f in nr.typed_fields %}
+                {{ f.go_name }}: nsrc.{{ f.from_field }},
+{% endfor %}
+            })
+        }
+{% else %}
+        if src.{{ nr.name }} != nil {
+            nitem := {{ nr.struct }}{
+{% for f in nr.typed_fields %}
+                {{ f.go_name }}: src.{{ nr.name }}.{{ f.from_field }},
+{% endfor %}
+            }
+            nested.{{ nr.name }} = &nitem
+        }
+{% endif %}
+{% endfor %}
+        resp.{{ prel.name }} = append(resp.{{ prel.name }}, nested)
+    }
+{% else %}
+    if m.{{ prel.name }} != nil {
+        nested := {{ prel.struct }}{
+{% for f in prel.typed_fields %}
+            {{ f.go_name }}: m.{{ prel.name }}.{{ f.from_field }},
+{% endfor %}
+        }
+{% for nr in prel.nested_responses %}
+{% if nr.rel_type == 'list' %}
+        for _, nsrc := range m.{{ prel.name }}.{{ nr.name }} {
+            nested.{{ nr.name }} = append(nested.{{ nr.name }}, {{ nr.struct }}{
+{% for f in nr.typed_fields %}
+                {{ f.go_name }}: nsrc.{{ f.from_field }},
+{% endfor %}
+            })
+        }
+{% else %}
+        if m.{{ prel.name }}.{{ nr.name }} != nil {
+            nitem := {{ nr.struct }}{
+{% for f in nr.typed_fields %}
+                {{ f.go_name }}: m.{{ prel.name }}.{{ nr.name }}.{{ f.from_field }},
+{% endfor %}
+            }
+            nested.{{ nr.name }} = &nitem
+        }
+{% endif %}
+{% endfor %}
+        resp.{{ prel.name }} = &nested
+    }
+{% endif %}
+{% endfor %}
+    
+    return resp
+}
+
+{% if not getter.unique %}
+// To{{ cr.name }}List converts models to custom responses
+func To{{ cr.name }}List(ms []models.{{ model.name }}) []{{ cr.name }} {
+    items := make([]{{ cr.name }}, len(ms))
+    for i := range ms {
+        items[i] = To{{ cr.name }}(&ms[i])
+    }
+    return items
+}
+{% endif %}
+
+{% endif %}
+{% endfor %}
+{% endif %}

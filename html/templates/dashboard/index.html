@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport"
+    content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0" />
+  <meta http-equiv="X-UA-Compatible" content="ie=edge" />
+  <link rel="icon" type="image/png" href="/static/favicon.ico" />
+
+  <title x-text="trans.seller_dashboard"></title>
+  
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.css" />
+  <link rel="stylesheet" href="/static/src/output.css" />
+</head>
+
+<body
+  x-data="{ page: 'Dashboard', 'loaded': true, 'darkMode': false, 'stickyMenu': false, 'sidebarToggle': false, 'scrollTop': false , selected: 'Dashboard',
+        trans:{{.trans}},
+        wallet: {{.wallet}},
+        orderStats: {{.orderStats}},
+        user: {{.streamer}},
+        data: {{.data}},
+        perms:{{.perms}},
+        loadingStats: false,
+        tabselected: 'info',
+        ...userTableData()
+
+}
+  
+  
+  
+     
+  
+  "
+  x-init="
+         darkMode = JSON.parse(localStorage.getItem('darkMode'));
+         $watch('darkMode', value => localStorage.setItem('darkMode', JSON.stringify(value)))"
+  :class="{'dark bg-gray-900': darkMode === true}">
+  <!-- ===== Preloader Start ===== -->
+
+  {{template "dashboard/partials/preloader" }}
+
+  <!-- ===== Preloader End ===== -->
+
+  <!-- ===== Page Wrapper Start ===== -->
+  <div class="flex h-screen overflow-hidden">
+    <!-- ===== Sidebar Start ===== -->
+    <!-- ===== Sidebar End ===== -->
+    {{template "dashboard/partials/sidebar" . }}
+
+    <!-- ===== Content Area Start ===== -->
+    <div class="relative flex flex-col flex-1 overflow-x-hidden overflow-y-auto">
+      <!-- Small Device Overlay Start -->
+      <!-- Small Device Overlay End -->
+      {{template "dashboard/partials/overlay" }}
+
+      <!-- ===== Header Start ===== -->
+      <!-- ===== Header End ===== -->
+      {{template "dashboard/partials/header" . }}
+
+      <!-- ===== Main Content Start ===== -->
+      <main>
+        <!-- Initial User Detail Page -->
+        {{template "dashboard/partials/streamer/user_detail_page" . }}
+      </main>
+      <!-- ===== Main Content End ===== -->
+    </div>
+    <!-- ===== Content Area End ===== -->
+  </div>
+  <!-- ===== Page Wrapper End ===== -->
+
+  <!-- Alpine.js -->
+ <script src="https://cdn.jsdelivr.net/npm/apexcharts@3.44.0/dist/apexcharts.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"></script>
+  <script src="/static/dashboard/js/base.js"></script>
+  <script src="/static/dashboard/js/index.js"></script>
+</body>
+
+</html>

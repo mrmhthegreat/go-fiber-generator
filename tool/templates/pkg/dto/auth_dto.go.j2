@@ -1,0 +1,162 @@
+package dto
+
+import "mime/multipart"
+
+{% set auth = config.authentication %}
+{% set identifier = auth.identifier %}
+
+// =============================================================================
+// AUTHENTICATION DTOs - AUTO-GENERATED
+// =============================================================================
+
+{% if auth.email_password.enabled %}
+
+// RegisterUserInput defines the input for user registration
+{% if config._has_file_uploads %}
+// Note: This uses multipart/form-data due to file uploads
+{% endif %}
+type RegisterUserInput struct {
+{% for field in identifier.register_fields %}
+{% if not field.get('sensitive', False) and not field.get('file_upload', False) %}
+	{{ field.field | title }}  {{ field.dto_type }}  `json:"{{ field.field }}" {% if field.get('form_field') %}form:"{{ field.form_field }}"{% endif %} validate:"{{ field.validation }}"`
+{% endif %}
+{% endfor %}
+{% for field in identifier.register_fields %}
+{% if field.get('file_upload', False) %}
+	{{ field.field | title }}  {{ field.dto_type }}  `form:"{{ field.form_field }}"`  // File upload
+{% endif %}
+{% endfor %}
+	Password  string  `json:"password" form:"password" validate:"required,min=8"`
+}
+
+// LoginUserInput defines the input for user login
+{% set enabled_login = config._enabled_login_method %}
+{% if enabled_login %}
+type LoginUserInput struct {
+{% if enabled_login.get('json_field') %}
+	{{ enabled_login.json_field | title }}  string  `json:"{{ enabled_login.json_field }}" validate:"{{ enabled_login.validation }}"`  // {{ enabled_login.get('dto_description', enabled_login.field | title) }}
+{% else %}
+	{{ enabled_login.field | title }}  string  `json:"{{ enabled_login.field }}" validate:"{{ enabled_login.validation }}"`
+{% endif %}
+	Password  string  `json:"password" validate:"required"`
+}
+{% else %}
+// No login method enabled - please enable one in config
+{% endif %}
+
+{% endif %}
+
+{% if auth.email_password.email_verification.enabled %}
+// VerifyEmailInput defines the input for email verification
+type VerifyEmailInput struct {
+	OTP  string  `json:"otp" validate:"required,len={{ auth.email_password.email_verification.otp_length }}"`
+}
+
+// ResendVerificationInput defines the input for resending verification email
+type ResendVerificationInput struct {
+	Email  string  `json:"email" validate:"required,email"`
+}
+{% endif %}
+
+{% if auth.email_password.forgot_password.enabled %}
+// ForgotPasswordInput defines the input for forgot password request
+type ForgotPasswordInput struct {
+{% if auth.email_password.forgot_password.identifier_field == 'email' %}
+	Email  string  `json:"email" validate:"required,email"`
+{% elif auth.email_password.forgot_password.identifier_field == 'username' %}
+	Username  string  `json:"username" validate:"required"`
+{% elif auth.email_password.forgot_password.identifier_field == 'email_or_username' %}
+	Identifier  string  `json:"identifier" validate:"required"`  // Email or username
+{% endif %}
+}
+
+// ResetPasswordInput defines the input for password reset
+type ResetPasswordInput struct {
+{% if auth.email_password.forgot_password.identifier_field == 'email' %}
+	Email  string  `json:"email" validate:"required,email"`
+{% elif auth.email_password.forgot_password.identifier_field == 'username' %}
+	Username  string  `json:"username" validate:"required"`
+{% elif auth.email_password.forgot_password.identifier_field == 'email_or_username' %}
+	Identifier  string  `json:"identifier" validate:"required"`  // Email or username
+{% endif %}
+	OTP  string  `json:"otp" validate:"required,len={{ auth.email_password.email_verification.otp_length }}"`
+	NewPassword  string  `json:"new_password" validate:"required,min={{ auth.email_password.password_validation.min_length }}"`
+}
+{% endif %}
+
+{% if auth.email_password.change_password.enabled %}
+// ChangePasswordInput defines the input for changing password
+type ChangePasswordInput struct {
+{% if auth.email_password.change_password.require_old_password %}
+	OldPassword  string  `json:"old_password" validate:"required"`
+{% endif %}
+	NewPassword  string  `json:"new_password" validate:"required,min={{ auth.email_password.password_validation.min_length }}"`
+}
+{% endif %}
+
+{% if auth.social_auth.google.enabled %}
+// GoogleLoginInput defines the input for Google OAuth login
+type GoogleLoginInput struct {
+	Token  string  `json:"token" validate:"required"`  // Google ID token
+}
+{% endif %}
+
+{% if auth.social_auth.facebook.enabled %}
+// FacebookLoginInput defines the input for Facebook OAuth login
+type FacebookLoginInput struct {
+	AccessToken  string  `json:"access_token" validate:"required"`
+}
+{% endif %}
+
+{% if auth.refresh_token.enabled %}
+// RefreshTokenInput defines the input for token refresh
+type RefreshTokenInput struct {
+	RefreshToken  string  `json:"refresh_token" validate:"required"`
+}
+{% endif %}
+
+{% if auth.app_check_tokens %}
+{% for token in auth.app_check_tokens %}
+// {{ token.name | title | replace('_', '') }}Input defines the input for {{ token.name }} generation
+type {{ token.name | title | replace('_', '') }}Input struct {
+{% for claim in token.claims %}
+{% if claim.source == 'input' %}
+	{{ claim.name | title }}  {{ claim.type }}  `json:"{{ claim.name }}"`
+{% endif %}
+{% endfor %}
+}
+
+{% endfor %}
+{% endif %}
+
+// =============================================================================
+// AUTHENTICATION RESPONSES
+// =============================================================================
+
+// AuthUserResponse is the standard authentication response
+type AuthUserResponse struct {
+	Token  string  `json:"token"`
+{% if auth.refresh_token.enabled %}
+	RefreshToken  string  `json:"refresh_token,omitempty"`
+{% endif %}
+{% if auth.email_password.email_verification.enabled %}
+	Verified  bool  `json:"verified"`
+	Message  string  `json:"message,omitempty"`
+{% endif %}
+	User  *UserResponse  `json:"user,omitempty"`
+}
+
+// UserResponse is the user data returned in auth responses
+type UserResponse struct {
+	ID  uint  `json:"id"`
+{% for field in identifier.register_fields %}
+{% if not field.get('sensitive', False) %}
+	{{ field.field | title }}  {{ field.dto_type }}  `json:"{{ field.field }}"`
+{% endif %}
+{% endfor %}
+{% if auth.rbac.enabled %}
+	Role  string  `json:"role"`
+	IsAdmin  bool  `json:"is_admin"`
+{% endif %}
+}
+

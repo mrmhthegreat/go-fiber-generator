@@ -1,0 +1,606 @@
+package auth
+
+import (
+	"log"
+
+	"github.com/gofiber/fiber/v2"
+
+{% if config.authentication.web_auth.get('use_translations', False) %}
+	# "github.com/bytedance/sonic"
+{% endif %}
+{% if config.authentication.web_auth.get('use_translations', False) %}
+	# "github.com/spf13/viper"
+{% endif %}
+
+
+	authpkg "{{ config.project.module }}/pkg/auth"
+	i18npkg "{{ config.project.module }}/pkg/i18n"
+	emailpkg "{{ config.project.module }}/pkg/email"
+	rbacpkg "{{ config.project.module }}/pkg/rbac"
+	utilspkg "{{ config.project.module }}/pkg/utils"
+	"{{ config.project.module }}/internal/domain"
+	dtopkg "{{ config.project.module }}/pkg/dto"
+)
+
+{% set auth = config.authentication %}
+{% set identifier = auth.identifier %}
+{% set web = auth.web_auth %}
+{% set repo_var = auth.get('repo_var', 'authRepo') %}
+{% set model = config.project.user_model_name %}
+
+{# ─────────────────────────────────────────────────────────────────────────── #}
+{# Helper macro: get repo from context                                          #}
+{# All handlers call utilspkg.Get{{ config.project.repository_name }}(c) #}
+{# which returns the pre-wired repository — never raw *gorm.DB                 #}
+{# ─────────────────────────────────────────────────────────────────────────── #}
+
+{% if web.enabled %}
+
+{# ============================================================ #}
+{# SIGNUP                                                        #}
+{# ============================================================ #}
+{% if web.endpoints.signup.enabled %}
+
+// SignupPage renders the signup / registration page
+func SignupPage(c *fiber.Ctx) error {
+{% if auth.session.enabled %}
+	sess, err := utilspkg.GetSession(c)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "internal_server_error")
+	}
+	if sess.Get("authenticated") == true {
+		return c.Redirect("/dashboard")
+	}
+{% endif %}
+
+{% if web.get('use_translations', False) %}
+	# translation := i18npkg.MergeMaps(
+	# 	i18npkg.TranslateMap(c, config.BasicEveryTranslations),
+	# 	i18npkg.TranslateMap(c, config.BasicAuthTranslations),
+	# )
+	# transJSON, _ := sonic.Marshal(translation)
+	return c.Render("basic/signup", fiber.Map{
+		"csrfToken": c.Locals("csrf").(string),
+		# "trans":     string(transJSON),
+	})
+{% else %}
+	return c.Render("basic/signup", fiber.Map{
+		"csrfToken": c.Locals("csrf").(string),
+	})
+{% endif %}
+}
+
+// HandleSignup processes the signup form
+func HandleSignup(c *fiber.Ctx) error {
+	{{ repo_var }} := utilspkg.Get{{ config.project.repository_name }}(c)
+	if {{ repo_var }} == nil {
+		c.Set("HX-Redirect", "/server-error")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{})
+	}
+
+	var input dtopkg.RegisterUserInput
+	if err := c.BodyParser(&input); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid_input"})
+	}
+
+	// Check uniqueness for fields that require it
+{% for field in identifier.register_fields %}
+{% if field.get('unique', False) and field.get('repository_check') and not field.get('file_upload', False) %}
+{% if field.dto_type.startswith('*') %}
+	if input.{{ field.field | title }} != nil {
+		if _, err := {{ repo_var }}.{{ field.repository_check }}(*input.{{ field.field | title }}); err == nil {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"{{ field.field }}": true})
+		}
+	}
+{% else %}
+	if _, err := {{ repo_var }}.{{ field.repository_check }}(input.{{ field.field | title }}); err == nil {
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"{{ field.field }}": true})
+	}
+{% endif %}
+{% endif %}
+{% endfor %}
+
+	hashedPassword, err := authpkg.HashPassword(input.Password)
+	if err != nil {
+		c.Set("HX-Redirect", "/server-error")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{})
+	}
+
+	user := domain.{{ model }}{
+{% for field in identifier.register_fields %}
+{% if not field.get('sensitive', False) and not field.get('file_upload', False) %}
+		{{ field.field | title }}: input.{{ field.field | title }},
+{% endif %}
+{% endfor %}
+		Password:     &hashedPassword,
+		AuthProvider: "local",
+{% if auth.email_password.email_verification.enabled %}
+		{{ auth.email_password.email_verification.model_field }}: false,
+{% endif %}
+{% if config.config.rbac.enabled %}
+		{{ config.config.rbac.model_field }}: "{{ config.rbac.default_role | default('user') }}",
+{% endif %}
+	}
+
+	u, err := {{ repo_var }}.CreateUser(&user)
+	if err != nil {
+		log.Printf("Error creating user: %v", err)
+		c.Set("HX-Redirect", "/server-error")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{})
+	}
+
+{% if auth.email_password.email_verification.enabled %}
+	// Send verification OTP
+	otp := authpkg.GenerateOTP()
+	authpkg.StoreOTP(u.Email, otp)
+	go func() {
+		if err := emailpkg.SendEmail(u.Email, "Email Verification", "{{ auth.email_password.email_verification.email_template }}", fiber.Map{
+			"code": otp,
+			"name": u.Fullname,
+		}); err != nil {
+			log.Printf("Error sending verification email: %v", err)
+		}
+	}()
+{% endif %}
+
+{% if auth.session.enabled %}
+	sess, _ := utilspkg.GetSession(c)
+	sess.Set("authenticated", true)
+	sess.Set("user_id", u.ID)
+	sess.Set("email", u.Email)
+{% if auth.email_password.email_verification.enabled %}
+	sess.Set("is_verified", false)
+{% endif %}
+{% if config.rbac.enabled %}
+	sess.Set("role", u.{{ config.rbac.model_field }})
+{% endif %}
+	sess.Save()
+{% endif %}
+
+	c.Set("HX-Redirect", "/dashboard")
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{})
+}
+{% endif %}
+
+{# ============================================================ #}
+{# LOGIN                                                         #}
+{# ============================================================ #}
+{% if web.endpoints.login.enabled %}
+
+// LoginPage renders the login page
+func LoginPage(c *fiber.Ctx) error {
+{% if auth.session.enabled %}
+	sess, err := utilspkg.GetSession(c)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "internal_server_error")
+	}
+
+	// Redirect already-authenticated users
+	if sess.Get("authenticated") == true {
+		userID, _ := sess.Get("user_id").(uint)
+		if userID != 0 {
+			{{ repo_var }} := utilspkg.Get{{ config.project.repository_name }}(c)
+			user, _ := {{ repo_var }}.GetByID(userID)
+			if user != nil {
+{% if config.rbac.enabled %}
+				return c.Redirect(rbacpkg.GetDashboardBasePath(user.{{ config.rbac.model_field }}))
+{% else %}
+				return c.Redirect("/dashboard")
+{% endif %}
+			}
+			sess.Destroy()
+		}
+	}
+{% endif %}
+
+{% if web.get('use_translations', False) %}
+	# translation := i18npkg.MergeMaps(
+	# 	i18npkg.TranslateMap(c, config.BasicEveryTranslations),
+	# 	i18npkg.TranslateMap(c, config.BasicAuthTranslations),
+	# )
+	# transJSON, _ := sonic.Marshal(translation)
+	return c.Render("basic/signin", fiber.Map{
+		"csrfToken": c.Locals("csrf").(string),
+		# "trans":     string(transJSON),
+	})
+{% else %}
+	return c.Render("basic/signin", fiber.Map{
+		"csrfToken": c.Locals("csrf").(string),
+	})
+{% endif %}
+}
+
+// HandleLogin processes the login form
+func HandleLogin(c *fiber.Ctx) error {
+	var input dtopkg.LoginUserInput
+	if err := c.BodyParser(&input); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid_input"})
+	}
+
+	{{ repo_var }} := utilspkg.Get{{ config.project.repository_name }}(c)
+	if {{ repo_var }} == nil {
+		c.Set("HX-Redirect", "/server-error")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{})
+	}
+
+{% set enabled_login = config._enabled_login_method %}
+{% if enabled_login %}
+{% if enabled_login.get('json_field') %}
+	user, err := {{ repo_var }}.{{ enabled_login.repository_method }}(input.{{ enabled_login.json_field | title }})
+{% else %}
+	user, err := {{ repo_var }}.{{ enabled_login.repository_method }}(input.{{ enabled_login.field | title }})
+{% endif %}
+	if err != nil {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"{{ enabled_login.get('json_field', enabled_login.field) }}": true})
+	}
+
+	if user.AuthProvider != "local" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "use_" + user.AuthProvider + "_login"})
+	}
+
+	if user.Password == nil || !authpkg.CheckPasswordHash(input.Password, *user.Password) {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"password": true})
+	}
+
+{% if auth.email_password.email_verification.enabled %}
+	if !user.{{ auth.email_password.email_verification.model_field }} {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "email_not_verified"})
+	}
+{% endif %}
+
+{% if auth.session.enabled %}
+	sess, err := utilspkg.GetSession(c)
+	if err != nil {
+		c.Set("HX-Redirect", "/server-error")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{})
+	}
+	sess.Destroy() // Regenerate session ID to prevent fixation attacks
+	sess.Set("authenticated", true)
+	sess.Set("user_id", user.ID)
+	sess.Set("email", user.Email)
+{% if auth.email_password.email_verification.enabled %}
+	sess.Set("is_verified", user.{{ auth.email_password.email_verification.model_field }})
+{% endif %}
+{% if config.rbac.enabled %}
+	sess.Set("role", user.{{ config.rbac.model_field }})
+{% endif %}
+	sess.Save()
+{% endif %}
+
+{% if config.rbac.enabled %}
+	c.Set("HX-Redirect", rbacpkg.GetDashboardBasePath( user.{{ config.rbac.model_field }}))
+{% else %}
+	c.Set("HX-Redirect", "/dashboard")
+{% endif %}
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{})
+{% else %}
+	return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "no_login_method_configured"})
+{% endif %}
+}
+{% endif %}
+
+{# ============================================================ #}
+{# LOGOUT                                                        #}
+{# ============================================================ #}
+{% if web.endpoints.logout.enabled %}
+
+// HandleLogout destroys the session and redirects to login
+func HandleLogout(c *fiber.Ctx) error {
+{% if auth.session.enabled %}
+	sess, err := utilspkg.GetSession(c)
+	if err != nil {
+		return c.Redirect("/login")
+	}
+	sess.Destroy()
+{% endif %}
+	return c.Redirect("/login")
+}
+{% endif %}
+
+{# ============================================================ #}
+{# EMAIL VERIFICATION                                            #}
+{# ============================================================ #}
+{% if auth.email_password.email_verification.enabled and web.endpoints.verify_email.enabled %}
+
+// VerifyEmailPage renders the email verification page
+func VerifyEmailPage(c *fiber.Ctx) error {
+{% if auth.session.enabled %}
+	sess, _ := utilspkg.GetSession(c)
+	if sess.Get("authenticated") != true {
+		return c.Redirect("/login")
+	}
+{% endif %}
+	email := c.Query("email")
+
+{% if web.get('use_translations', False) %}
+	# translation := i18npkg.MergeMaps(
+	# 	i18npkg.TranslateMap(c, config.BasicEveryTranslations),
+	# 	i18npkg.TranslateMap(c, config.BasicAuthTranslations),
+	# )
+	# transJSON, _ := sonic.Marshal(translation)
+	return c.Render("basic/verify_email", fiber.Map{
+		"csrfToken": c.Locals("csrf").(string),
+		"email":     email,
+		# "trans":     string(transJSON),
+	})
+{% else %}
+	return c.Render("basic/verify_email", fiber.Map{
+		"csrfToken": c.Locals("csrf").(string),
+		"email":     email,
+	})
+{% endif %}
+}
+
+// HandleVerifyEmail processes the OTP submitted on the verification page
+func HandleVerifyEmail(c *fiber.Ctx) error {
+	var input dtopkg.VerifyEmailInput
+	if err := c.BodyParser(&input); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid_input"})
+	}
+
+{% if auth.session.enabled %}
+	sess, _ := utilspkg.GetSession(c)
+	userID, ok := sess.Get("user_id").(uint)
+	if !ok || userID == 0 {
+		return c.Redirect("/login")
+	}
+{% endif %}
+
+	{{ repo_var }} := utilspkg.Get{{ config.project.repository_name }}(c)
+	if {{ repo_var }} == nil {
+		c.Set("HX-Redirect", "/server-error")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{})
+	}
+
+{% if auth.session.enabled %}
+	user, err := {{ repo_var }}.GetByID(userID)
+	if err != nil || user == nil {
+		return c.Redirect("/login")
+	}
+	if user.{{ auth.email_password.email_verification.model_field }} {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "already_verified"})
+	}
+
+	if !authpkg.VerifyOTP(user.Email, input.OTP) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid_otp"})
+	}
+
+	if err := {{ repo_var }}.UpdateUserVerification(user.Email, true); err != nil {
+		c.Set("HX-Redirect", "/server-error")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{})
+	}
+
+	sess.Set("is_verified", true)
+	sess.Save()
+{% else %}
+	email := c.FormValue("email")
+	if !authpkg.VerifyOTP(email, input.OTP) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid_otp"})
+	}
+	if err := {{ repo_var }}.UpdateUserVerification(email, true); err != nil {
+		c.Set("HX-Redirect", "/server-error")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{})
+	}
+{% endif %}
+
+	authpkg.DeleteOTP(user.Email)
+	c.Set("HX-Redirect", "/dashboard")
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{})
+}
+{% endif %}
+
+{# ============================================================ #}
+{# FORGOT PASSWORD                                               #}
+{# ============================================================ #}
+{% if auth.email_password.forgot_password.enabled and web.endpoints.forgot_password.enabled %}
+
+// ForgotPasswordPage renders the forgot password page
+func ForgotPasswordPage(c *fiber.Ctx) error {
+{% if web.get('use_translations', False) %}
+	# translation := i18npkg.MergeMaps(
+	# 	i18npkg.TranslateMap(c, config.BasicEveryTranslations),
+	# 	i18npkg.TranslateMap(c, config.BasicAuthTranslations),
+	# )
+	# transJSON, _ := sonic.Marshal(translation)
+	return c.Render("basic/reset_password_confirm", fiber.Map{
+		"csrfToken": c.Locals("csrf").(string),
+		# "trans":     string(transJSON),
+	})
+{% else %}
+	return c.Render("basic/reset_password_confirm", fiber.Map{
+		"csrfToken": c.Locals("csrf").(string),
+	})
+{% endif %}
+}
+
+// HandleForgotPassword sends a password-reset OTP to the user
+func HandleForgotPassword(c *fiber.Ctx) error {
+	var input dtopkg.ForgotPasswordInput
+	if err := c.BodyParser(&input); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid_input"})
+	}
+
+	{{ repo_var }} := utilspkg.Get{{ config.project.repository_name }}(c)
+	if {{ repo_var }} == nil {
+		c.Set("HX-Redirect", "/server-error")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{})
+	}
+
+{% if auth.email_password.forgot_password.identifier_field == 'email' %}
+	user, err := {{ repo_var }}.GetUserByEmail(input.Email)
+{% elif auth.email_password.forgot_password.identifier_field == 'username' %}
+	user, err := {{ repo_var }}.GetUserByUsername(input.Username)
+{% elif auth.email_password.forgot_password.identifier_field == 'email_or_username' %}
+	user, err := {{ repo_var }}.GetUserByEmailOrUsername(input.Identifier)
+{% endif %}
+	if err != nil {
+		// Don't reveal whether the account exists
+		return c.Status(fiber.StatusOK).JSON(fiber.Map{})
+	}
+
+	if user.AuthProvider != "local" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "use_" + user.AuthProvider + "_login"})
+	}
+
+	otp := authpkg.GenerateOTP()
+	authpkg.StoreOTP(user.Email, otp)
+	go func() {
+		if err := emailpkg.SendEmail(user.Email, "Password Reset", "{{ auth.email_password.forgot_password.email_template }}", fiber.Map{
+			"code": otp,
+			"name": user.Fullname,
+		}); err != nil {
+			log.Printf("Error sending reset email: %v", err)
+		}
+	}()
+
+{% if auth.session.enabled %}
+	sess, _ := utilspkg.GetSession(c)
+	sess.Set("otpemail", user.Email)
+	sess.Save()
+{% endif %}
+
+	c.Set("HX-Redirect", "/auth/reset-password")
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{})
+}
+{% endif %}
+
+{# ============================================================ #}
+{# RESET PASSWORD                                                #}
+{# ============================================================ #}
+{% if auth.email_password.forgot_password.enabled and web.endpoints.reset_password.enabled %}
+
+// ResetPasswordView renders the password reset confirmation page
+func ResetPasswordView(c *fiber.Ctx) error {
+{% if auth.session.enabled %}
+	sess, _ := utilspkg.GetSession(c)
+	email := sess.Get("otpemail")
+	if email == nil {
+		return c.Redirect("/login")
+	}
+
+	{{ repo_var }} := utilspkg.Get{{ config.project.repository_name }}(c)
+	user, err := {{ repo_var }}.GetUserByEmail(email.(string))
+	if err != nil {
+		sess.Set("otpemail", nil)
+		sess.Save()
+		return c.Redirect("/login")
+	}
+{% endif %}
+
+{% if web.get('use_translations', False) %}
+	# translation := i18npkg.MergeMaps(
+	# 	i18npkg.TranslateMap(c, config.BasicEveryTranslations),
+	# 	i18npkg.TranslateMap(c, config.BasicAuthTranslations),
+	# )
+	# transJSON, _ := sonic.Marshal(translation)
+	return c.Render("basic/reset_password_confirm", fiber.Map{
+		"csrfToken": c.Locals("csrf").(string),
+{% if auth.session.enabled %}
+		"email":     user.Email,
+{% endif %}
+		# "trans":     string(transJSON),
+	})
+{% else %}
+	return c.Render("basic/reset_password_confirm", fiber.Map{
+		"csrfToken": c.Locals("csrf").(string),
+{% if auth.session.enabled %}
+		"email":     user.Email,
+{% endif %}
+	})
+{% endif %}
+}
+
+// HandleResetPassword applies the new password after OTP verification
+func HandleResetPassword(c *fiber.Ctx) error {
+	var input dtopkg.ResetPasswordInput
+	if err := c.BodyParser(&input); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid_input"})
+	}
+
+	{{ repo_var }} := utilspkg.Get{{ config.project.repository_name }}(c)
+	if {{ repo_var }} == nil {
+		c.Set("HX-Redirect", "/server-error")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{})
+	}
+
+{% if auth.email_password.forgot_password.identifier_field == 'email' %}
+	user, err := {{ repo_var }}.GetUserByEmail(input.Email)
+{% elif auth.email_password.forgot_password.identifier_field == 'username' %}
+	user, err := {{ repo_var }}.GetUserByUsername(input.Username)
+{% elif auth.email_password.forgot_password.identifier_field == 'email_or_username' %}
+	user, err := {{ repo_var }}.GetUserByEmailOrUsername(input.Identifier)
+{% endif %}
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid_credentials"})
+	}
+
+	if !authpkg.VerifyOTP(user.Email, input.OTP) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid_otp"})
+	}
+
+	hashedPassword, err := authpkg.HashPassword(input.NewPassword)
+	if err != nil {
+		c.Set("HX-Redirect", "/server-error")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{})
+	}
+
+	if err := {{ repo_var }}.UpdateUserPassword(user.Email, hashedPassword); err != nil {
+		c.Set("HX-Redirect", "/server-error")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{})
+	}
+
+	authpkg.DeleteOTP(user.Email)
+
+{% if auth.session.enabled %}
+	sess, _ := utilspkg.GetSession(c)
+	sess.Set("otpemail", nil)
+	sess.Save()
+{% endif %}
+
+	c.Set("HX-Redirect", "/login")
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{})
+}
+{% endif %}
+
+{# ============================================================ #}
+{# ERROR PAGES                                                   #}
+{# ============================================================ #}
+
+func Page500(c *fiber.Ctx) error {
+{% if web.get('use_translations', False) %}
+	# trans := i18npkg.MergeMaps(i18npkg.TranslateMap(c, config.BasicEveryTranslations), i18npkg.TranslateMap(c, config.CustomerErrorsTranslations))
+	return c.Status(500).Render("customerror/500-error", fiber.Map{
+	
+	# "trans": trans
+	})
+{% else %}
+	return c.Status(500).Render("customerror/500-error", fiber.Map{})
+{% endif %}
+}
+
+func Page404(c *fiber.Ctx) error {
+{% if web.get('use_translations', False) %}
+	# trans := i18npkg.MergeMaps(i18npkg.TranslateMap(c, config.BasicEveryTranslations),
+fiber.Map{
+}
+	#  i18npkg.TranslateMap(c, config.CustomerErrorsTranslations)
+	 )
+	return c.Status(404).Render("customerror/404-error", fiber.Map{"trans": trans})
+{% else %}
+	return c.Status(404).Render("customerror/404-error", fiber.Map{})
+{% endif %}
+}
+
+func UnderMaintenance(c *fiber.Ctx) error {
+{% if web.get('use_translations', False) %}
+	# trans := i18npkg.MergeMaps(i18npkg.TranslateMap(c, config.BasicEveryTranslations), i18npkg.TranslateMap(c, config.CustomerErrorsTranslations))
+	return c.Status(fiber.StatusServiceUnavailable).Render("customerror/under-maintenance", fiber.Map{
+		# "trans":                trans,
+		"maintenance_end_time": viper.GetString("Maintenance_end_time"),
+	})
+{% else %}
+	return c.Status(fiber.StatusServiceUnavailable).Render("customerror/under-maintenance", fiber.Map{})
+{% endif %}
+}
+
+{% endif %}{# end web.enabled #}

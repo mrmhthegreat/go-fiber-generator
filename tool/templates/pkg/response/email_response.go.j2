@@ -1,0 +1,50 @@
+package response
+
+import (
+	"{{ config.project.module }}/internal/domain"
+)
+
+{% if config.imap.enabled %}
+type EmailListData struct {
+	Emails     []EmailListResponse `json:"emails"`
+	TotalCount int64               `json:"totalCount"`
+	Offset     int                 `json:"offset"`
+	Limit      int                 `json:"limit"`
+}
+
+type EmailListResponse struct {
+	ID          uint   `json:"id"`
+	From        string `json:"from"`
+	To          string `json:"to"`
+	Subject     string `json:"subject"`
+	IsHTML      bool   `json:"is_html"`
+	Status      string `json:"status"`
+	Direction   string `json:"direction"`
+	IsStarred   bool   `json:"is_starred"`
+	IsImportant bool   `json:"is_important"`
+	CreatedAt   string `json:"created_at"`
+}
+
+func ConvertToEmailListResponse(e *domain.EmailMessage) EmailListResponse {
+	return EmailListResponse{
+		ID:          e.ID,
+		From:        e.From,
+		To:          e.To,
+		Subject:     e.Subject,
+		IsHTML:      e.IsHTML,
+		Status:      e.Status,
+		Direction:   e.Direction,
+		IsStarred:   e.IsStarred,
+		IsImportant: e.IsImportant,
+		CreatedAt:   e.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+	}
+}
+
+func ConvertToEmailListResponses(emails []domain.EmailMessage) []EmailListResponse {
+	responses := make([]EmailListResponse, len(emails))
+	for i := range emails {
+		responses[i] = ConvertToEmailListResponse(&emails[i])
+	}
+	return responses
+}
+{% endif %}

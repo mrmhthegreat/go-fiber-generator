@@ -1,0 +1,121 @@
+package event
+
+import (
+	"log"
+	"sync"
+	"time"
+
+	ws "{{ config.project.module }}/websocket"
+)
+
+{% if config.websocket.enabled %}
+{# ────────────────────────────────────────────────────────────── #}
+{# Resolve pool/channel names once at template level              #}
+{# ────────────────────────────────────────────────────────────── #}
+{% set ns = namespace(
+    admin_pool=None,
+    user_pool=None,
+    admin_chan=None,
+    user_chan=None,
+    status_chan=None,
+    notify_chan=None
+) %}
+{% for pool in config.websocket.hub.pools %}
+{% if pool.enabled %}
+    {% if 'admin' in pool.name | lower %}{% set ns.admin_pool = pool %}{% endif %}
+    {% if 'user' in pool.name | lower and 'admin' not in pool.name | lower %}{% set ns.user_pool = pool %}{% endif %}
+{% endif %}
+{% endfor %}
+{% for channel in config.websocket.hub.channels %}
+{% if channel.get('enabled', true) %}
+    {% if 'admin' in channel.name | lower %}{% set ns.admin_chan = channel %}{% endif %}
+    {% if 'user' in channel.name | lower and 'admin' not in channel.name | lower %}{% set ns.user_chan = channel %}{% endif %}
+    {% if 'status' in channel.name | lower %}{% set ns.status_chan = channel %}{% endif %}
+    {% if 'notify' in channel.name | lower %}{% set ns.notify_chan = channel %}{% endif %}
+{% endif %}
+{% endfor %}
+
+{# ────────────────────────────────────────────────────────────── #}
+{# Shared types (both modes)                                      #}
+{# ────────────────────────────────────────────────────────────── #}
+{% if config.websocket.get('presence', {}).get('enabled', false) %}
+type StatusUpdate struct {
+	UserID   uint `json:"user_id"`
+	IsOnline bool `json:"is_online"`
+}
+{% endif %}
+
+type UserConn struct {
+	UserID uint
+	Conn   WSWriter
+}
+
+{# 3. EventsHub — custom/generic events + notification delivery    #}
+{# ──────────────────────────────────────────────────────────────── #}
+{% if config.websocket.get('dedicated', {}).get('events', {}).get('enabled', true) %}
+
+// EventsHub manages notification delivery and custom event broadcasting.
+type EventsHub struct {
+{% if ns.notify_chan and config.notifications.get('websocket', {}).get('enabled', false) %}
+	{{ ns.notify_chan.name }} chan map[string]interface{}
+{% endif %}
+	mu sync.RWMutex
+}
+
+var EventsHubInst = EventsHub{
+{% if ns.notify_chan and config.notifications.get('websocket', {}).get('enabled', false) %}
+	{{ ns.notify_chan.name }}: make(chan map[string]interface{}, {{ ns.notify_chan.buffer_size }}),
+{% endif %}
+}
+
+func (h *EventsHub) Run() {
+	for {
+		select {
+{% if ns.notify_chan and config.notifications.enabled and config.notifications.get('websocket', {}).get('enabled', false) %}
+		case notif := <-h.{{ ns.notify_chan.name }}:
+			userID, _ := notif["user_id"].(uint)
+			if userID != 0 {
+				// Deliver to user via registry (ChatHub owns the user pool)
+				if ws.BroadcastRegistry.User != nil {
+					ws.BroadcastRegistry.User.BroadcastToUser(userID, map[string]interface{}{"type": "notification", "data": notif})
+				}
+			} else {
+				// Broadcast to all admins via registry (SupportHub owns the admin pool)
+				if ws.BroadcastRegistry.Admin != nil {
+					ws.BroadcastRegistry.Admin.BroadcastToAdmins(map[string]interface{}{"type": "notification", "data": notif})
+				}
+			}
+{% endif %}
+		}
+	}
+}
+
+// BroadcastAll sends to every connected client across all hubs via the registry.
+func BroadcastAll(msg interface{}) {
+	if ws.BroadcastRegistry.Admin != nil {
+		ws.BroadcastRegistry.Admin.BroadcastToAdmins(msg)
+	}
+	if ws.BroadcastRegistry.User != nil {
+		ws.BroadcastRegistry.User.BroadcastToUser(0, msg) // 0 = broadcast to all users
+	}
+}
+
+func StartEventsHub() {
+	go EventsHubInst.Run()
+}
+
+{% endif %}{# dedicated.events #}
+
+// StartDedicatedHubs starts all dedicated hub event loops.
+func StartDedicatedHubs() {
+{% if config.chat.enabled and config.websocket.get('dedicated', {}).get('chat', {}).get('enabled', true) %}
+	StartChatHub()
+{% endif %}
+{% if config.chat.get('modes', {}).get('support', false) and config.websocket.get('dedicated', {}).get('support', {}).get('enabled', true) %}
+	StartSupportHub()
+{% endif %}
+{% if config.websocket.get('dedicated', {}).get('events', {}).get('enabled', true) %}
+	StartEventsHub()
+{% endif %}
+
+{% endif %}{# websocket.enabled #}

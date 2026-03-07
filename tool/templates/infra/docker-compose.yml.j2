@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "{{ config.server.port }}:{{ config.server.port }}"
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+{% if config.authentication.jwt.enabled %}
+      - JWT_SECRET=${JWT_SECRET}
+{% endif %}
+{% if config.redis.enabled %}
+      - REDIS_HOST=redis:6379
+{% endif %}
+    depends_on:
+      - db
+{% if config.redis.enabled %}
+      - redis
+{% endif %}
+    restart: unless-stopped
+
+  db:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER={{ config.database.user }}
+      - POSTGRES_PASSWORD={{ config.database.password }}
+      - POSTGRES_DB={{ config.database.name }}
+    ports:
+      - "{{ config.database.port }}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+{% if config.redis.enabled %}
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+{% endif %}
+
+volumes:
+  postgres_data:
+{% if config.redis.enabled %}
+  redis_data:
+{% endif %}

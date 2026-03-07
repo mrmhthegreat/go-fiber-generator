@@ -1,0 +1,121 @@
+<div class="relative" x-data="{ open: false }" @click.away="open = false">
+ 
+  
+
+  <button
+            class="hover:text-dark-900 relative flex h-11 w-11 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-white"
+             @click="open = !open"
+          >
+            <span
+              :class="!open ? 'hidden' : 'flex'"
+              class="absolute top-0.5 right-0 z-1 h-2 w-2 rounded-full bg-orange-400"
+            >
+              <span
+                class="absolute -z-1 inline-flex h-full w-full animate-ping rounded-full bg-orange-400 opacity-75"
+              ></span>
+            </span>
+            
+
+
+            <svg  class="fill-current"
+              width="20"
+              height="20"    fill="none" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"><title>ionicons-v5-l</title><path d="M478.33,433.6l-90-218a22,22,0,0,0-40.67,0l-90,218a22,22,0,1,0,40.67,16.79L316.66,406H419.33l18.33,44.39A22,22,0,0,0,458,464a22,22,0,0,0,20.32-30.4ZM334.83,362,368,281.65,401.17,362Z"></path><path d="M267.84,342.92a22,22,0,0,0-4.89-30.7c-.2-.15-15-11.13-36.49-34.73,39.65-53.68,62.11-114.75,71.27-143.49H330a22,22,0,0,0,0-44H214V70a22,22,0,0,0-44,0V90H54a22,22,0,0,0,0,44H251.25c-9.52,26.95-27.05,69.5-53.79,108.36-31.41-41.68-43.08-68.65-43.17-68.87a22,22,0,0,0-40.58,17c.58,1.38,14.55,34.23,52.86,83.93.92,1.19,1.83,2.35,2.74,3.51-39.24,44.35-77.74,71.86-93.85,80.74a22,22,0,1,0,21.07,38.63c2.16-1.18,48.6-26.89,101.63-85.59,22.52,24.08,38,35.44,38.93,36.1a22,22,0,0,0,30.75-4.9Z"></path></g></svg>
+          </button>
+  
+  <ul
+    x-show="open"
+    x-transition:enter="transition ease-out duration-100"
+    x-transition:enter-start="transform opacity-0 scale-95"
+    x-transition:enter-end="transform opacity-100 scale-100"
+    x-transition:leave="transition ease-in duration-75"
+    x-transition:leave-start="transform opacity-100 scale-100"
+    x-transition:leave-end="transform opacity-0 scale-95"
+    class="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-99999 shadow-theme-lg dark:bg-gray-dark absolute dark:border-gray-800"
+    style="display: none;"
+  >
+    <li
+      >
+      <a
+        class="flex items-center px-4 py-2 text-sm hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-gray-300 transition-colors"
+        href="/set-language?lang=en"
+      >
+        <span class="w-6 h-6 mr-2 flex-shrink-0">
+          <img src="/static/images/flags/tn_uk-flag.webp" alt="English flag" class="w-full h-full object-cover rounded" />
+        </span >
+        <span x-text="trans.english"></span>
+      </a>
+    </li>
+    <li
+      >
+      <a
+        class="flex items-center px-4 py-2 text-sm  hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-gray-300 transition-colors"
+        href="/set-language?lang=es"
+      >
+        <span class="w-6 h-6 mr-2 flex-shrink-0">
+          <img src="/static/images/flags/tn_sp-flag.gif" alt="Spanish flag" class="w-full h-full object-cover rounded" />
+        </span >
+        <span x-text="trans.spanish"></span>
+      </a>
+    </li>
+    <li>
+      <a
+        class="flex items-center px-4 py-2 text-sm  hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-gray-300 transition-colors"
+        href="/set-language?lang=fr"
+      >
+        <span class="w-6 h-6 mr-2 flex-shrink-0">
+          <img src="/static/images/flags/tn_fr-flag.webp" alt="French flag" class="w-full h-full object-cover rounded" />
+        </span>
+        <span x-text="trans.french"></span>
+      </a>
+    </li>
+    <li
+      >
+      <a
+        class="flex items-center px-4 py-2 text-sm  hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-gray-300 transition-colors"
+        href="/set-language?lang=de"
+      >
+        <span class="w-6 h-6 mr-2 flex-shrink-0">
+          <img src="/static/images/flags/tn_gm-flag.gif" alt="German flag" class="w-full h-full object-cover rounded" />
+        </span >
+        <span x-text="trans.german"></span>
+      </a>
+    </li>
+    <li
+      >
+      <a
+        class="flex items-center px-4 py-2 text-sm  hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-gray-300 transition-colors"
+        href="/set-language?lang=it"
+      >
+        <span class="w-6 h-6 mr-2 flex-shrink-0">
+          <img src="/static/images/flags/tn_it-flag.webp" alt="Italian flag" class="w-full h-full object-cover rounded" />
+        </span >
+        <span x-text="trans.italian"></span>
+      </a>
+    </li>
+    <li
+      >
+      <a
+        class="flex items-center px-4 py-2 text-sm  hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-gray-300 transition-colors"
+        href="/set-language?lang=zh"
+      >
+        <span class="w-6 h-6 mr-2 flex-shrink-0">
+          <img src="/static/images/flags/tn_ch-flag.webp" alt="Chinese flag" class="w-full h-full object-cover rounded" />
+        </span>
+        <span x-text="trans.chinese"></span>
+      </a>
+    </li>
+ <li
+      >
+      <a
+        class="flex items-center px-4 py-2 text-sm  hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-gray-300 transition-colors"
+        href="/set-language?lang=ar"
+      >
+        <span class="w-6 h-6 mr-2 flex-shrink-0" >
+          <img src="/static/images/flags/arabic.png" alt="arabic flag" class="w-full h-full object-cover rounded" />
+        </span >
+        <span x-text="trans.arabic"></span>
+      </a>
+    </li>
+    
+  </ul>
+</div>

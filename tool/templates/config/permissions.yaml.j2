@@ -1,0 +1,164 @@
+permissions:
+  # Orders
+
+  # Trips
+  - key: trips.view
+    display_name: View Trips
+    description: View all shipping trips
+    category: trips
+  
+  - key: trips.view_own
+    display_name: View Own Trips
+    description: View only own trips
+    category: trips
+
+  - key: trips.delete
+    display_name: Delete Trips
+    description: Delete trips
+    category: trips
+
+  
+  
+  # Users
+  - key: users.view
+    display_name: View Users
+    description: View all users
+    category: users
+
+ 
+  - key: users.manage_roles
+    display_name: Manage User Roles
+    description: Assign roles to users
+    category: users
+  
+  - key: users.block
+    display_name: Block Users
+    description: Block/unblock users
+    category: users
+  
+
+
+  
+
+ 
+  
+  # Dashboard
+  - key: dashboard.view
+    display_name: View Dashboard
+    description: Access to basic dashboard
+    category: dashboard
+  
+  - key: admin.dashboard.view
+    display_name: View Admin Dashboard
+    description: Access to admin dashboard
+    category: dashboard
+  
+  - key: moderator.dashboard.view
+    display_name: View Moderator Dashboard
+    description: Access to moderator dashboard
+    category: dashboard
+  
+  # Profile
+  - key: profile.view
+    display_name: View Profile
+    description: View own profile
+    category: profile
+  
+  - key: profile.edit
+    display_name: Edit Profile
+    description: Edit own profile
+    category: profile
+  
+ 
+  
+  # Users - Manage
+  - key: users.manage
+    display_name: Manage Users
+    description: Full user management (block, adjust wallet, etc.)
+    category: users
+
+  - key: chat.view
+    display_name: View Chat 
+    description: View Chat
+    category: chat
+
+  - key: chat.manage
+    display_name: Manage Chat 
+    description: Manage Chat
+    category: chat
+
+  - key: mail.view
+    display_name: View Mail 
+    description: View Mail
+    category: mail
+  - key: mail.manage
+    display_name: Manage Mail 
+    description: Manage Mail
+    category: mail
+
+
+# Default role permissions
+# Format: role_name -> list of permission keys
+# Note: Permissions listed here are given by DEFAULT when a user is assigned this role
+# Additional permissions from the allowed set can be granted via RBAC interface
+role_defaults:
+  seller:
+    # Dashboard
+    - dashboard.view
+    # Profile
+    - profile.view
+    - profile.edit
+    
+  
+  # Seller allowed permissions (defines what CAN be granted to sellers)
+  # This list includes both default and optional permissions
+  seller_allowed:
+    - dashboard.view
+    - profile.view
+    - profile.edit
+    - stats.view_own
+    
+  
+  moderator:
+    # Dashboard
+    - moderator.dashboard.view
+    # Profile
+    - profile.view
+    - profile.edit
+    # Users (view only)
+    - users.view
+    # Orders (can update)
+    - orders.view
+    - orders.manage_status
+    # Trips (can manage)
+    -
+  moderator_allowed:
+    # Dashboard
+    - moderator.dashboard.view
+    # Profile
+    - profile.view
+ 
+  admin:
+    # Dashboard
+    - admin.dashboard.view
+    # Profile
+    - profile.view
+    - profile.edit
+    # Users (full management)
+    - users.view
+    - users.block
+    - users.manage
+    - users.manage_roles
+   
+  admin_allowed:
+    # Dashboard
+    - admin.dashboard.view
+    # Profile
+    - profile.view
+    - profile.edit
+    # System (view config only)
+  
+  superadmin:
+    # Superadmin has all permissions by default (handled in code)
+    # This is just for documentation
+    - "*"

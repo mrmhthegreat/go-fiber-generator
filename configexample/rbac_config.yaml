@@ -1,0 +1,167 @@
+project:
+  module: github.com/username/my_api
+  user_model_name: User  # Name of the user model struct
+  repository_name: UserRepository  # Repository interface name to use
+
+# Role-Based Access Control
+rbac:
+  enabled: true
+  service_name: "RBACService"
+  default_role: user
+  all_privileges: 'super_admin'
+  model_field: Role  # Field name in User model
+  # Define custom roles with dashboard paths
+  roles:
+    - name: admin
+      dashboard_path: /admin
+    - name: user
+      dashboard_path: /dashboard
+    - name: super_admin
+      dashboard_path: /super-admin
+  controller:
+    enabled: true
+    base_path: /api/rbac
+    tag: "RBAC Management"
+    middleware: []
+    ListRoles:
+      enabled: true
+      path: /roles
+      middleware: []
+    GetRole:
+      enabled: true
+      path: /roles/:id
+      middleware: []
+    CreateRole:
+      enabled: true
+      path: /roles
+      middleware: []
+    UpdateRole:
+      enabled: true
+      path: /roles/:id
+      middleware: []
+    DeleteRole:
+      enabled: true
+      path: /roles/:id
+      middleware: []
+    ListPermissions:
+      enabled: true
+      path: /permissions
+      middleware: []
+    SyncPermissions:
+      enabled: true
+      path: /permissions/sync
+      middleware: []
+    GetUserOverrides:
+      enabled: true
+      path: /users/:userId/overrides
+      middleware: []
+    SetUserOverride:
+      enabled: true
+      path: /users/:userId/overrides
+      middleware: []
+    RemoveUserOverride:
+      enabled: true
+      path: /users/:userId/overrides/:permId
+      middleware: []
+    BulkUpdateRolePermissions:
+      enabled: true
+      path: /roles/:id/permissions/bulk
+      middleware: []
+    GetUserPermissions:
+      enabled: true
+      path: /users/:userId/permissions/debug
+      middleware: []
+    InvalidateCache:
+      enabled: true
+      path: /cache/invalidate/:userId
+      middleware: []
+    CheckPermission:
+      enabled: true
+      path: /check
+      middleware: []
+  web_handler:
+    enabled: true
+    base_path: /dashboard/rbac
+    template: "admin/rbac"
+    middleware: []
+    permissions: [rbac.roles.manage]
+    ManageRolesPage:
+      enabled: true
+      path: /roles
+      middleware: []
+      permissions: [rbac.roles.manage]
+    ManageOverridesPage:
+      enabled: true
+      path: /overrides
+      middleware: []
+      permissions: [rbac.overrides.manage]
+    ListRoles:
+      enabled: true
+      path: /roles
+      middleware: []
+      permissions: [rbac.roles.manage]
+    GetRole:
+      enabled: true
+      path: /roles/:id
+      middleware: []
+      permissions: [rbac.roles.manage]
+    CreateRole:
+      enabled: true
+      path: /roles
+      middleware: []
+      permissions: [rbac.roles.manage]
+    UpdateRole:
+      enabled: true
+      path: /roles/:id
+      middleware: []
+      permissions: [rbac.roles.manage]
+    DeleteRole:
+      enabled: true
+      path: /roles/:id
+      middleware: []
+      permissions: [rbac.roles.manage]
+    ListPermissions:
+      enabled: true
+      path: /permissions
+      middleware: []
+      permissions: [rbac.permissions.manage]
+    SyncPermissions:
+      enabled: true
+      path: /permissions/sync
+      middleware: []
+      permissions: [rbac.permissions.manage]
+    GetUserOverrides:
+      enabled: true
+      path: /users/:userId/overrides
+      middleware: []
+      permissions: [rbac.overrides.manage]
+    SetUserOverride:
+      enabled: true
+      path: /users/:userId/overrides
+      middleware: []
+      permissions: [rbac.overrides.manage]
+    RemoveUserOverride:
+      enabled: true
+      path: /users/:userId/overrides/:permId
+      middleware: []
+      permissions: [rbac.overrides.manage]
+    BulkUpdateRolePermissions:
+      enabled: true
+      path: /roles/:id/permissions/bulk
+      middleware: []
+      permissions: [rbac.roles.manage]
+    GetUserPermissions:
+      enabled: true
+      path: /users/:userId/permissions/debug
+      middleware: []
+      permissions: [rbac.permissions.manage]
+    InvalidateCache:
+      enabled: true
+      path: /cache/invalidate/:userId
+      middleware: []
+      permissions: [rbac.permissions.manage]
+    CheckPermission:
+      enabled: true
+      path: /check
+      middleware: []
+      permissions: [rbac.permissions.manage]

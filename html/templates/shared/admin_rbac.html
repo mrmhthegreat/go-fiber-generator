@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RBAC Management - Admin Panel</title>
+
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <link rel="stylesheet" href="/static/src/output.css" />
+    <meta name="csrf-token" content="{{.csrfToken}}">
+</head>
+
+<body class="bg-gray-50" x-data="rbacManager()" x-init="init()">
+    <div class="min-h-screen">
+        <!-- Header -->
+        <header class="bg-white shadow">
+            <div class="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
+                <h1 class="text-3xl font-bold text-gray-900">Roles & Permissions Management</h1>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+            <!-- Tabs -->
+            <div class="mb-6">
+                <div class="border-b border-gray-200">
+                    <nav class="-mb-px flex space-x-8">
+                        <button @click="activeTab = 'roles'"
+                            :class="activeTab === 'roles' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+                            class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm">
+                            Roles
+                        </button>
+                        <button @click="activeTab = 'permissions'"
+                            :class="activeTab === 'permissions' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+                            class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm">
+                            Permissions
+                        </button>
+                        <button @click="activeTab = 'overrides'"
+                            :class="activeTab === 'overrides' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+                            class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm">
+                            User Overrides
+                        </button>
+                    </nav>
+                </div>
+            </div>
+
+            <!-- Roles Tab -->
+            <div x-show="activeTab === 'roles'" class="space-y-6">
+                <!-- Info Banner -->
+                <div class="bg-blue-50 border-l-4 border-blue-400 p-4">
+                    <div class="flex">
+                        <div class="flex-shrink-0">
+                            <svg class="h-5 w-5 text-blue-400" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd"
+                                    d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
+                                    clip-rule="evenodd" />
+                            </svg>
+                        </div>
+                        <div class="ml-3">
+                            <p class="text-sm text-blue-700">
+                                System roles are predefined and cannot be created or deleted. You can only modify
+                                permissions for existing roles.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Loading State -->
+                <div x-show="loadingRoles" class="bg-white shadow overflow-hidden sm:rounded-lg p-8">
+                    <div class="flex items-center justify-center">
+                        <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+                        <span class="ml-3 text-gray-600">Loading roles...</span>
+                    </div>
+                </div>
+
+                <!-- Roles List -->
+                <div x-show="!loadingRoles" class="bg-white shadow overflow-hidden sm:rounded-lg">
+                    <ul class="divide-y divide-gray-200">
+                        <template x-for="role in roles" :key="role.id">
+                            <li class="px-6 py-4 hover:bg-gray-50">
+                                <div class="flex items-center justify-between">
+                                    <div class="flex-1">
+                                        <h3 class="text-lg font-medium text-gray-900" x-text="role.display_name"></h3>
+                                        <p class="text-sm text-gray-500" x-text="role.description"></p>
+                                        <span x-show="role.is_system"
+                                            class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 mt-2">
+                                            System Role
+                                        </span>
+                                    </div>
+                                    <div class="flex space-x-3">
+                                        <button @click="editRolePermissions(role)"
+                                            :disabled="loadingPermissions"
+                                            class="text-indigo-600 hover:text-indigo-900 font-medium disabled:opacity-50 disabled:cursor-not-allowed">
+                                            Edit Permissions
+                                        </button>
+                                    </div>
+                                </div>
+                            </li>
+                        </template>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Permissions Tab -->
+            <div x-show="activeTab === 'permissions'" class="space-y-6">
+                <!-- Loading State -->
+                <div x-show="loadingPermissions" class="bg-white shadow overflow-hidden sm:rounded-lg p-8">
+                    <div class="flex items-center justify-center">
+                        <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+                        <span class="ml-3 text-gray-600">Loading permissions...</span>
+                    </div>
+                </div>
+
+                <div x-show="!loadingPermissions" class="bg-white shadow overflow-hidden sm:rounded-lg">
+                    <div class="px-6 py-4">
+                        <h2 class="text-xl font-semibold text-gray-900 mb-4">All Permissions</h2>
+                        <template x-for="(perms, category) in groupedPermissions" :key="category">
+                            <div class="mb-6">
+                                <h3 class="text-lg font-medium text-gray-700 mb-2 capitalize" x-text="category"></h3>
+                                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                    <template x-for="perm in perms" :key="perm.id">
+                                        <div class="border border-gray-200 rounded-lg p-4">
+                                            <div class="font-medium text-gray-900" x-text="perm.display_name"></div>
+                                            <div class="text-sm text-gray-500 mt-1" x-text="perm.description"></div>
+                                            <code class="text-xs bg-gray-100 px-2 py-1 rounded mt-2 inline-block"
+                                                x-text="perm.key"></code>
+                                        </div>
+                                    </template>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+
+            <!-- User Overrides Tab -->
+            <div x-show="activeTab === 'overrides'" class="space-y-6">
+                <div class="bg-white shadow overflow-hidden sm:rounded-lg p-6">
+                    <h2 class="text-xl font-semibold text-gray-900 mb-4">User Permission Overrides</h2>
+                    <p class="text-gray-600 mb-4">Search for a user to manage their permission overrides.</p>
+
+                    <!-- User Search -->
+                    <div class="mb-6">
+                        <div class="flex space-x-4">
+                            <div class="flex-1">
+                                <input type="text" x-model="userSearchQuery" @input.debounce.500ms="searchUsers()"
+                                    placeholder="Search by email, name, or user ID..."
+                                    :disabled="searchingUsers"
+                                    class="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed">
+                            </div>
+                            <button @click="searchUsers()"
+                                :disabled="searchingUsers"
+                                class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center">
+                                <span x-show="!searchingUsers">Search</span>
+                                <span x-show="searchingUsers" class="flex items-center">
+                                    <svg class="animate-spin h-4 w-4 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                    </svg>
+                                    Searching...
+                                </span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Search Results -->
+                    <div x-show="searchResults.length > 0" class="mb-6">
+                        <h3 class="text-lg font-medium text-gray-900 mb-2">Search Results</h3>
+                        <div class="space-y-2">
+                            <template x-for="user in searchResults" :key="user.id">
+                                <div
+                                    class="flex items-center justify-between p-3 border border-gray-200 rounded-lg hover:bg-gray-50">
+                                    <div>
+                                        <div class="font-medium text-gray-900" x-text="user.name"></div>
+                                        <div class="text-sm text-gray-500" x-text="user.email"></div>
+                                        <div class="text-xs text-gray-400">
+                                            ID: <span x-text="user.id"></span> |
+                                            Role: <span x-text="user.role"></span>
+                                        </div>
+                                    </div>
+                                    <button @click="loadUserOverrides(user)"
+                                        :disabled="loadingUserOverrides"
+                                        class="px-3 py-1 bg-indigo-600 text-white text-sm rounded hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed">
+                                        Manage Overrides
+                                    </button>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+
+                    <!-- No Results Message -->
+                    <div x-show="userSearchQuery && searchResults.length === 0 && !searchingUsers"
+                        class="text-center py-4">
+                        <p class="text-gray-500">No users found matching your search.</p>
+                    </div>
+
+                    <!-- Loading State -->
+                    <div x-show="searchingUsers" class="text-center py-8">
+                        <div class="flex items-center justify-center">
+                            <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+                            <span class="ml-3 text-gray-600">Searching users...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Edit Role Permissions Modal -->
+    <div x-show="showEditPermissionsModal" x-cloak
+        class="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto p-5">
+        <div class="fixed inset-0 h-full w-full bg-gray-400/50 backdrop-blur-sm"
+            @click="!savingPermissions && (showEditPermissionsModal = false)"></div>
+
+        <div class="relative w-full max-w-3xl rounded-3xl bg-white p-6 lg:p-10 shadow-xl">
+            <button @click="showEditPermissionsModal = false"
+                :disabled="savingPermissions"
+                class="absolute top-3 right-3 z-50 flex h-9 w-9 items-center justify-center rounded-full bg-gray-100 text-gray-400 transition-colors hover:bg-gray-200 hover:text-gray-700 sm:top-6 sm:right-6 sm:h-11 sm:w-11 disabled:opacity-50 disabled:cursor-not-allowed">
+                <svg class="fill-current" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                    xmlns="http://www.w3.org/2000/svg">
+                    <path fill-rule="evenodd" clip-rule="evenodd"
+                        d="M6.04289 16.5413C5.65237 16.9318 5.65237 17.565 6.04289 17.9555C6.43342 18.346 7.06658 18.346 7.45711 17.9555L11.9987 13.4139L16.5408 17.956C16.9313 18.3466 17.5645 18.3466 17.955 17.956C18.3455 17.5655 18.3455 16.9323 17.955 16.5418L13.4129 11.9997L17.955 7.4576C18.3455 7.06707 18.3455 6.43391 17.955 6.04338C17.5645 5.65286 16.9313 5.65286 16.5408 6.04338L11.9987 10.5855L7.45711 6.0439C7.06658 5.65338 6.43342 5.65338 6.04289 6.0439C5.65237 6.43442 5.65237 7.06759 6.04289 7.45811L10.5845 11.9997L6.04289 16.5413Z"
+                        fill=""></path>
+                </svg>
+            </button>
+
+            <div>
+                <div class="px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                    <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">
+                        Edit Permissions for <span x-text="selectedRole?.display_name"></span>
+                    </h3>
+
+                    <!-- Info Banner -->
+                    <div x-show="selectedRole && !isRoleUnrestricted(selectedRole.name)"
+                        class="mb-4 bg-blue-50 border-l-4 border-blue-400 p-4">
+                        <div class="flex">
+                            <div class="flex-shrink-0">
+                                <svg class="h-5 w-5 text-blue-400" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fill-rule="evenodd"
+                                        d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
+                                        clip-rule="evenodd" />
+                                </svg>
+                            </div>
+                            <div class="ml-3">
+                                <p class="text-sm text-blue-700">
+                                    Showing only permissions available for the <strong x-text="selectedRole.display_name"></strong> role. 
+                                    Enable or disable permissions as needed.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Loading State -->
+                    <div x-show="loadingRolePermissions" class="flex items-center justify-center py-8">
+                        <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+                        <span class="ml-3 text-gray-600">Loading permissions...</span>
+                    </div>
+
+                    <div x-show="!loadingRolePermissions" class="max-h-96 overflow-y-auto">
+                        <template x-for="(perms, category) in groupedPermissions" :key="category">
+                            <div class="mb-4" x-show="perms.some(p => shouldShowPermission(p.key))">
+                                <h4 class="font-medium text-gray-700 mb-2 capitalize" x-text="category"></h4>
+                                <div class="space-y-2">
+                                    <template x-for="perm in perms" :key="perm.id">
+                                        <label x-show="shouldShowPermission(perm.key)"
+                                            class="flex items-center space-x-3 p-2 hover:bg-gray-50 rounded border border-gray-200">
+                                            <input type="checkbox" :checked="rolePermissions[perm.key]"
+                                                @change="togglePermission(perm.key, $event.target.checked)"
+                                                :disabled="savingPermissions"
+                                                class="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded disabled:opacity-50 disabled:cursor-not-allowed">
+                                            <div class="flex-1">
+                                                <div class="text-sm font-medium text-gray-900"
+                                                    x-text="perm.display_name"></div>
+                                                <div class="text-xs text-gray-500" x-text="perm.description"></div>
+                                                <code class="text-xs bg-gray-100 px-2 py-1 rounded mt-1 inline-block"
+                                                    x-text="perm.key"></code>
+                                            </div>
+                                        </label>
+                                    </template>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
+                <div class="px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                    <button @click="saveRolePermissions()"
+                        :disabled="savingPermissions"
+                        class="w-full inline-flex justify-center items-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-indigo-600 text-base font-medium text-white hover:bg-indigo-700 focus:outline-none sm:ml-3 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed">
+                        <svg x-show="savingPermissions" class="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <span x-text="savingPermissions ? 'Saving...' : 'Save Changes'"></span>
+                    </button>
+                    <button @click="showEditPermissionsModal = false"
+                        :disabled="savingPermissions"
+                        class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed">
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- User Overrides Modal -->
+    <div x-show="showUserOverridesModal" x-cloak
+        class="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto p-5">
+        <div class="fixed inset-0 h-full w-full bg-gray-400/50 backdrop-blur-sm"
+            @click="!savingUserOverrides && (showUserOverridesModal = false)"></div>
+
+        <div class="relative w-full max-w-4xl rounded-3xl bg-white p-6 lg:p-10 shadow-xl">
+            <button @click="showUserOverridesModal = false"
+                :disabled="savingUserOverrides"
+                class="absolute top-3 right-3 z-50 flex h-9 w-9 items-center justify-center rounded-full bg-gray-100 text-gray-400 transition-colors hover:bg-gray-200 hover:text-gray-700 sm:top-6 sm:right-6 sm:h-11 sm:w-11 disabled:opacity-50 disabled:cursor-not-allowed">
+                <svg class="fill-current" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                    xmlns="http://www.w3.org/2000/svg">
+                    <path fill-rule="evenodd" clip-rule="evenodd"
+                        d="M6.04289 16.5413C5.65237 16.9318 5.65237 17.565 6.04289 17.9555C6.43342 18.346 7.06658 18.346 7.45711 17.9555L11.9987 13.4139L16.5408 17.956C16.9313 18.3466 17.5645 18.3466 17.955 17.956C18.3455 17.5655 18.3455 16.9323 17.955 16.5418L13.4129 11.9997L17.955 7.4576C18.3455 7.06707 18.3455 6.43391 17.955 6.04338C17.5645 5.65286 16.9313 5.65286 16.5408 6.04338L11.9987 10.5855L7.45711 6.0439C7.06658 5.65338 6.43342 5.65338 6.04289 6.0439C5.65237 6.43442 5.65237 7.06759 6.04289 7.45811L10.5845 11.9997L6.04289 16.5413Z"
+                        fill=""></path>
+                </svg>
+            </button>
+
+            <div>
+                <div class="px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                    <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">
+                        Permission Overrides for <span x-text="selectedUser?.name"></span>
+                    </h3>
+                    <p class="text-sm text-gray-500 mb-4">
+                        User: <span x-text="selectedUser?.email"></span> |
+                        Role: <span x-text="selectedUser?.role"></span>
+                    </p>
+
+                    <div class="mb-4 bg-blue-50 border-l-4 border-blue-400 p-4">
+                        <div class="flex">
+                            <div class="flex-shrink-0">
+                                <svg class="h-5 w-5 text-blue-400" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fill-rule="evenodd"
+                                        d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
+                                        clip-rule="evenodd" />
+                                </svg>
+                            </div>
+                            <div class="ml-3">
+                                <p class="text-sm text-blue-700">
+                                    <strong>User Overrides</strong> take precedence over role permissions.
+                                    Showing only permissions available for the <strong x-text="selectedUser?.role"></strong> role.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Loading State -->
+                    <div x-show="loadingUserOverrides" class="flex items-center justify-center py-8">
+                        <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+                        <span class="ml-3 text-gray-600">Loading overrides...</span>
+                    </div>
+
+                    <div x-show="!loadingUserOverrides" class="max-h-96 overflow-y-auto">
+                        <template x-for="(perms, category) in groupedPermissions" :key="category">
+                            <div class="mb-4" x-show="perms.some(p => shouldShowUserOverridePermission(p.key))">
+                                <h4 class="font-medium text-gray-700 mb-2 capitalize" x-text="category"></h4>
+                                <div class="space-y-2">
+                                    <template x-for="perm in perms" :key="perm.id">
+                                        <label x-show="shouldShowUserOverridePermission(perm.key)"
+                                            class="flex items-center space-x-3 p-2 hover:bg-gray-50 rounded border border-gray-200">
+                                            <input type="checkbox" :checked="userOverrides[perm.key] === true"
+                                                @change="toggleUserOverride(perm.key, $event.target.checked)"
+                                                :disabled="savingUserOverrides"
+                                                class="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded disabled:opacity-50 disabled:cursor-not-allowed">
+                                            <div class="flex-1">
+                                                <div class="text-sm font-medium text-gray-900"
+                                                    x-text="perm.display_name"></div>
+                                                <div class="text-xs text-gray-500" x-text="perm.description"></div>
+                                                <div class="text-xs mt-1">
+                                                    <span x-show="userOverrides[perm.key] === true"
+                                                        class="text-green-600">✓ Allowed by override</span>
+                                                    <span x-show="userOverrides[perm.key] === false"
+                                                        class="text-red-600">✗ Denied by override</span>
+                                                    <span x-show="userOverrides[perm.key] === undefined"
+                                                        class="text-gray-400">Inherited from role</span>
+                                                </div>
+                                            </div>
+                                        </label>
+                                    </template>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
+                <div class="px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                    <button @click="saveUserOverrides()"
+                        :disabled="savingUserOverrides"
+                        class="w-full inline-flex justify-center items-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-indigo-600 text-base font-medium text-white hover:bg-indigo-700 focus:outline-none sm:ml-3 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed">
+                        <svg x-show="savingUserOverrides" class="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <span x-text="savingUserOverrides ? 'Saving...' : 'Save Overrides'"></span>
+                    </button>
+                    <button @click="showUserOverridesModal = false"
+                        :disabled="savingUserOverrides"
+                        class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed">
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function rbacManager() {
+            return {
+                // State
+                activeTab: 'roles',
+                roles: [],
+                permissions: [],
+                groupedPermissions: {},
+                 selectedRole: {
+                    'display_name':"Seller",
+                    "name":"seller"
+                },
+                rolePermissions: {},
+                showEditPermissionsModal: false,
+                roleAllowedPermissions: {},
+                userSearchQuery: '',
+                searchResults: [],
+                roleDefaultPermissions: {},
+                searchingUsers: false,
+                selectedUser: null,
+                userOverrides: {},
+                showUserOverridesModal: false,
+                
+                // Loading states
+                loadingRoles: false,
+                loadingPermissions: false,
+                loadingRolePermissions: false,
+                savingPermissions: false,
+                loadingUserOverrides: false,
+                savingUserOverrides: false,
+
+                // Initialization
+                async init() {
+                    await Promise.all([
+                        this.loadRoles(),
+                        this.loadPermissions(),
+                    ]);
+                },
+
+                // API Calls
+                async loadRoles() {
+                    if (this.loadingRoles) return; // Prevent duplicate calls
+                    
+                    this.loadingRoles = true;
+                    try {
+                        const response = await fetch('/superadmin/rbac/roles');
+                        const data = await response.json();
+                        this.roles = data.roles || [];
+                    } catch (error) {
+                        this.showError('Failed to load roles');
+                    } finally {
+                        this.loadingRoles = false;
+                    }
+                },
+
+                async loadPermissions() {
+                    if (this.loadingPermissions) return; // Prevent duplicate calls
+                    
+                    this.loadingPermissions = true;
+                    try {
+                        const response = await fetch('/superadmin/rbac/permissions');
+                        const data = await response.json();
+                        this.permissions = data.permissions || [];
+                        this.groupedPermissions = data.grouped || {};
+                        this.roleAllowedPermissions = data.role_allowed || {};
+                    } catch (error) {
+                        this.showError('Failed to load permissions');
+                    } finally {
+                        this.loadingPermissions = false;
+                    }
+                },
+
+                async editRolePermissions(role) {
+                    if (this.loadingRolePermissions) return; // Prevent duplicate calls
+                    
+                    this.selectedRole = role;
+                    this.showEditPermissionsModal = true;
+                    this.loadingRolePermissions = true;
+                    
+                    try {
+                        const response = await fetch(`/superadmin/rbac/roles/${role.id}/permissions`);
+                        const data = await response.json();
+                        this.rolePermissions = data.permissions || {};
+                    } catch (error) {
+                        this.showError('Failed to load role permissions');
+                        this.showEditPermissionsModal = false;
+                    } finally {
+                        this.loadingRolePermissions = false;
+                    }
+                },
+
+                async searchUsers() {
+                    if (!this.userSearchQuery.trim()) {
+                        this.searchResults = [];
+                        return;
+                    }
+
+                    if (this.searchingUsers) return; // Prevent duplicate calls
+
+                    this.searchingUsers = true;
+                    try {
+                        const response = await fetch(`/superadmin/rbac/users/search?q=${encodeURIComponent(this.userSearchQuery)}`);
+                        const data = await response.json();
+                        this.searchResults = data.users || [];
+                    } catch (error) {
+                        this.searchResults = [];
+                        this.showError('Failed to search users');
+                    } finally {
+                        this.searchingUsers = false;
+                    }
+                },
+
+                async loadUserOverrides(user) {
+                    if (this.loadingUserOverrides) return; // Prevent duplicate calls
+                    
+                    this.selectedUser = user;
+                    this.showUserOverridesModal = true;
+                    this.loadingUserOverrides = true;
+                    
+                    try {
+                        const response = await fetch(`/superadmin/rbac/users/${user.id}/overrides`);
+                        const data = await response.json();
+
+                        this.userOverrides = {};
+                        if (data.overrides) {
+                            data.overrides.forEach(override => {
+                                this.userOverrides[override.permission_key] = override.allow;
+                            });
+                        }
+                    } catch (error) {
+                        this.showError('Failed to load user overrides');
+                        this.showUserOverridesModal = false;
+                    } finally {
+                        this.loadingUserOverrides = false;
+                    }
+                },
+
+                async saveUserOverrides() {
+                    if (this.savingUserOverrides) return; // Prevent duplicate calls
+                    
+                    this.savingUserOverrides = true;
+                    try {
+                        const overridesArray = Object.entries(this.userOverrides)
+                            .filter(([_, value]) => value !== undefined)
+                            .map(([permission_key, allow]) => ({
+                                permission_key,
+                                allow
+                            }));
+
+                        const response = await fetch(`/superadmin/rbac/users/${this.selectedUser.id}/overrides`, {
+                            method: 'PUT',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRFToken': this.getCSRFToken()
+                            },
+                            body: JSON.stringify({ overrides: overridesArray })
+                        });
+
+                        if (response.ok) {
+                            this.showSuccess('User overrides saved successfully');
+                            this.showUserOverridesModal = false;
+                            await this.invalidateUserCache(this.selectedUser.id);
+                        } else {
+                            this.showError('Failed to save user overrides');
+                        }
+                    } catch (error) {
+                        this.showError('Failed to save user overrides');
+                    } finally {
+                        this.savingUserOverrides = false;
+                    }
+                },
+
+                async invalidateUserCache(userId) {
+                    try {
+                        await fetch(`/superadmin/rbac/users/${userId}/invalidate-cache`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRFToken': this.getCSRFToken()
+                            }
+                        });
+                    } catch (error) {
+                        // Silent fail - cache invalidation is not critical
+                    }
+                },
+
+                async saveRolePermissions() {
+                    if (this.savingPermissions) return; // Prevent duplicate calls
+                    
+                    this.savingPermissions = true;
+                    try {
+                        const response = await fetch(`/superadmin/rbac/roles/${this.selectedRole.id}/permissions`, {
+                            method: 'PUT',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRFToken': this.getCSRFToken()
+                            },
+                            body: JSON.stringify({ permissions: this.rolePermissions })
+                        });
+
+                        if (response.ok) {
+                            this.showSuccess('Permissions updated successfully');
+                            this.showEditPermissionsModal = false;
+                        } else {
+                            this.showError('Failed to update permissions');
+                        }
+                    } catch (error) {
+                        this.showError('Failed to update permissions');
+                    } finally {
+                        this.savingPermissions = false;
+                    }
+                },
+
+                // Permission Logic
+                isPermissionAllowedForRole(permKey) {
+                    if (!this.selectedRole) return false;
+
+                    const roleName = this.selectedRole.name;
+                    const allowedPerms = this.roleAllowedPermissions[roleName] || [];
+
+                    return allowedPerms.includes(permKey) || allowedPerms.includes('*');
+                },
+
+                isRoleUnrestricted(roleName) {
+                    const allowedPerms = this.roleAllowedPermissions[roleName] || [];
+                    return allowedPerms.includes('*');
+                },
+
+                shouldShowPermission(permKey) {
+                    if (!this.selectedRole) return false;
+                    
+                    const roleName = this.selectedRole.name;
+                    const allowedPerms = this.roleAllowedPermissions[roleName] || [];
+                    
+                    if (allowedPerms.includes('*')) {
+                        return true;
+                    }
+                    
+                    return allowedPerms.includes(permKey);
+                },
+
+                shouldShowUserOverridePermission(permKey) {
+                    if (!this.selectedUser) return false;
+                    
+                    const userRole = this.selectedUser.role;
+                    const allowedPerms = this.roleAllowedPermissions[userRole] || [];
+                    
+                    if (allowedPerms.includes('*')) {
+                        return true;
+                    }
+                    
+                    return allowedPerms.includes(permKey);
+                },
+
+                togglePermission(key, checked) {
+                    this.rolePermissions[key] = checked;
+                },
+
+                toggleUserOverride(permKey, allowed) {
+                    this.userOverrides[permKey] = allowed;
+                },
+
+                // Utility Methods
+                getCSRFToken() {
+                    const meta = document.querySelector('meta[name="csrf-token"]');
+                    return meta ? meta.getAttribute('content') : '';
+                },
+
+                showError(message) {
+                    alert(message);
+                },
+
+                showSuccess(message) {
+                    alert(message);
+                }
+            }
+        }
+    </script>
+
+    <style>
+        [x-cloak] {
+            display: none !important;
+        }
+        
+        /* Spinner animation */
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+        
+        .animate-spin {
+            animation: spin 1s linear infinite;
+        }
+    </style>
+</body>
+
+</html>

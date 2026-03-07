@@ -1,0 +1,375 @@
+project:
+  module: github.com/username/my_api
+  user_model_name: User  # Name of the user model struct
+  repository_name: UserRepository  # Repository interface name to use
+
+
+email:
+  enabled: true
+  provider: smtp
+  smtp_host_env: SMTP_HOST
+  smtp_port_env: SMTP_PORT
+  smtp_user_env: SMTP_EMAIL
+  smtp_password_env: SMTP_EMAIL_PASSWORD
+  
+session:
+  enabled: true
+  secret_key_env: CHANGE_THIS_SESSION_SECRET
+  cookies_secret_key_env: CHANGE_THIS_COOKIES_SECRET
+  cookie_http_only: true
+  cookie_secure: false # set to true in production
+  expiration: "24 * time.Hour"
+  store_context_key: "session"
+
+
+authentication:
+  # ─────────────────────────────────────────────────────────────────────────
+  # REPOSITORY VARIABLE NAME
+  # The variable name used in every handler/controller to call repo methods.
+  # e.g.  authRepo.GetUserByEmail(...)  instead of  db.GetUserByEmail(...)
+  # Must match the name you wire up via contexthelpers.Get<RepositoryName>(c)
+  # ─────────────────────────────────────────────────────────────────────────
+  repo_var: authRepo  # Used as: authRepo.GetUserByEmail(...)
+  # ─────────────────────────────────────────────────────────────────────────
+  # SESSION CONFIG  (used by web_auth_handler)
+  # ─────────────────────────────────────────────────────────────────────────
+  session:
+    enabled: true  # Set false for pure JWT / API-only projects
+
+  # Middleware to apply to registration endpoint
+  register_middleware: []
+  jwt:
+    enabled: true
+    algorithm: HS256
+    expiry_hours: 24
+    secret_key_env: JWT_SECRET
+    
+    claims:
+      - { name: user_id, type: uint }
+      - { name: email, type: string }
+      - { name: role, type: string }
+      - { name: verified, type: bool }
+  
+  # =============================================================================
+  # IDENTIFIER CONFIGURATION
+  # Define how users are identified for login/registration
+  # =============================================================================
+  identifier:
+    # Login methods - defines what fields users can login with
+    # Only ONE should have enabled: true at a time
+    login_methods:
+      - field: email
+        enabled: false  # Set to true to use email-only login
+        repository_method: GetUserByEmail
+        validation: required,email
+        error_message: "invalid_email"
+        rate_limit:
+          enabled: false
+          name: email_login_rate_limit
+        middleware: []
+        
+      - field: username
+        enabled: false  # Set to true to use username-only login
+        repository_method: GetUserByUsername
+        validation: required,min=3,max=50
+        error_message: "invalid_username"
+        rate_limit:
+          enabled: false
+          name: username_login_rate_limit
+        middleware: []
+      
+      # Combined lookup (email OR username)
+      - field: email_or_username
+        enabled: true  # ONLY THIS ONE IS ENABLED - single input login
+        repository_method: GetUserByEmailOrUsername
+        validation: required
+        error_message: "invalid_identifier"
+        json_field: identifier  # Input field name in DTO
+        dto_description: "Email or username"
+        rate_limit:
+          enabled: false
+          name: email_or_username_login_rate_limit
+        middleware: []
+    
+    # Registration fields configuration
+    # These fields appear in RegisterUserInput DTO
+    register_fields:
+      - field: email
+        required: true
+        unique: true
+        validation: required,email
+        repository_check: GetUserByEmail  # Method to check if email exists
+        type: string
+        dto_type: string
+        
+      - field: username
+        required: false  # Optional
+        unique: true
+        validation: omitempty,min=3,max=50
+        repository_check: GetUserByUsername  # Method to check if username exists
+        type: "*string"  # Pointer for optional fields
+        dto_type: "*string"
+      
+      - field: fullname
+        required: true
+        unique: false
+        validation: required,min=2
+        type: string
+        dto_type: string
+      
+      - field: phone
+        required: false
+        unique: true
+        validation: omitempty,e164
+        repository_check: GetUserByPhone  # Method to check if phone exists
+        type: "*string"
+        dto_type: "*string"
+      
+      - field: password
+        required: true
+        validation: required,min=8
+        type: string
+        dto_type: string
+        sensitive: true  # Don't include in response
+      
+      # FILE UPLOAD FIELDS - Add to register_fields for file inputs
+      - field: profile_image
+        required: false
+        file_upload: true  # Marks this as a file upload field
+        type: "*multipart.FileHeader"  # Go type for file uploads
+        dto_type: "*multipart.FileHeader"
+        form_field: profile_image  # HTML form field name
+        model_field: ProfileImage  # Field in User model (string type to store path)
+        max_size_mb: 5
+        allowed_types:
+          - image/jpeg
+          - image/png
+          - image/webp
+        storage_path: uploads/profiles
+        filename_pattern: "profile_{user_id}_{timestamp}"
+  
+  # Email/Password Authentication
+  email_password:
+    enabled: true
+    bcrypt_cost: 14
+    
+    # Password Validation
+    password_validation:
+      min_length: 8
+      require_uppercase: true
+      require_lowercase: true
+      require_number: true
+      require_special: true
+    
+    # Email Verification
+    email_verification:
+      enabled: true
+      require_on_registration: true
+      otp_length: 6
+      otp_expiry: 10m
+      email_template: templates/email_verification.html
+      model_field: Verified  # Field name in User model (bool)
+      rate_limit:
+        enabled: false
+        name: email_verification_rate_limit
+      middleware: []
+      endpoints:
+        - verify_email
+        - resend_verification
+    
+    # Forgot Password Flow
+    forgot_password:
+      enabled: true
+      otp_expiry: 10m
+      email_template: templates/password_reset.html
+      rate_limit:
+        enabled: false
+        name: forgot_password_rate_limit
+      middleware: []
+      
+      # Input field for password reset - matches login_methods
+      identifier_field: email_or_username  # Can use: email, username, or email_or_username
+      
+      endpoints:
+        - forgot_password
+        - reset_password
+    
+    # Change Password
+    change_password:
+      enabled: true
+      require_old_password: true
+      rate_limit:
+        enabled: false
+        name: change_password_rate_limit
+      middleware: []
+      endpoints:
+        - change_password
+    
+    endpoints:
+      - register
+      - login
+  
+  # Social Authentication
+  social_auth:
+    google:
+      enabled: true
+      client_id_env: GOOGLE_CLIENT_ID
+      client_secret_env: GOOGLE_CLIENT_SECRET
+      redirect_url_env: GOOGLE_REDIRECT_URL
+      state: random  # OAuth state parameter for CSRF protection
+      success_redirect: /dashboard  # Redirect after successful web login
+      
+      # Field mapping from OAuth to User model
+      field_mapping:
+        - { source: email, target: Email, required: true }
+        - { source: name, target: Fullname, required: false }
+        - { source: picture, target: ProfileImage, required: false }
+        - { source: id, target: GoogleID, required: true, unique: true }
+      
+      # Repository method to find user by Google ID
+      repository_method: GetUserByGoogleID  # Method name in your repository
+      model_field: GoogleID  # Field name in User model (*string type)
+      
+      endpoints:
+        api:
+          enabled: true
+          path: /api/auth/google
+
+          method: POST
+        web:
+          enabled: true
+          login_path: /auth/google/login
+          callback_path: /auth/google/callback
+    
+    facebook:
+      enabled: true
+      client_id_env: FACEBOOK_CLIENT_ID
+      client_secret_env: FACEBOOK_CLIENT_SECRET
+      redirect_url_env: FACEBOOK_REDIRECT_URL
+      state: random  # OAuth state parameter for CSRF protection
+      success_redirect: /dashboard  # Redirect after successful web login
+      
+      # Field mapping from OAuth to User model
+      field_mapping:
+        - { source: email, target: Email, required: true }
+        - { source: name, target: Fullname, required: false }
+        - { source: id, target: FacebookID, required: true, unique: true }
+      
+      # Repository method to find user by Facebook ID
+      repository_method: GetUserByFacebookID  # Method name in your repository
+      model_field: FacebookID  # Field name in User model (*string type)
+      
+      endpoints:
+        api:
+          enabled: true
+          path: /api/auth/facebook
+          method: POST
+        web:
+          enabled: true
+          login_path: /auth/facebook/login
+          callback_path: /auth/facebook/callback 
+  
+  # Refresh Token
+  refresh_token:
+    enabled: true
+    expiry: 168h
+    rotate_on_refresh: true
+    rate_limit:
+      enabled: false
+      name: refresh_token_rate_limit
+    middleware: []
+    endpoints:
+      - refresh_token
+  
+  # Logout
+  logout:
+    enabled: true
+    clear_tokens: true
+    endpoints:
+      - logout
+  
+  # App Check Tokens - Generate custom JWT tokens with different configs
+  app_check_tokens:
+    - name: admin_token
+
+      algorithm: HS512
+      secret_key_env: ADMIN_TOKEN_SECRET  # Environment variable name
+      expiry_hours: 720  # 30 days
+      endpoint: generate_admin_token  # POST /api/auth/generate-admin-token
+      middleware: [auth, admin]  # List of middleware to apply
+      claims:
+        - { name: user_id, type: uint, source: input }  # From request body
+        - { name: role, type: string, source: input }
+        - { name: permissions, type: "[]string", source: input }
+    
+    - name: api_token
+      algorithm: HS256
+      secret_key_env: API_TOKEN_SECRET
+      expiry_hours: 8760  # 1 year
+      endpoint: generate_api_token  # POST /api/auth/generate-api-token
+      middleware: [auth]
+      claims:
+        - { name: app_id, type: string, source: config, config_key: APP_ID }  # From viper config
+        - { name: scope, type: string, source: input }
+        - { name: environment, type: string, source: config, config_key: ENVIRONMENT }
+  
+  # Web Authentication (Session-based)
+  web_auth:
+    enabled: true
+    package_name: handlers
+    
+    endpoints:
+      login:
+        enabled: true
+        path: /auth/login
+        handler: LoginPage
+        rate_limit:
+          enabled: false
+          name: login_rate_limit
+      signup:
+        enabled: true
+        path: /auth/signup
+        handler: SignupPage
+        middleware: []
+        rate_limit:
+          enabled: false
+          name: signup_rate_limit
+      logout:
+        enabled: true
+        path: /auth/logout
+        handler: HandleLogout
+        rate_limit:
+          enabled: false
+          name: logout_rate_limit
+      verify_email:
+        enabled: true
+        path: /auth/verify
+        handler: VerifyEmailPage
+        middleware: [login]
+
+        rate_limit:
+          enabled: false
+          name: verify_email_rate_limit
+      forgot_password:
+        enabled: true
+        path: /auth/forgot-password
+        handler: ForgotPasswordPage
+        rate_limit:
+          enabled: false
+          name: forgot_password_rate_limit
+      reset_password:
+        enabled: true
+        path: /auth/reset-password
+        handler: HandleResetPassword
+        rate_limit:
+          enabled: false
+          name: reset_password_rate_limit
+     
+    # Social auth on web (handled by social_auth_controller.go)
+    social_auth:
+      google:
+        enabled: true  # Uses GoogleLoginWeb, GoogleCallbackWeb
+      facebook:
+        enabled: true  # Uses FacebookLoginWeb, FacebookCallbackWeb
+  
+  

@@ -1,0 +1,239 @@
+package event
+
+import (
+	"fmt"
+	"log"
+	"time"
+{% if config.websocket.events | selectattr('rate_limit', 'defined') | selectattr('rate_limit.enabled') | list %}
+	"sync"
+{% endif %}
+
+	"github.com/gofiber/contrib/websocket"
+	"github.com/gofiber/fiber/v2"
+
+	"{{ config.project.module }}/internal/domain"
+	ws "{{ config.project.module }}/websocket"
+)
+
+{% if config.websocket.enabled and config.websocket.handler_type == 'dedicated' %}
+{% if config.websocket.get('dedicated', {}).get('events', {}).get('enabled', true) %}
+
+{# Hub broadcast variables — routes through registry since events pkg has no direct hub refs #}
+{% set hub_broadcast_all    = 'ws.BroadcastAll' %}
+{% set hub_broadcast_admins = 'ws.BroadcastRegistry.Admin.BroadcastToAdmins' %}
+{% set hub_broadcast_user   = 'ws.BroadcastRegistry.User.BroadcastToUser' %}
+{% set hub_broadcast_room   = 'func(id string, m interface{}){}' %}
+
+func authenticateDedicatedWS(c *websocket.Conn) (uint, error) {
+{% if config.websocket.authentication.method in ['jwt', 'unified'] %}
+	appToken   := c.Headers("{{ config.websocket.authentication.get('app_token', {}).get('header_name', 'X-App-Token') }}", c.Query("{{ config.websocket.authentication.get('app_token', {}).get('query_param', 'app_token') }}"))
+	authHeader := c.Headers("{{ config.websocket.authentication.get('jwt', {}).get('extraction', {}).get('header', 'Authorization') }}")
+	if authHeader == "" {
+		authHeader = "{{ config.websocket.authentication.get('jwt', {}).get('extraction', {}).get('header_prefix', 'Bearer ') }}" + c.Query("{{ config.websocket.authentication.get('jwt', {}).get('extraction', {}).get('query_param', 'token') }}")
+	}
+	return ValidateUnifiedTokens(appToken, authHeader)
+{% else %}
+	return 0, nil
+{% endif %}
+}
+
+{# Rate limiters for non-chat events only #}
+{% for event in config.websocket.events %}
+{% if event.enabled and event.get('rate_limit') and event.rate_limit.get('enabled', false) and event.handler_type != 'chat_message' %}
+var rateLimiter{{ event.name | replace('_', '') | title }} = &struct {
+	requests map[string][]time.Time
+	mu       sync.RWMutex
+	max      int
+	window   time.Duration
+}{
+	requests: make(map[string][]time.Time),
+	max:      {{ event.rate_limit.max_per_minute }},
+	window:   time.Minute,
+}
+
+func checkRateLimit{{ event.name | replace('_', '') | title }}(userID uint) bool {
+	key := fmt.Sprintf("user_%d", userID)
+	limiter := rateLimiter{{ event.name | replace('_', '') | title }}
+	limiter.mu.Lock()
+	defer limiter.mu.Unlock()
+	now := time.Now()
+	times := limiter.requests[key]
+	filtered := make([]time.Time, 0)
+	for _, t := range times {
+		if now.Sub(t) < limiter.window {
+			filtered = append(filtered, t)
+		}
+	}
+	if len(filtered) >= limiter.max {
+		return false
+	}
+	filtered = append(filtered, now)
+	limiter.requests[key] = filtered
+	return true
+}
+{% endif %}
+{% endfor %}
+
+// EventsWebSocketHandler handles all custom and YAML-defined events.
+// Path: {{ config.websocket.get('dedicated', {}).get('events', {}).get('path', '/ws/events') }}
+// Events: {% for event in config.websocket.events %}{% if event.enabled and event.handler_type != 'chat_message' %}{{ event.name }} {% endif %}{% endfor %}
+
+func EventsWebSocketHandler(c *websocket.Conn) {
+	userID, err := authenticateDedicatedWS(c)
+	if err != nil {
+		_ = c.WriteJSON(fiber.Map{"error": err.Error()})
+		c.Close()
+		return
+	}
+
+	safeConn := ws.NewSafeConn(c)
+
+	for {
+		var msg map[string]interface{}
+		if err := safeConn.ReadJSON(&msg); err != nil {
+			break
+		}
+		eventType, ok := msg["type"].(string)
+		if !ok {
+			continue
+		}
+		switch eventType {
+{% for event in config.websocket.events %}
+{% if event.enabled and event.handler_type != 'chat_message' %}
+		case "{{ event.name }}":
+			{% if event.get('rate_limit') and event.rate_limit.get('enabled', false) %}
+			if !checkRateLimit{{ event.name | replace('_', '') | title }}(userID) {
+				_ = safeConn.WriteJSON(fiber.Map{"error": "rate_limit_exceeded", "event": "{{ event.name }}"})
+				continue
+			}
+			{% endif %}
+			{% if event.get('throttle') and event.throttle.get('enabled', false) %}
+			time.Sleep({{ event.throttle.delay_ms }} * time.Millisecond)
+			{% endif %}
+			{% if event.handler_type == 'custom' %}
+			{{ event.custom_handler }}(msg, userID, safeConn)
+			{% else %}
+			handleGenericEvent("{{ event.name }}", msg, userID, safeConn)
+			{% endif %}
+{% endif %}
+{% endfor %}
+		default:
+			log.Printf("EventsWebSocketHandler: unknown event: %s", eventType)
+			_ = safeConn.WriteJSON(fiber.Map{"error": "unknown_event_type", "type": eventType})
+		}
+	}
+}
+
+{# Generic Event Handler - Made Dynamic                            #}
+{# ────────────────────────────────────────────────────────────── #}
+func handleGenericEvent(eventType string, msg map[string]interface{}, userID uint, conn WSWriter) {
+	log.Printf("Generic event '%s' from user %d", eventType, userID)
+	msg["type"]      = eventType
+	msg["sender_id"] = userID
+
+{% for event in config.websocket.events %}
+{% if event.enabled and event.get('handler_type', 'generic') not in ['chat_message', 'custom'] %}
+	if eventType == "{{ event.name }}" {
+{% if event.get('persist', false) %}
+		// Persist event as a notification record
+		GlobalNotify(map[string]interface{}{
+			"user_id": userID,
+			"title":   "Event: {{ event.name }}",
+			"message": "{{ event.get('description', 'New activity detected') }}",
+			"type":    "{{ event.name }}",
+		}, nil)
+{% endif %}
+
+		// Broadcast to configured targets
+{% for target in event.get('broadcast_to', []) %}
+{% if target == 'all' %}
+		{{ hub_broadcast_all }}(msg)
+{% elif target == 'admins' %}
+		{{ hub_broadcast_admins }}(msg)
+{% elif target == 'user' %}
+		if targetID, ok := msg["target_id"].(float64); ok {
+			{{ hub_broadcast_user }}(uint(targetID), msg)
+		}
+{% elif target == 'room' %}
+		if roomID, ok := msg["room_id"].(string); ok {
+			{{ hub_broadcast_room }}(roomID, msg)
+		}
+{% elif target == 'custom' and event.get('custom_broadcast_function') %}
+		{{ event.custom_broadcast_function }}(msg)
+{% endif %}
+{% endfor %}
+
+		// Send success response
+		_ = conn.WriteJSON(fiber.Map{
+			"success": true,
+			"event": "{{ event.name }}",
+		})
+		return
+	}
+{% endif %}
+{% endfor %}
+
+	// Default: just log it
+	_ = conn.WriteJSON(fiber.Map{
+		"success": true,
+		"event": eventType,
+		"note": "Event received but no specific handler configured",
+	})
+}
+
+
+{# ────────────────────────────────────────────────────────────── #}
+{# Custom Event Handlers - Generated from YAML                     #}
+{# ────────────────────────────────────────────────────────────── #}
+{% for event in config.websocket.events %}
+{% if event.enabled and event.get('handler_type') == 'custom' %}
+// {{ event.custom_handler }} handles the '{{ event.name }}' event.
+{% if event.get('description') %}
+// Description: {{ event.description }}
+{% endif %}
+func {{ event.custom_handler }}(msg map[string]interface{}, userID uint, conn WSWriter) {
+	log.Printf("Custom handler '{{ event.custom_handler }}' for '{{ event.name }}' from user %d", userID)
+	
+	// TODO: Implement your custom logic here
+	// Available: msg (payload), userID (authenticated user), conn (websocket connection)
+	
+{% if event.get('persist', false) %}
+	// Auto-persist as notification
+	GlobalNotify(map[string]interface{}{
+		"user_id": userID,
+		"title":   "{{ event.get('notification_title', 'Event: ' + event.name) }}",
+		"message": "{{ event.get('notification_message', 'Activity recorded') }}",
+		"type":    "{{ event.name }}",
+	}, nil)
+{% endif %}
+
+	// Broadcast to configured targets
+{% for target in event.get('broadcast_to', []) %}
+{% if target == 'all' %}
+	{{ hub_broadcast_all }}(msg)
+{% elif target == 'admins' %}
+	{{ hub_broadcast_admins }}(msg)
+{% elif target == 'user' %}
+	if targetID, ok := msg["target_id"].(float64); ok {
+		{{ hub_broadcast_user }}(uint(targetID), msg)
+	}
+{% elif target == 'room' %}
+	if roomID, ok := msg["room_id"].(string); ok {
+		{{ hub_broadcast_room }}(roomID, msg)
+	}
+{% elif target == 'custom' and event.get('custom_broadcast_function') %}
+	{{ event.custom_broadcast_function }}(msg)
+{% endif %}
+{% endfor %}
+
+	// Send success response
+	_ = conn.WriteJSON(fiber.Map{
+		"success": true,
+		"event": "{{ event.name }}",
+	})
+}
+{% endif %}
+{% endfor %}
+
+{% endif %}{# dedicated.events #}
+{% endif %}{# websocket.enabled #}

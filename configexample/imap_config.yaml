@@ -1,0 +1,101 @@
+project:
+  module: github.com/username/my_api
+
+# IMAP Configuration (for fetching emails)
+imap:
+  enabled: true  # Enable to fetch emails from mailbox
+  host_env: IMAP_HOST
+  port_env: IMAP_PORT
+  user_env: IMAP_EMAIL
+  password_env: IMAP_PASSWORD
+  use_ssl: true
+  mailbox: INBOX
+  fetch_interval: "5 * time.Minute"  # How often to check for new emails
+  mark_as_read: true  # Mark fetched emails as read
+  max_emails_per_fetch: 50  # Maximum emails to fetch per interval
+  fetch_sent: true  # Fetch emails from Sent Items
+  controller:
+    enabled: true
+    middleware: []
+    base_path: /api
+    GetEmailsList:
+      enabled: true
+      middleware: []
+      path: /get-emails-list
+    GetEmailDetail:
+      enabled: true
+      middleware: []
+      path: /get-email-detail/:id
+    SendEmail:
+      enabled: true
+      middleware: []
+      path: /send-email
+    MarkEmailRead:
+      enabled: true
+      middleware: []
+      path: /mark-email-read/:id
+    RefreshEmails:
+      enabled: true
+      middleware: []
+      path: /refresh-emails
+
+  web_handler:   # Enable web handler for email fetching
+    enabled: true
+    template: "email/inbox.html"
+    middleware: []
+    permissions: [post.view.user]
+    context:
+      needs_user: true
+      needs_csrf: true
+      needs_perms: true
+      needs_dashbase: true
+      needs_translations: true
+      # base_translations: PostBase
+      # extra_translations: [CommonTranslations]
+      user_config:
+        use_repo: true
+        repo_name: userRepo
+        method: GetByID
+    middleware: []
+    base_path: /api
+    GetEmailsList:
+      enabled: true
+      middleware: []
+      permissions: [post.view.user]
+      path: /get-emails-list
+    GetEmailDetail:
+      enabled: true
+      middleware: []
+      permissions: [post.view.user]
+      path: /get-email-detail/:id
+    SendEmail:
+      enabled: true
+      middleware: []
+      permissions: [post.view.user]
+      path: /send-email
+    MarkEmailRead:
+      enabled: true
+      middleware: []
+      permissions: [post.view.user]
+      path: /mark-email-read/:id
+    RefreshEmails:
+      enabled: true
+      middleware: []
+      permissions: [post.view.user]
+      path: /refresh-emails
+    GetSentEmails:
+      enabled: true
+      middleware: []
+      permissions: [post.view.user]
+      path: /get-sent-emails
+    GetInboxPage:
+      enabled: true
+      middleware: []
+      permissions: [post.view.user]
+      path: /get-inbox-page
+    
+    
+    
+
+  
+

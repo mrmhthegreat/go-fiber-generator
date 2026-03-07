@@ -1,0 +1,75 @@
+{% extends 'html/layouts/main.html.j2' %}
+
+{% block title %}{{ 'Edit' if edit else 'Create' }} {{ model.name }} | {{ config.project.name }}{% endblock %}
+{% block active_page %}{{ model.name }}{% endblock %}
+{% block content %}
+<div class="max-w-4xl mx-auto space-y-6">
+    <!-- Header Section -->
+    <div class="flex items-center justify-between">
+        <div>
+            <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{{ 'Edit' if edit else 'Add New' }} {{ model.name }}</h1>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Fill in the details below to {{ 'update the existing' if edit else 'create a new' }} {{ model.name | lower }}.</p>
+        </div>
+        <a href="/dashboard/{{ model.name | lower }}" class="text-sm font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300">
+            Back to List
+        </a>
+    </div>
+    <!-- Form Section -->
+    <div class="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <form hx-post="/dashboard/{{ model.name | lower }}{{ '/' ~ item.id if edit else '' }}" hx-swap="none" hx-indicator="#form-loading" class="space-y-6">
+            <input type="hidden" name="_csrf" value="{{ csrfToken }}">
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {% set form_fields = model.create_dto.fields if not edit else model.update_dto.fields %}
+                {% if not form_fields %}
+                    {% set form_fields = model.fields %}
+                {% endif %}
+                {% for field_name in form_fields %}
+                    {# Resolve field object from name if form_fields is just a list of names #}
+                    {% if field_name is string %}
+                        {% set field = (model.fields | selectattr('name', 'equalto', field_name) | first) %}
+                    {% else %}
+                        {% set field = field_name %}
+                    {% endif %}
+                    {% if field and field.json != "-" %}
+                    <div class="space-y-1">
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                            {{ field.name | replace('_', ' ') }}
+                            {% if 'required' in field.validate | default('') %}<span class="text-red-500">*</span>{% endif %}
+                        </label>
+                        
+                        {% if field.type == 'bool' %}
+                        <div class="mt-2">
+                            <label class="inline-flex items-center cursor-pointer">
+                                <input type="checkbox" name="{{ field.json }}" {{ 'checked' if edit and item[field.json] }} class="sr-only peer">
+                                <div class="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary/20 dark:peer-focus:ring-primary/10 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-primary"></div>
+                            </label>
+                        </div>
+                        {% elif 'role' in field.name | lower or field.type == 'select' %}
+                        <select name="{{ field.json }}" class="block w-full rounded-lg border border-gray-300 bg-gray-50 px-4 py-2.5 text-sm focus:border-primary focus:ring-primary dark:border-gray-600 dark:bg-gray-700 dark:text-white">
+                            {% for option in field.options | default(['user', 'admin']) %}
+                            <option value="{{ option }}" {{ 'selected' if edit and item[field.json] == option }}>{{ option | capitalize }}</option>
+                            {% endfor %}
+                        </select>
+                        {% elif field.type == 'text' or 'bio' in field.name | lower %}
+                        <textarea name="{{ field.json }}" rows="4" class="block w-full rounded-lg border border-gray-300 bg-gray-50 px-4 py-2.5 text-sm focus:border-primary focus:ring-primary dark:border-gray-600 dark:bg-gray-700 dark:text-white">{{ item[field.json] if edit else '' }}</textarea>
+                        {% else %}
+                        <input type="{{ 'password' if 'password' in field.name | lower else 'email' if 'email' in field.name | lower else 'number' if field.type == 'int' or field.type == 'uint' else 'text' }}" 
+                               name="{{ field.json }}" 
+                               value="{{ item[field.json] if edit else '' }}"
+                               {% if 'required' in field.validate | default('') %}required{% endif %}
+                               class="block w-full rounded-lg border border-gray-300 bg-gray-50 px-4 py-2.5 text-sm focus:border-primary focus:ring-primary dark:border-gray-600 dark:bg-gray-700 dark:text-white">
+                        {% endif %}
+                    </div>
+                {% endfor %}
+            </div>
+            <!-- Form Actions -->
+            <div class="flex items-center justify-end gap-4 pt-6 border-t border-gray-200 dark:border-gray-700">
+                <a href="/dashboard/{{ model.name | lower }}" class="rounded-lg border border-gray-300 px-5 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">Cancel</a>
+                <button type="submit" class="flex items-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-primary-600 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2">
+                    <svg id="form-loading" class="htmx-indicator h-5 w-5 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                    {{ 'Update' if edit else 'Create' }} {{ model.name }}
+                </button>
+        </form>
+</div>
+{% endblock %}

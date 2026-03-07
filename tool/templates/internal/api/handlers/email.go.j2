@@ -1,0 +1,329 @@
+package handlers
+
+import (
+    "log"
+    "strconv"
+
+    "github.com/bytedance/sonic"
+    "github.com/gofiber/fiber/v2"
+    {%if config.email.enable%}
+	dtopkg "{{ config.project.module }}/pkg/dto"
+    {%endif%}
+	emailpkg "{{ config.project.module }}/pkg/email"
+    {%if config.rbac.enabled %}
+	rbacpkg "{{ config.project.module }}/pkg/rbac"
+    {%endif%}
+	utilspkg "{{ config.project.module }}/pkg/utils"
+    "{{ config.project.module }}/internal/domain"
+    resppkg "{{ config.project.module }}/pkg/response"
+)
+{% set im = config.imap %}
+
+// ─────────────────────────────────────────────────────────
+//  EmailHandler — shared handler used by both:
+//    • Web routes  (/dashboard/emails/...)   → renders HTML or AJAX JSON
+//    • API routes  (/api/emails/...)         → always returns JSON
+//  The same methods handle both route sets.
+// ─────────────────────────────────────────────────────────
+
+// Direction / Status constants
+const (
+    DirectionInbound  = "inbound"
+
+    DirectionOutbound = "outbound"
+    StatusUnread      = "unread"
+    StatusRead        = "read"
+)
+
+// EmailHandler holds all IMAP/email-related route handlers
+type EmailHandler struct{}
+
+// New creates a new EmailHandler
+func New() *EmailHandler {
+    return &EmailHandler{}
+}
+
+// ─── Web-only: page renders ───────────────────────────────
+
+{% if im.web_handler.GetInboxPage.enabled %}
+// GetInboxPage renders the inbox HTML page (web)
+func (h *EmailHandler) GetInboxPage(c *fiber.Ctx) error {
+    return h.getEmailsPage(c, DirectionInbound, "inbound")
+}
+{% endif %}
+
+{% if im.web_handler.GetSentEmails.enabled and im.fetch_sent %}
+// GetSentPage renders the sent emails HTML page (web)
+func (h *EmailHandler) GetSentPage(c *fiber.Ctx) error {
+    return h.getEmailsPage(c, DirectionOutbound, "outbound")
+}
+{% endif %}
+
+{% if im.web_handler.GetInboxPage.enabled or im.web_handler.GetSentEmails.enabled %}
+func (h *EmailHandler) getEmailsPage(c *fiber.Ctx, direction string, inboxType string) error {
+    userID, ok := c.Locals("user_id").(uint)
+    if !ok {
+        return c.Redirect("/login")
+    }
+
+    dbConn := utilspkg.GetDB(c)
+    {% set ep = im.web_handler %}
+
+    {% if ep.context.needs_user and ep.context.user_config.use_repo %}
+    userRepo := utilspkg.Get{{ ep.context.user_config.repo_name }}(dbConn)
+    if userRepo == nil {
+        return fiber.NewError(fiber.StatusInternalServerError, "db_connection_failed")
+    }
+    user, err := userRepo.{{ ep.context.user_config.method }}(userID)
+    if err != nil {
+        return fiber.NewError(fiber.StatusInternalServerError, "internal_server_error")
+    }
+    {% endif %}
+
+    renderContext := fiber.Map{}
+
+    {% if ep.context.needs_csrf %}
+    renderContext["csrfToken"] = c.Locals("csrf").(string)
+    {% endif %}
+    {% if ep.context.needs_user %}
+    renderContext["user"] = user
+    {% endif %}
+
+    {%if config.rbac.enabled %}
+    {% if ep.context.needs_perms %}
+    permsJSON, _ := sonic.Marshal(rbacpkg.GetUserPermsForTemplate(c, nil))
+    renderContext["perms"] = string(permsJSON)
+    {% endif %}
+    {% if ep.context.needs_dashbase %}
+    renderContext["dashBase"] = rbacpkg.GetDashboardBasePath(user.{{ config.rbac.model_field }})
+    {% endif %}
+    {% endif %}
+
+    {% for data in ep.context.custom_data %}
+    // Fetch {{ data.name }}
+    {{ data.repo | lower }}Repo := utilspkg.Get{{ data.repo }}Repository(dbConn)
+    if {{ data.repo | lower }}Repo != nil {
+        {{ data.var }}, err := {{ data.repo | lower }}Repo.{{ data.method }}({% for arg in data.args %}{{ arg }}{% if not loop.last %}, {% endif %}{% endfor %})
+        if err != nil {
+            log.Printf("Error fetching {{ data.var }}: %v", err)
+        } else {
+            {% if data.marshal %}
+            {{ data.var }}Data, _ := sonic.Marshal({{ data.var }})
+            renderContext["{{ data.var }}"] = string({{ data.var }}Data)
+            {% else %}
+            renderContext["{{ data.var }}"] = {{ data.var }}
+            {% endif %}
+        }
+    }
+    {% endfor %}
+
+    renderContext["inboxType"] = inboxType
+    return c.Render("admin/emails/inbox", renderContext)
+}
+{% endif %}
+
+// ─── Shared: web AJAX + API ───────────────────────────────
+
+{% if im.controller.GetEmailsList.enabled or im.web_handler.GetEmailsList.enabled %}
+{% if im.controller.GetEmailsList.enabled %}
+// GetEmailsList returns a paginated list of emails as JSON
+// @Summary List emails
+// @Description Returns paginated inbound or outbound emails for the current user
+// @Tags {{ im.controller.tag | default('Email') }}
+// @Produce json
+// @Param Authorization header string true "Bearer token"
+// @Param direction query string false "inbound or outbound" default(inbound)
+// @Param offset query int false "Offset" default(0)
+// @Param limit query int false "Limit" default(20)
+// @Success 200 {object} resppkg.EmailListData
+// @Failure 500 {object} map[string]string
+// @Router {{ im.controller.base_path | default('/api/emails') }}{{ im.controller.GetEmailsList.path | default('') }} [get]
+{% endif %}
+func (h *EmailHandler) GetEmailsList(c *fiber.Ctx) error {
+    dbConn := utilspkg.GetDB(c)
+    emailRepo := utilspkg.GetEmailMessageRepository(dbConn)
+    if emailRepo == nil {
+        return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "db_connection_failed"})
+    }
+
+    offset := c.QueryInt("offset", 0)
+    limit := c.QueryInt("limit", 20)
+    direction := c.Query("direction", DirectionInbound)
+    userID, _ := c.Locals("user_id").(uint)
+
+    var emails []domain.EmailMessage
+    var total int64
+    var err error
+
+    if direction == DirectionInbound {
+        emails, total, err = emailRepo.GetInbox(userID, offset, limit, "desc")
+    } else {
+        emails, total, err = emailRepo.GetSent(userID, offset, limit, "desc")
+    }
+
+    if err != nil {
+        return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "fetch_failed"})
+    }
+
+    return c.JSON(resppkg.EmailListData{
+        Emails:     resppkg.ConvertToEmailListResponses(emails),
+        TotalCount: total,
+        Offset:     offset,
+        Limit:      limit,
+    })
+}
+{% endif %}
+
+{% if im.controller.GetEmailDetail.enabled or im.web_handler.GetEmailDetail.enabled %}
+{% if im.controller.GetEmailDetail.enabled %}
+// GetEmailDetail returns full details of a specific email
+// @Summary Get email by ID
+// @Description Returns full email details and marks inbound emails as read
+// @Tags {{ im.controller.tag | default('Email') }}
+// @Produce json
+// @Param Authorization header string true "Bearer token"
+// @Param id path int true "Email ID"
+// @Success 200 {object} domain.EmailMessage
+// @Failure 404 {object} map[string]string
+// @Router {{ im.controller.base_path | default('/api/emails') }}{{ im.controller.GetEmailDetail.path | default('/:id') }} [get]
+{% endif %}
+func (h *EmailHandler) GetEmailDetail(c *fiber.Ctx) error {
+    dbConn := utilspkg.GetDB(c)
+    emailRepo := utilspkg.GetEmailMessageRepository(dbConn)
+    if emailRepo == nil {
+        return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "db_connection_failed"})
+    }
+
+    id, err := strconv.ParseUint(c.Params("id"), 10, 32)
+    if err != nil {
+        return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid_id"})
+    }
+
+    email, err := emailRepo.GetByID(uint(id))
+    if err != nil {
+        return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "not_found"})
+    }
+
+    // Mark as read if inbound
+    if email.Direction == DirectionInbound && email.Status == StatusUnread {
+        _ = emailRepo.MarkAsRead(uint(id))
+        email.Status = StatusRead
+    }
+
+    return c.JSON(email)
+}
+{% endif %}
+
+
+{%if config.email.enable %}
+{% if im.controller.SendEmail.enabled or im.web_handler.SendEmail.enabled %}
+{% if im.controller.SendEmail.enabled %}
+// ComposeEmail sends a new outbound email
+// @Summary Send email
+// @Description Composes and sends a new outbound email, saves it to DB
+// @Tags {{ im.controller.tag | default('Email') }}
+// @Accept json
+// @Produce json
+// @Param Authorization header string true "Bearer token"
+// @Param input body dtopkg.ComposeEmailRequest true "Email payload"
+// @Success 200 {object} map[string]bool
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router {{ im.controller.base_path | default('/api/emails') }}{{ im.controller.SendEmail.path | default('/compose') }} [post]
+{% endif %}
+func (h *EmailHandler) ComposeEmail(c *fiber.Ctx) error {
+    var req dtopkg.ComposeEmailRequest
+    if err := c.BodyParser(&req); err != nil {
+        return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid_request"})
+    }
+
+    if req.To == "" || req.Subject == "" || req.Message == "" {
+        return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "missing_required_fields"})
+    }
+
+    if err := emailpkg.SendRawEmail(req.To, req.Subject, req.Message); err != nil {
+        log.Printf("Email send error: %v", err)
+        return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "send_failed"})
+    }
+
+    dbConn := utilspkg.GetDB(c)
+    emailRepo := utilspkg.GetEmailMessageRepository(dbConn)
+
+    userID, _ := c.Locals("user_id").(uint)
+    userEmail, _ := c.Locals("email").(string)
+
+    sent := domain.EmailMessage{
+        From:      userEmail,
+        To:        req.To,
+        Subject:   req.Subject,
+        Body:      req.Message,
+        Direction: DirectionOutbound,
+        Status:    StatusRead,
+        UserID:    &userID,
+    }
+
+    if err := emailRepo.Create(&sent); err != nil {
+        log.Println("Error saving sent email:", err)
+    }
+
+    return c.JSON(fiber.Map{"success": true})
+}
+{% endif %}
+{% endif %}
+
+{% if im.controller.MarkEmailRead.enabled or im.web_handler.MarkEmailRead.enabled %}
+{% if im.controller.MarkEmailRead.enabled %}
+// MarkEmailRead marks an email as read
+// @Summary Mark email as read
+// @Tags {{ im.controller.tag | default('Email') }}
+// @Produce json
+// @Param Authorization header string true "Bearer token"
+// @Param id path int true "Email ID"
+// @Success 200 {object} map[string]bool
+// @Failure 400 {object} map[string]string
+// @Router {{ im.controller.base_path | default('/api/emails') }}{{ im.controller.MarkEmailRead.path | default('/:id/read') }} [patch]
+{% endif %}
+func (h *EmailHandler) MarkEmailRead(c *fiber.Ctx) error {
+    dbConn := utilspkg.GetDB(c)
+    emailRepo := utilspkg.GetEmailMessageRepository(dbConn)
+    if emailRepo == nil {
+        return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "db_connection_failed"})
+    }
+
+    id, err := strconv.ParseUint(c.Params("id"), 10, 32)
+    if err != nil {
+        return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid_id"})
+    }
+
+    if err := emailRepo.MarkAsRead(uint(id)); err != nil {
+        return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "update_failed"})
+    }
+
+    return c.JSON(fiber.Map{"success": true})
+}
+{% endif %}
+
+{% if im.controller.RefreshEmails.enabled or im.web_handler.RefreshEmails.enabled %}
+{% if im.controller.RefreshEmails.enabled %}
+// RefreshEmails triggers an IMAP sync
+// @Summary Refresh emails from IMAP
+// @Description Triggers a background sync of inbound and sent emails from the configured IMAP server
+// @Tags {{ im.controller.tag | default('Email') }}
+// @Produce json
+// @Param Authorization header string true "Bearer token"
+// @Success 200 {object} map[string]bool
+// @Router {{ im.controller.base_path | default('/api/emails') }}{{ im.controller.RefreshEmails.path | default('/refresh') }} [post]
+{% endif %}
+func (h *EmailHandler) RefreshEmails(c *fiber.Ctx) error {
+    dbConn := utilspkg.GetDB(c)
+    if err := emailpkg.FetchInboundEmails(dbConn.DB); err != nil {
+        log.Printf("IMAP inbound fetch error: %v", err)
+    }
+    {%if  im.fetch_sent %}
+    if err := emailpkg.FetchSentEmails(dbConn.DB); err != nil {
+        log.Printf("IMAP sent fetch error: %v", err)
+    }
+    {%endif%}
+    return c.JSON(fiber.Map{"success": true})
+}
+{% endif %}

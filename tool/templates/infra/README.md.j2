@@ -1,0 +1,200 @@
+# {{ config.project.name }}
+
+> Professional Go Fiber backend generated with Go Fiber Generator
+
+## 🚀 Quick Start
+
+```bash
+# Install dependencies
+go mod tidy
+
+# Run the server
+go run cmd/{{ config.project.structure.cmd_name }}/main.go
+
+# Or use Make
+make run
+```
+
+## 📁 Project Structure
+
+```
+{{ config.project.name }}/
+{% if config.project.structure.use_cmd %}
+├── cmd/
+│   └── {{ config.project.structure.cmd_name }}/
+│       └── main.go                    # Application entry point
+{% else %}
+├── main.go                            # Application entry point
+{% endif %}
+│
+{% if config.project.structure.use_internal %}
+├── internal/                          # Private application code
+│   ├── config/                        # Configuration
+│   ├── models/                        # GORM models
+│   ├── repository/                    # Data access layer
+│   ├── controller/                    # HTTP handlers
+│   ├── middleware/                    # Middleware
+│   ├── routes/                        # Route registration
+│   ├── response/                      # Response helpers
+│   ├── database/                      # Database connection
+│   └── pkg/                           # Internal packages
+{% for feature in ['jwt', 'email', 'fcm', 'cache', 'websocket', 'storage', 'i18n', 'rbac'] %}
+{% if feature + '_enabled' in config or feature in config.features %}
+│       ├── {{ feature }}/             # {{ feature | title }} service
+{% endif %}
+{% endfor %}
+{% endif %}
+│
+{% if config.project.structure.use_pkg %}
+├── pkg/                               # Public packages
+│   ├── contexthelpers/                # Fiber context helpers
+│   └── utils/                         # Utilities
+{% endif %}
+│
+├── config.yaml                        # Runtime configuration
+├── .env.example                       # Environment template
+├── go.mod                             # Go module
+├── go.sum                             # Dependency checksums
+├── Makefile                           # Build automation
+└── README.md                          # This file
+```
+
+## 🎯 Features
+
+{% if config.authentication.jwt.enabled %}
+- ✅ **JWT Authentication** - Secure token-based authentication
+{% endif %}
+{% if config.authentication.email_password.enabled %}
+- ✅ **Email/Password Auth** - Traditional authentication
+{% endif %}
+{% if config.authentication.social_auth.google.enabled or config.authentication.social_auth.facebook.enabled %}
+- ✅ **Social Authentication** - Google, Facebook, Apple login
+{% endif %}
+{% if config.redis.enabled %}
+- ✅ **Redis Caching** - High-performance caching
+{% endif %}
+{% if config.fcm.enabled %}
+- ✅ **Push Notifications** - Firebase Cloud Messaging
+{% endif %}
+{% if config.get('websocket', {}).get('enabled') %}
+- ✅ **WebSockets** - Real-time communication
+{% endif %}
+{% if config.features.rbac %}
+- ✅ **RBAC** - Role-based access control
+{% endif %}
+{% if config.i18n.enabled %}
+- ✅ **Internationalization** - Multi-language support
+{% endif %}
+
+## 🔧 Configuration
+
+1. Copy `.env.example` to `.env`:
+   ```bash
+   cp .env.example .env
+   ```
+
+2. Update environment variables in `.env`
+
+3. Update `config.yaml` with your settings
+
+## 📊 Database
+
+### Migrations
+
+Auto-migration is {% if config.database.auto_migrate %}enabled{% else %}disabled{% endif %}.
+
+{% if config.database.auto_migrate %}
+Models will be automatically migrated on startup.
+{% else %}
+Run migrations manually:
+```bash
+make migrate
+```
+{% endif %}
+
+### Models
+
+{% for model in config.models %}
+- **{{ model.name }}** - {{ model.table_name }}
+{% endfor %}
+
+## 🛣️ API Endpoints
+
+### Authentication
+{% if config.authentication.email_password.enabled %}
+- `POST /api/auth/register` - Register new user
+- `POST /api/auth/login` - Login
+{% endif %}
+{% if config.authentication.social_auth.google.enabled %}
+- `POST /api/auth/google` - Google OAuth
+{% endif %}
+{% if config.authentication.social_auth.facebook.enabled %}
+- `POST /api/auth/facebook` - Facebook OAuth
+{% endif %}
+
+### Resources
+{% for group in config.crud_endpoint_groups %}
+#### {{ group.name }}
+{% for endpoint in group.endpoints %}
+- `{{ endpoint.method }} {{ group.prefix }}{{ endpoint.path }}` - {{ endpoint.handler }}
+{% endfor %}
+{% endfor %}
+
+## 🧪 Testing
+
+```bash
+# Run tests
+make test
+
+# Run with coverage
+make test-coverage
+```
+
+## 🚀 Deployment
+
+### Docker
+
+```bash
+# Build image
+docker build -t {{ config.project.name }} .
+
+# Run container
+docker run -p 3000:3000 {{ config.project.name }}
+```
+
+### Docker Compose
+
+```bash
+docker-compose up -d
+```
+
+## 📝 Environment Variables
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `DATABASE_URL` | PostgreSQL connection string | Yes |
+{% if config.authentication.jwt.enabled %}
+| `JWT_SECRET` | JWT signing secret | Yes |
+{% endif %}
+{% if config.redis.enabled %}
+| `REDIS_HOST` | Redis host | Yes |
+{% endif %}
+{% if config.fcm.enabled %}
+| `FCM_CREDENTIALS` | Path to Firebase credentials | Yes |
+{% endif %}
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create your feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
+
+## 📄 License
+
+MIT License
+
+---
+
+**Generated with ❤️ by [Go Fiber Generator](https://github.com/username/go-fiber-generator)**

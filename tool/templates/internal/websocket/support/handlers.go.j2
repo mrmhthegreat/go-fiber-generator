@@ -1,0 +1,69 @@
+package support
+
+import (
+	"log"
+
+	"github.com/bytedance/sonic"
+	"github.com/gofiber/contrib/websocket"
+
+	"{{ config.project.module }}/config"
+	"{{ config.project.module }}/internal/domain"
+	resppkg "{{ config.project.module }}/pkg/response"
+)
+
+{% if config.websocket.enabled and config.websocket.handler_type == 'dedicated' %}
+{% if config.chat.get('modes', {}).get('support', false) and config.websocket.get('dedicated', {}).get('support', {}).get('enabled', true) %}
+
+// SupportWebSocketHandler handles admin↔user support chat.
+// Path: {{ config.websocket.get('dedicated', {}).get('support', {}).get('path', '/ws/support') }}
+func SupportWebSocketHandler(c *websocket.Conn) {
+{% set ns3 = namespace(admin_pool=None) %}
+{% for pool in config.websocket.hub.pools %}
+{% if pool.enabled and 'admin' in pool.name | lower %}{% set ns3.admin_pool = pool %}{% endif %}
+{% endfor %}
+{% if ns3.admin_pool %}
+	SupportHubInst.register{{ ns3.admin_pool.name | title }} <- c
+	defer func() { SupportHubInst.unregister{{ ns3.admin_pool.name | title }} <- c }()
+{% endif %}
+
+	for {
+		type SupportInputMsg struct {
+			ConversationID uint                     `json:"conversation_id"`
+			Content        string                   `json:"content"`
+		}
+		var input SupportInputMsg
+		if err := c.ReadJSON(&input); err != nil {
+			break
+		}
+		if input.Content == "" || input.ConversationID == 0 {
+			continue
+		}
+
+	
+
+		msg := domain.Message{
+			ConversationID: input.ConversationID,
+			SenderID:       0,
+			SenderType:     "admin",
+			Content:        input.Content,
+		}
+
+		if err := config.DB.Create(&msg).Error; err != nil {
+			log.Println("SupportWebSocketHandler DB error:", err)
+			continue
+		}
+
+		{% set last_message_field = config.chat.domain.conversation.fields | selectattr('name', 'equalto', 'last_message') | first %}
+		{% if last_message_field %}
+		config.DB.Model(&domain.Conversation{}).
+			Where("id = ?", input.ConversationID).
+			Updates(domain.Conversation{LastMessage: input.Content})
+		{% endif %}
+
+		NotifyUser(msg)
+		NotifyAdmins(msg)
+	}
+}
+
+{% endif %}{# dedicated.support #}
+{% endif %}{# websocket.enabled #}

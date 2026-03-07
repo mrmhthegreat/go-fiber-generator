@@ -1,0 +1,118 @@
+package config
+
+import (
+    "context"
+    "time"
+
+    "github.com/redis/go-redis/v9"
+    "github.com/spf13/viper"
+    "go.uber.org/zap"
+)
+
+// Context for Redis operations
+var Ctx = context.Background()
+
+// RedisCache is the Redis client
+var RedisCache *redis.Client
+
+// InitRedisCache initializes the Redis connection
+func InitRedisCache() {
+    redisHost := viper.GetString("{{ config.redis.host_env }}")
+    if redisHost == "" {
+        redisHost = viper.GetString("{{ config.redis.host_env }}")
+    }
+    if redisHost == "" {
+        redisHost = "{{ config.redis.default_host | default('localhost:6379') }}"
+    }
+    
+    redisPassword := viper.GetString("{{ config.redis.password_env }}")
+    if redisPassword == "" {
+        redisPassword = viper.GetString("{{ config.redis.password_env }}")
+    }
+    redisDB := viper.GetInt("{{ config.redis.db_env }}")
+    if redisDB == 0 {
+        redisDB = viper.GetInt("{{ config.redis.db_env }}")
+    }
+    
+    RedisCache = redis.NewClient(&redis.Options{
+        Addr:     redisHost,
+        Password: redisPassword,
+        DB:       redisDB,
+{% if config.redis.max_retries %}
+        MaxRetries: {{ config.redis.max_retries }},
+{% endif %}
+{% if config.redis.pool_size %}
+        PoolSize: {{ config.redis.pool_size }},
+{% endif %}
+{% if config.redis.min_idle_conns %}
+        MinIdleConns: {{ config.redis.min_idle_conns }},
+{% endif %}
+    })
+    
+    // Retry mechanism
+    maxRetries := {{ config.redis.connection_retries | default(3) }}
+    for i := 0; i < maxRetries; i++ {
+        _, err := RedisCache.Ping(Ctx).Result()
+        if err == nil {
+            LOGGER.Info("Redis Cache", zap.String("status", "✅ Redis Cache Connected!"))
+            return
+        }
+        
+        LOGGER.Warn("Redis Cache", 
+            zap.String("status", "⏳ Redis connection failed"),
+            zap.Int("attempt", i+1),
+            zap.Int("max_attempts", maxRetries),
+        )
+        
+        time.Sleep({{ config.redis.retry_delay | default('2 * time.Second') }})
+    }
+    
+    LOGGER.Fatal("Redis Cache", zap.String("error", "❌ Failed to connect to Redis after retries"))
+}
+
+// CloseRedisCache closes the Redis connection gracefully
+func CloseRedisCache() {
+    if RedisCache != nil {
+        err := RedisCache.Close()
+        if err != nil {
+            LOGGER.Error("Redis Cache", zap.String("error", "⚠️ Error closing Redis"), zap.Error(err))
+        } else {
+            LOGGER.Info("Redis Cache", zap.String("status", "Redis Cache Disconnected"))
+        }
+    }
+}
+
+{% if config.redis.helper_functions %}
+// Redis helper functions
+
+// SetWithExpiry sets a key-value pair with expiration
+func SetWithExpiry(key string, value interface{}, expiration time.Duration) error {
+    return RedisCache.Set(Ctx, key, value, expiration).Err()
+}
+
+// Get retrieves a value by key
+func Get(key string) (string, error) {
+    return RedisCache.Get(Ctx, key).Result()
+}
+
+// Delete removes a key
+func Delete(key string) error {
+    return RedisCache.Del(Ctx, key).Err()
+}
+
+// Exists checks if a key exists
+func Exists(key string) (bool, error) {
+    count, err := RedisCache.Exists(Ctx, key).Result()
+    return count > 0, err
+}
+
+// Increment increments a counter
+func Increment(key string) (int64, error) {
+    return RedisCache.Incr(Ctx, key).Result()
+}
+
+// SetExpiry sets expiration on an existing key
+func SetExpiry(key string, expiration time.Duration) error {
+    return RedisCache.Expire(Ctx, key, expiration).Err()
+}
+{% endif %}

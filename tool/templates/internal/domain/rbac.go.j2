@@ -1,0 +1,81 @@
+package domain
+
+import (
+    "time"
+
+    "gorm.io/gorm"
+)
+
+{% if config.authentication.rbac.enabled %}
+// Role represents a user role (e.g., seller, admin, moderator, superadmin)
+type Role struct {
+    ID          uint      `gorm:"primaryKey" json:"id"`
+    Name        string    `gorm:"uniqueIndex;size:64;not null" json:"name"`
+    DisplayName string    `gorm:"size:128" json:"display_name"`
+    Description string    `gorm:"size:512" json:"description"`
+    IsSystem    bool      `gorm:"default:false;index" json:"is_system"` // System roles cannot be deleted
+    CreatedAt   time.Time `json:"created_at"`
+    UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// Permission represents a granular capability (e.g., orders.view, orders.update)
+type Permission struct {
+    ID          uint      `gorm:"primaryKey" json:"id"`
+    Key         string    `gorm:"uniqueIndex;size:128;not null" json:"key"`
+    DisplayName string    `gorm:"size:128" json:"display_name"`
+    Description string    `gorm:"size:512" json:"description"`
+    Category    string    `gorm:"size:64;index" json:"category"` // e.g., "orders", "products", "wallets"
+    CreatedAt   time.Time `json:"created_at"`
+    UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// RolePermission links roles to permissions with allow/deny
+type RolePermission struct {
+    ID           uint      `gorm:"primaryKey" json:"id"`
+    RoleID       uint      `gorm:"index:idx_role_perm,priority:1;not null" json:"role_id"`
+    PermissionID uint      `gorm:"index:idx_role_perm,priority:2;not null" json:"permission_id"`
+    Allow        bool      `gorm:"not null;default:true" json:"allow"`
+    CreatedAt    time.Time `json:"created_at"`
+    UpdatedAt    time.Time `json:"updated_at"`
+
+    Role       Role       `gorm:"foreignKey:RoleID;constraint:OnDelete:CASCADE" json:"-"`
+    Permission Permission `gorm:"foreignKey:PermissionID;constraint:OnDelete:CASCADE" json:"-"`
+}
+
+// TenantRolePermission allows per-tenant permission overrides
+type TenantRolePermission struct {
+    ID           uint      `gorm:"primaryKey" json:"id"`
+    TenantID     uint      `gorm:"index:idx_tenant_role_perm,priority:1;not null" json:"tenant_id"`
+    RoleID       uint      `gorm:"index:idx_tenant_role_perm,priority:2;not null" json:"role_id"`
+    PermissionID uint      `gorm:"index:idx_tenant_role_perm,priority:3;not null" json:"permission_id"`
+    Allow        bool      `gorm:"not null;default:true" json:"allow"`
+    CreatedAt    time.Time `json:"created_at"`
+    UpdatedAt    time.Time `json:"updated_at"`
+
+    Role       Role       `gorm:"foreignKey:RoleID;constraint:OnDelete:CASCADE" json:"-"`
+    Permission Permission `gorm:"foreignKey:PermissionID;constraint:OnDelete:CASCADE" json:"-"`
+}
+
+// UserPermissionOverride allows per-user permission exceptions
+type UserPermissionOverride struct {
+    ID           uint      `gorm:"primaryKey" json:"id"`
+    UserID       uint      `gorm:"index:idx_user_perm,priority:1;not null" json:"user_id"`
+    PermissionID uint      `gorm:"index:idx_user_perm,priority:2;not null" json:"permission_id"`
+    Allow        bool      `gorm:"not null;default:true" json:"allow"`
+    Reason       string    `gorm:"size:512" json:"reason"`
+    ExpiresAt    *time.Time `gorm:"index" json:"expires_at"`
+    CreatedAt    time.Time `json:"created_at"`
+    UpdatedAt    time.Time `json:"updated_at"`
+
+    User       User       `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"-"`
+    Permission Permission `gorm:"foreignKey:PermissionID;constraint:OnDelete:CASCADE" json:"-"`
+}
+
+// BeforeDelete hook to prevent deletion of system roles
+func (r *Role) BeforeDelete(tx *gorm.DB) error {
+    if r.IsSystem {
+        return gorm.ErrInvalidData
+    }
+    return nil
+}
+{% endif %}

@@ -1,0 +1,134 @@
+package domain
+
+import (
+	"time"
+
+	"gorm.io/gorm"
+)
+
+{% if config.chat.enabled %}
+{# ────────────────────────────────────────────────────────────── #}
+{# Helper Macros for Dynamic Field Generation                     #}
+{# ────────────────────────────────────────────────────────────── #}
+
+{# Generate GORM tags for a field #}
+{% macro gorm_tags(field) -%}
+{%- set tags = [] -%}
+{%- if field.get('primary_key') -%}
+  {%- set _ = tags.append('primaryKey') -%}
+{%- endif -%}
+{%- if field.get('auto_increment') -%}
+  {%- set _ = tags.append('autoIncrement') -%}
+{%- endif -%}
+{%- if field.get('required') and not field.type.startswith('*') -%}
+  {%- set _ = tags.append('not null') -%}
+{%- endif -%}
+{%- if field.get('index') -%}
+  {%- set _ = tags.append('index') -%}
+{%- endif -%}
+{%- if field.get('unique') -%}
+  {%- set _ = tags.append('unique') -%}
+{%- endif -%}
+{%- if field.get('gorm_type') -%}
+  {%- set _ = tags.append('type:' + field.gorm_type) -%}
+{%- endif -%}
+{%- if field.get('default') is not none -%}
+  {%- set _ = tags.append("default:'" + field.default|string + "'") -%}
+{%- endif -%}
+{{ tags|join(';') }}
+{%- endmacro %}
+
+{# Generate JSON tag for a field #}
+{% macro json_tag(field) -%}
+{%- set tag = field.get('json_tag', field.name) -%}
+{%- if field.type.startswith('*') or not field.get('required') -%}
+{{ tag }},omitempty
+{%- else -%}
+{{ tag }}
+{%- endif -%}
+{%- endmacro %}
+
+{# ────────────────────────────────────────────────────────────── #}
+{# Conversation Model - Dynamically Generated                     #}
+{# ────────────────────────────────────────────────────────────── #}
+{% if config.chat.models.conversation.enabled %}
+{# Define base fields for Conversation #}
+{% set conv_base_fields = [
+    {'name': 'id', 'type': 'uint', 'primary_key': true, 'auto_increment': true},
+    {'name': 'user_id', 'type': 'uint', 'required': true, 'index': true},
+    {'name': 'receiver_id', 'type': '*uint', 'index': true},
+    {'name': 'status', 'type': 'string', 'default': 'open'},
+    {'name': 'conv_type', 'type': 'string', 'default': 'chat'},
+    {'name': 'is_read_only', 'type': 'bool', 'default': false},
+    {'name': 'last_message', 'type': 'string'},
+    {'name': 'priority', 'type': 'string', 'default': 'normal'}
+] %}
+{% set conv_user_field_names = config.chat.models.conversation.fields | map(attribute='name') | list %}
+{% set final_conv_fields = config.chat.models.conversation.fields | list %}
+{% for base in conv_base_fields %}
+    {% if base.name not in conv_user_field_names %}
+        {% set _ = final_conv_fields.append(base) %}
+    {% endif %}
+{% endfor %}
+
+// Conversation represents a chat conversation
+type Conversation struct {
+{% for field in final_conv_fields %}
+	{{ field.name | title | replace('_', '') }} {{ field.type }} `gorm:"{{ gorm_tags(field) }}" json:"{{ json_tag(field) }}"`
+{% endfor %}
+{% if config.chat.models.conversation.get('timestamps', true) %}
+	CreatedAt time.Time      `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
+{% endif %}
+{% if config.chat.models.conversation.get('soft_delete', true) %}
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
+{% endif %}
+
+	// Relations
+{% for relation in config.chat.models.conversation.get('relations', []) %}
+	{{ relation.name }} {% if relation.get('has_many') %}[]{% else %}*{% endif %}{{ relation.model }} `gorm:"foreignKey:{{ relation.foreign_key }}" json:"{{ relation.name | lower }},omitempty"`
+{% endfor %}
+}
+{% endif %}
+
+{# ────────────────────────────────────────────────────────────── #}
+{# Message Model - Dynamically Generated                          #}
+{# ────────────────────────────────────────────────────────────── #}
+{% if config.chat.models.message.enabled %}
+{# Define base fields for Message #}
+{% set msg_base_fields = [
+    {'name': 'id', 'type': 'uint', 'primary_key': true, 'auto_increment': true},
+    {'name': 'conversation_id', 'type': 'uint', 'required': true, 'index': true},
+    {'name': 'sender_id', 'type': 'uint', 'required': true, 'index': true},
+    {'name': 'sender_type', 'type': 'string', 'default': 'user'},
+    {'name': 'content', 'type': 'string', 'required': true},
+    {'name': 'is_read', 'type': 'bool', 'default': false}
+] %}
+{% set msg_user_field_names = config.chat.models.message.fields | map(attribute='name') | list %}
+{% set final_msg_fields = config.chat.models.message.fields | list %}
+{% for base in msg_base_fields %}
+    {% if base.name not in msg_user_field_names %}
+        {% set _ = final_msg_fields.append(base) %}
+    {% endif %}
+{% endfor %}
+
+// Message represents a single chat message
+type Message struct {
+{% for field in final_msg_fields %}
+	{{ field.name | title | replace('_', '') }} {{ field.type }} `gorm:"{{ gorm_tags(field) }}" json:"{{ json_tag(field) }}"`
+{% endfor %}
+{% if config.chat.models.message.get('timestamps', true) %}
+	CreatedAt time.Time      `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
+{% endif %}
+{% if config.chat.models.message.get('soft_delete', true) %}
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
+{% endif %}
+
+	// Relations
+{% for relation in config.chat.models.message.get('relations', []) %}
+	{{ relation.name }} {% if relation.get('has_many') %}[]{% else %}*{% endif %}{{ relation.model }} `gorm:"foreignKey:{{ relation.foreign_key }}" json:"{{ relation.name | lower }},omitempty"`
+{% endfor %}
+}
+{% endif %}
+{% endif %}

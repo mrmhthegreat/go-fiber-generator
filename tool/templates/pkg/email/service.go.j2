@@ -1,0 +1,209 @@
+package email
+
+import (
+    "fmt"
+    "io"
+    "log"
+    "regexp"
+    "strings"
+
+    "github.com/emersion/go-imap"
+    "github.com/emersion/go-imap/client"
+    emailmail "github.com/emersion/go-message/mail"
+    "github.com/spf13/viper"
+    "gorm.io/gorm"
+
+    "{{ config.project.module }}/internal/domain"
+)
+
+{% if config.imap.enabled %}
+
+// FetchInboundEmails wraps generic fetch for INBOX
+func FetchInboundEmails(db *gorm.DB) error {
+    return FetchEmailsFromFolder(db, "{{ config.imap.mailbox }}", "inbound")
+}
+
+// FetchSentEmails wraps generic fetch for Sent Items
+{%if config.imap.fetch_sent %}
+func FetchSentEmails(db *gorm.DB) error {
+    folders := []string{"Sent", "Sent Items", "[Gmail]/Sent Mail"}
+    var lastErr error
+    for _, folder := range folders {
+        if err := FetchEmailsFromFolder(db, folder, "outbound"); err == nil {
+            return nil
+        } else {
+            lastErr = err
+        }
+    }
+    return lastErr
+}
+{%endif%}
+
+// FetchEmailsFromFolder connects to IMAP and fetches emails
+func FetchEmailsFromFolder(db *gorm.DB, folderName, direction string) error {
+    host := viper.GetString("{{ config.imap.host_env }}")
+    port := viper.GetString("{{ config.imap.port_env }}")
+    user := viper.GetString("{{ config.imap.user_env }}")
+    pass := viper.GetString("{{ config.imap.password_env }}")
+
+    if host == "" || user == "" || pass == "" {
+        return fmt.Errorf("IMAP credentials not configured")
+    }
+
+    addr := fmt.Sprintf("%s:%s", host, port)
+    c, err := client.DialTLS(addr, nil)
+    if err != nil {
+        return fmt.Errorf("failed to connect to IMAP: %v", err)
+    }
+    defer c.Logout()
+
+    if err := c.Login(user, pass); err != nil {
+        return fmt.Errorf("IMAP login failed: %v", err)
+    }
+
+    mbox, err := c.Select(folderName, false)
+    if err != nil {
+        return fmt.Errorf("failed to select %s: %v", folderName, err)
+    }
+
+    if mbox.Messages == 0 {
+        return nil
+    }
+
+    from := uint32(1)
+    if mbox.Messages > {{ config.imap.max_emails_per_fetch }} {
+        from = mbox.Messages - {{ config.imap.max_emails_per_fetch }}
+    }
+    seqset := new(imap.SeqSet)
+    seqset.AddRange(from, mbox.Messages)
+
+    messages := make(chan *imap.Message, {{ config.imap.max_emails_per_fetch }})
+    done := make(chan error, 1)
+    var section imap.BodySectionName
+    items := []imap.FetchItem{section.FetchItem(), imap.FetchEnvelope, imap.FetchUid}
+
+    go func() {
+        done <- c.Fetch(seqset, items, messages)
+    }()
+
+    for msg := range messages {
+        var existing domain.EmailMessage
+        if err := db.Where("message_id = ?", msg.Envelope.MessageId).First(&existing).Error; err == nil {
+            continue 
+        }
+
+        r := msg.GetBody(&section)
+        if r == nil {
+            continue
+        }
+
+        mr, err := emailmail.CreateReader(r)
+        if err != nil {
+            continue
+        }
+
+        body := ""
+        isHTML := false
+
+        for {
+            p, err := mr.NextPart()
+            if err == io.EOF {
+                break
+            } else if err != nil {
+                break
+            }
+
+            switch h := p.Header.(type) {
+            case *emailmail.InlineHeader:
+                contentType, _, _ := h.ContentType()
+                if contentType == "text/html" {
+                    b, _ := io.ReadAll(p.Body)
+                    body = string(b)
+                    isHTML = true
+                } else if contentType == "text/plain" && body == "" {
+                    b, _ := io.ReadAll(p.Body)
+                    body = string(b)
+                }
+            }
+        }
+
+        fromAddr := ""
+        if len(msg.Envelope.From) > 0 {
+            fromAddr = fmt.Sprintf("%s <%s@%s>", msg.Envelope.From[0].PersonalName, msg.Envelope.From[0].MailboxName, msg.Envelope.From[0].HostName)
+        }
+
+        toAddr := ""
+        if len(msg.Envelope.To) > 0 {
+            toAddr = fmt.Sprintf("%s <%s@%s>", msg.Envelope.To[0].PersonalName, msg.Envelope.To[0].MailboxName, msg.Envelope.To[0].HostName)
+        }
+
+        emailMsg := domain.EmailMessage{
+            MessageID: msg.Envelope.MessageId,
+            From:      fromAddr,
+            To:        toAddr,
+            Subject:   msg.Envelope.Subject,
+            Body:      body,
+            Direction: direction,
+            {% if config.imap.mark_as_read %}
+            Status:    "read",
+            {% else %}
+            Status:    "unread",
+            {% endif %}
+            IsHTML:    isHTML,
+            CreatedAt: msg.Envelope.Date,
+        }
+
+        targetEmail := ""
+        if direction == "inbound" {
+            targetEmail = extractEmail(fromAddr)
+        } else {
+            targetEmail = extractEmail(toAddr)
+        }
+
+        var user domain.{{config.project.user_model_name}}
+        if err := db.Where("email = ?", targetEmail).First(&user).Error; err == nil {
+            emailMsg.UserID = &user.ID
+        }
+
+        if direction == "outbound" {
+            emailMsg.Status = "sent"
+        }
+
+        if err := db.Create(&emailMsg).Error; err != nil {
+            log.Printf("Error saving email to DB: %v", err)
+        }
+    }
+
+    if err := <-done; err != nil {
+        return fmt.Errorf("IMAP fetch failed: %v", err)
+    }
+
+    return nil
+}
+
+func extractEmail(addr string) string {
+    if !strings.Contains(addr, "<") {
+        return strings.TrimSpace(addr)
+    }
+    parts := strings.Split(addr, "<")
+    if len(parts) < 2 {
+        return strings.TrimSpace(addr)
+    }
+    return strings.TrimRight(parts[1], ">")
+}
+
+// SaveOutboundEmail tracks an email sent by the system
+func SaveOutboundEmail(db *gorm.DB, from, to, subject, body string, isHTML bool, userID *uint) error {
+    emailMsg := domain.EmailMessage{
+        From:      from,
+        To:        to,
+        Subject:   subject,
+        Body:      body,
+        Direction: "outbound",
+        Status:    "sent",
+        IsHTML:    isHTML,
+        UserID:    userID,
+    }
+    return db.Create(&emailMsg).Error
+}
+{% endif %}

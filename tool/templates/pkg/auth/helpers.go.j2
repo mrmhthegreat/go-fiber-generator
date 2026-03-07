@@ -1,0 +1,143 @@
+package auth
+
+import (
+"crypto/rand"
+"encoding/base64"
+
+"fmt"
+"log"
+"math/big"
+
+"strings"
+"time"
+
+"github.com/gofiber/fiber/v2"
+"github.com/golang-jwt/jwt/v4"
+"github.com/spf13/viper"
+"golang.org/x/crypto/bcrypt"
+
+"{{ config.project.module }}/internal/domain"
+resppkg "{{ config.project.module }}/pkg/response"
+)
+
+
+
+
+{% if config.authentication.email_password.enabled %}
+// HashPassword hashes a password using bcrypt
+func HashPassword(password string) (string, error) {
+bytes, err := bcrypt.GenerateFromPassword([]byte(password), {{ config.authentication.email_password.bcrypt_cost | default(14) }})
+return string(bytes), err
+}
+
+// CheckPasswordHash compares a password with a hash
+func CheckPasswordHash(password, hash string) bool {
+err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+return err == nil
+}
+
+{% if config.authentication.email_password.password_validation %}
+// ValidatePassword validates password strength
+func ValidatePassword(password string, lang string) error {
+{% set min_length = config.authentication.email_password.password_validation.min_length | default(8) %}
+if len(password) < {{ min_length }} {
+return fmt.Errorf("password must be at least {{ min_length }} characters")
+}
+
+{% if config.authentication.email_password.password_validation.require_uppercase %}
+if !strings.ContainsAny(password, "ABCDEFGHIJKLMNOPQRSTUVWXYZ") {
+return fmt.Errorf("password must contain at least one uppercase letter")
+}
+{% endif %}
+
+{% if config.authentication.email_password.password_validation.require_lowercase %}
+if !strings.ContainsAny(password, "abcdefghijklmnopqrstuvwxyz") {
+return fmt.Errorf("password must contain at least one lowercase letter")
+}
+{% endif %}
+
+{% if config.authentication.email_password.password_validation.require_number %}
+if !strings.ContainsAny(password, "0123456789") {
+return fmt.Errorf("password must contain at least one number")
+}
+{% endif %}
+
+{% if config.authentication.email_password.password_validation.require_special %}
+if !strings.ContainsAny(password, "!@#$%^&*()_+-=[]{}|;:,.<>?") {
+return fmt.Errorf("password must contain at least one special character")
+}
+{% endif %}
+
+return nil
+}
+{% endif %}
+{% endif %}
+
+{% if config.authentication.email_password.email_verification.enabled or config.authentication.email_password.forgot_password.enabled %}
+// OTP storage (in-memory for simplicity, use Redis in production)
+var otpStore = make(map[string]OTPData)
+
+type OTPData struct {
+Code      string
+ExpiresAt time.Time
+}
+
+// GenerateOTP generates a random OTP
+func GenerateOTP() string {
+{% set otp_length = config.authentication.email_password.email_verification.otp_length | default(6) %}
+const otpLength = {{ otp_length }}
+const digits = "0123456789"
+
+otp := make([]byte, otpLength)
+for i := range otp {
+num, _ := rand.Int(rand.Reader, big.NewInt(int64(len(digits))))
+otp[i] = digits[num.Int64()]
+}
+
+return string(otp)
+}
+
+// StoreOTP stores an OTP for an email
+func StoreOTP(email, otp string) {
+{% set otp_expiry = config.authentication.email_password.email_verification.otp_expiry | default('10m') %}
+expiry, _ := time.ParseDuration("{{ otp_expiry }}")
+otpStore[email] = OTPData{
+Code:      otp,
+ExpiresAt: time.Now().Add(expiry),
+}
+//config.RedisCache.Set(config.Ctx, email, otp, expiry)
+
+}
+
+// VerifyOTP verifies an OTP for an email
+func VerifyOTP(email, otp string) bool {
+// storedOTP, err := config.RedisCache.Get(config.Ctx, email).Result()
+
+data, exists := otpStore[email]
+if !exists {
+return false
+}
+
+if time.Now().After(data.ExpiresAt) {
+delete(otpStore, email)
+return false
+}
+
+if data.Code != otp {
+return false
+}
+
+delete(otpStore, email)
+//config.RedisCache.Del(config.Ctx, email)
+
+return true
+}
+
+func DeleteOTP(email string) bool {
+delete(otpStore, email)
+//config.RedisCache.Del(config.Ctx, email)
+return true
+}
+{% endif %}
+
+

@@ -1,0 +1,925 @@
+package middleware
+
+import (
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"crypto/sha512"
+	"encoding/base64"
+	"fmt"
+	"log"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/gofiber/fiber/v2"
+	{% if config.middleware.csrf.enabled %}"github.com/gofiber/fiber/v2/middleware/csrf"{% endif %}
+	{% if config.middleware.compression.enabled %}"github.com/gofiber/fiber/v2/middleware/compress"{% endif %}
+	{% if config.middleware.cors.enabled %}"github.com/gofiber/fiber/v2/middleware/cors"{% endif %}
+	{% if config.middleware.logging.enabled %}"github.com/gofiber/fiber/v2/middleware/logger"{% endif %}
+	{% if config.middleware.web_auth.enabled or config.session.enabled %}"github.com/gofiber/fiber/v2/middleware/encryptcookie"{% endif %}
+	{% if config.middleware.rate_limit.enabled %}"github.com/gofiber/fiber/v2/middleware/limiter"{% endif %}
+	{% if config.middleware.web_auth.enabled or config.session.enabled %}"github.com/gofiber/fiber/v2/middleware/session"{% endif %}
+	"github.com/golang-jwt/jwt/v4"
+	"github.com/spf13/viper"
+
+	"{{ config.project.module }}/cache"
+	"{{ config.project.module }}/config"
+	"{{ config.project.module }}/db"
+
+	utilspkg "{{ config.project.module }}/pkg/utils"
+	errorspkg "{{ config.project.module }}/pkg/errors"
+	resppkg "{{ config.project.module }}/pkg/response"
+)
+
+// Global RBAC service instance
+{% if config.middleware.rbac.enabled %}var RBACService *rbac.RBACService
+{% endif %}
+
+// ============================================
+// GLOBAL MIDDLEWARE SETUP
+// ============================================
+
+// SetupGlobalMiddleware configures global app-wide middleware
+func SetupGlobalMiddleware(app *fiber.App, dbConn *db.GormDatabase) {
+	app.Use(DBMiddleware(dbConn))
+	app.Use(BasicMiddleware())
+	{% if config.middleware.compression.enabled %}
+	app.Use(compress.New(compress.Config{
+		Level: compress.Level{{ config.middleware.compression.level | default('BestSpeed') | title }},
+	}))
+	{% endif %}
+	{% if config.middleware.logging.enabled %}
+	app.Use(logger.New(logger.Config{
+		Format: "[${time}] ${status} - ${latency} ${method} ${path}\n",
+		{% if config.middleware.logging.log_body %}TimeFormat: "2006-01-02 15:04:05",{% endif %}
+	}))
+	{% endif %}
+	{% if config.middleware.cors.enabled %}
+	app.Use(cors.New(cors.Config{
+		AllowOrigins:     "{{ config.middleware.cors.allow_origins | default('*') }}",
+		AllowHeaders:     "{{ config.middleware.cors.allow_headers | default('Origin, Content-Type, Accept, Authorization') }}",
+		AllowMethods:     "{{ config.middleware.cors.allow_methods | default('GET, POST, PUT, DELETE, OPTIONS') }}",
+		AllowCredentials: {{ config.middleware.cors.allow_credentials | default('false') | lower }},
+	}))
+	{% endif %}
+}
+
+// SetupWebMiddleware configures web-specific middleware
+{% if config.middleware.web_auth.enabled or config.session.enabled %}
+func SetupWebMiddleware(web fiber.Router, store *session.Store) {
+	{% if config.session.cookie_secret_key_env %}
+	web.Use(encryptcookie.New(encryptcookie.Config{
+		Key: viper.GetString("{{ config.session.cookie_secret_key_env }}"),
+	}))
+	{% endif %}
+	web.Use(SessionMiddleware(store))
+	{% if config.middleware.csrf.enabled %}
+	web.Use(CSRFMiddleware(store))
+	{% endif %}
+}
+{% endif %}
+
+// ============================================
+// CORE MIDDLEWARE FUNCTIONS
+// ============================================
+
+{% if config.middleware.database.enabled %}
+// DBMiddleware injects the database connection into context locals
+func DBMiddleware(dbConn *db.GormDatabase) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		c.Locals("{{ config.middleware.database.context_key | default('db') }}", dbConn)
+		return c.Next()
+	}
+}
+{% endif %}
+
+{% if config.middleware.maintenance.enabled %}
+// BasicMiddleware handles maintenance mode and basic route filtering
+func BasicMiddleware() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		if viper.GetBool("{{ config.middleware.maintenance.mode_key_env | default('MAINTENANCE_MODE') }}") {
+			path := c.Path()
+			
+			// Check if path is excluded from maintenance mode
+			{% for exclude_path in config.middleware.maintenance.exclude_paths %}
+			if strings.HasPrefix(path, "{{ exclude_path }}") {
+				return c.Next()
+			}
+			{% endfor %}
+			
+			// API routes return JSON error
+			if strings.HasPrefix(path, "/api/") {
+				return errorspkg.SendError(c, fiber.StatusServiceUnavailable, "{{ config.middleware.maintenance.api_error_code | default('service_unavailable_maintenance') }}")
+			}
+			
+			// Web routes redirect to maintenance page
+			c.Set("HX-Redirect", "{{ config.middleware.maintenance.redirect_path | default('/under-maintenance') }}")
+			return c.Redirect("{{ config.middleware.maintenance.redirect_path | default('/under-maintenance') }}")
+		}
+		return c.Next()
+	}
+}
+{% endif %}
+
+{% if config.middleware.web_auth.enabled or config.session.enabled %}
+// ============================================
+// SESSION-BASED AUTHENTICATION
+// ============================================
+
+// SessionMiddleware extracts session and stores it in context
+func SessionMiddleware(store *session.Store) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		sess, err := store.Get(c)
+		if err != nil {
+			return errorspkg.SendError(c, fiber.StatusInternalServerError, "session_retrieval_failed")
+		}
+		c.Locals("{{ config.middleware.locals.session | default('session') }}", sess)
+		return c.Next()
+	}
+}
+
+// WebRequireAuth ensures user is authenticated via session
+func WebRequireAuth() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		sessVal := c.Locals("{{ config.middleware.locals.session | default('session') }}")
+		if sessVal == nil {
+			c.Set("HX-Redirect", "{{ config.middleware.web_auth.redirects.login | default('/login') }}")
+			return c.Redirect("{{ config.middleware.web_auth.redirects.login | default('/login') }}")
+		}
+		sess := sessVal.(*session.Session)
+
+		auth := sess.Get("{{ config.middleware.web_auth.session_keys.authenticated | default('authenticated') }}")
+		userID := sess.Get("{{ config.middleware.web_auth.session_keys.user_id | default('user_id') }}")
+
+		if auth != true || userID == nil {
+			c.Set("HX-Redirect", "{{ config.middleware.web_auth.redirects.login | default('/login') }}")
+			return c.Redirect("{{ config.middleware.web_auth.redirects.login | default('/login') }}")
+		}
+
+		c.Locals("{{ config.middleware.locals.user_id | default('user_id') }}", userID)
+		return c.Next()
+	}
+}
+
+{% if config.middleware.web_auth.email_verification_enabled %}
+// WebRequireAuthAndVerified ensures user is authenticated and verified
+// NOTE: This assumes your User model has:
+//   - user.Email field
+//   - user.Verified field
+//   - cache.GetUser(userID, db) function exists
+// If your model is different, disable this and create custom middleware
+func WebRequireAuthAndVerified() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		sessVal := c.Locals("{{ config.middleware.locals.session | default('session') }}")
+		if sessVal == nil {
+			c.Set("HX-Redirect", "{{ config.middleware.web_auth.redirects.login | default('/login') }}")
+			return c.Redirect("{{ config.middleware.web_auth.redirects.login | default('/login') }}")
+		}
+		sess := sessVal.(*session.Session)
+
+		auth := sess.Get("{{ config.middleware.web_auth.session_keys.authenticated | default('authenticated') }}")
+		userID, ok := sess.Get("{{ config.middleware.web_auth.session_keys.user_id | default('user_id') }}").(uint)
+
+		if auth != true || !ok || userID == 0 {
+			c.Set("HX-Redirect", "{{ config.middleware.web_auth.redirects.login | default('/login') }}")
+			return c.Redirect("{{ config.middleware.web_auth.redirects.login | default('/login') }}")
+		}
+
+		db := utilspkg.GetDB(c)
+		user, err := cache.GetUser(userID, db)
+		if err != nil {
+			return c.Redirect("{{ config.middleware.web_auth.redirects.server_error | default('/server-error') }}")
+		}
+
+		c.Locals("{{ config.middleware.locals.user_id | default('user_id') }}", userID)
+		c.Locals("{{ config.middleware.locals.email | default('email') }}", user.Email)
+
+		if !user.Verified {
+			path := c.Path()
+			{% for exclude_path in config.middleware.web_auth.verify_exclude_paths %}
+			if strings.HasPrefix(path, "{{ exclude_path }}") {
+				return c.Next()
+			}
+			{% endfor %}
+			c.Set("HX-Redirect", "{{ config.middleware.web_auth.redirects.verify_email | default('/auth/verify') }}")
+			return c.Redirect("{{ config.middleware.web_auth.redirects.verify_email | default('/auth/verify') }}")
+		}
+
+		return c.Next()
+	}
+}
+{% endif %}
+
+{% endif %}
+
+{% if config.middleware.csrf.enabled %}
+// ============================================
+// CSRF PROTECTION
+// ============================================
+
+// CSRFMiddleware configures CSRF protection
+func CSRFMiddleware(store *session.Store) fiber.Handler {
+	return csrf.New(csrf.Config{
+		ContextKey:      "{{ config.middleware.csrf.context_key | default('csrf') }}",
+		CookieName:      "{{ config.middleware.csrf.cookie_name | default('csrf_') }}",
+		CookieSameSite:  "{{ config.middleware.csrf.same_site | default('Lax') }}",
+		Expiration:      {{ config.middleware.csrf.expiration | default('1 * time.Hour') }},
+		KeyLookup:       "header:{{ config.middleware.csrf.header | default('X-CSRFToken') }}{% if config.middleware.csrf.form_field %},form:{{ config.middleware.csrf.form_field }}{% endif %}",
+		Session:         store,
+		ErrorHandler: func(c *fiber.Ctx, err error) error {
+			return errorspkg.SendError(c, fiber.StatusForbidden, "invalid_csrf_token")
+		},
+	})
+}
+{% endif %}
+
+{% if config.middleware.dashboard.enabled %}
+// ============================================
+// DASHBOARD ACCESS CONTROL
+// ============================================
+// NOTE: These functions assume your User model has:
+//   - user.{{config.rbac.model_field }} field (string)
+//   - rbac.GetDashboardBasePath() function exists
+// If your model is different, disable this and create custom middleware
+
+// SmartDashboardRedirect redirects user to their correct dashboard home
+func SmartDashboardRedirect(c *fiber.Ctx) error {
+	userID, ok := c.Locals("{{ config.middleware.locals.user_id | default('user_id') }}").(uint)
+	if !ok {
+		return c.Redirect("/login")
+	}
+
+	dbConn := utilspkg.GetDB(c)
+	user, err := cache.GetUser(userID, dbConn)
+	if err != nil {
+		return fiber.NewError(fiber.StatusNotFound, "internal_server_error")
+	}
+
+	dashBase := rbac.GetDashboardBasePath(user.{{config.rbac.model_field }})
+	return c.Redirect(dashBase+"/", fiber.StatusFound)
+}
+
+// EnsureCorrectDashboardAccess prevents role-crossing between dashboards
+func EnsureCorrectDashboardAccess() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		userID, ok := c.Locals("{{ config.middleware.locals.user_id | default('user_id') }}").(uint)
+		if !ok {
+			return c.Redirect("/login")
+		}
+
+		dbConn := utilspkg.GetDB(c)
+		user, err := cache.GetUser(userID, dbConn)
+		if err != nil {
+			return fiber.NewError(fiber.StatusNotFound, "internal_server_error")
+		}
+
+		correctDashBase := rbac.GetDashboardBasePath( user.{{config.rbac.model_field }})
+		currentPath := c.Path()
+
+		switch {
+		case strings.HasPrefix(currentPath, "/superadmin") && !user.IsSuperuser:
+			return c.Redirect(correctDashBase+"/", fiber.StatusFound)
+		case strings.HasPrefix(currentPath, "/admin") && !(user.IsAdmin || user.Role == "admin"):
+			return c.Redirect(correctDashBase+"/", fiber.StatusFound)
+		case strings.HasPrefix(currentPath, "/dashboard") && (user.IsSuperuser || user.IsAdmin || user.Role == "admin"):
+			return c.Redirect(correctDashBase+"/", fiber.StatusFound)
+		}
+		return c.Next()
+	}
+}
+{% endif %}
+
+{% if config.middleware.rbac.enabled %}
+// ============================================
+// RBAC PERMISSION CHECKS
+// ============================================
+
+// RequirePerm ensures user has specific permission using RBAC service
+func RequirePerm(key string) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		userID, ok := c.Locals("{{ config.middleware.locals.user_id | default('user_id') }}").(uint)
+		if !ok {
+			if strings.HasPrefix(c.Path(), "/api/") {
+				return errorspkg.SendError(c, fiber.StatusUnauthorized, "unauthorized")
+			}
+			return c.Redirect("/login")
+		}
+		if RBACService == nil {
+			return c.Next()
+		}
+		has, _ := RBACService.HasPermission(context.Background(), userID, key)
+		if !has {
+			if strings.HasPrefix(c.Path(), "/api/") {
+				return errorspkg.SendError(c, fiber.StatusForbidden, "forbidden")
+			}
+			c.Set("HX-Redirect", "/403")
+			return c.Status(fiber.StatusForbidden).Redirect("/403")
+		}
+		return c.Next()
+	}
+}
+
+// RequireAnyPerm ensures user has at least one of the given permissions
+func RequireAnyPerm(keys ...string) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		userID, ok := c.Locals("{{ config.middleware.locals.user_id | default('user_id') }}").(uint)
+		if !ok {
+			return c.Redirect("/login")
+		}
+		if RBACService == nil {
+			return c.Next()
+		}
+		for _, key := range keys {
+			if has, _ := RBACService.HasPermission(context.Background(), userID, key); has {
+				return c.Next()
+			}
+		}
+		c.Set("HX-Redirect", "/403")
+		return c.Status(fiber.StatusForbidden).Redirect("/403")
+	}
+}
+
+// RequireAllPerms ensures user has all of the given permissions
+func RequireAllPerms(keys ...string) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		userID, ok := c.Locals("{{ config.middleware.locals.user_id | default('user_id') }}").(uint)
+		if !ok {
+			return c.Redirect("/login")
+		}
+		if RBACService == nil {
+			return c.Next()
+		}
+		for _, key := range keys {
+			if has, _ := RBACService.HasPermission(context.Background(), userID, key); !has {
+				c.Set("HX-Redirect", "/403")
+				return c.Status(fiber.StatusForbidden).Redirect("/403")
+			}
+		}
+		return c.Next()
+	}
+}
+{% endif %}
+
+// ============================================
+// RATE LIMITING
+// ============================================
+
+// RateLimitConfig defines rate limiting parameters
+type RateLimitConfig struct {
+	Max        int
+	Expiration time.Duration
+	Key        string
+}
+
+// NewRateLimiter creates a new rate limiter middleware
+func NewRateLimiter(cfg RateLimitConfig) fiber.Handler {
+	return limiter.New(limiter.Config{
+		Max:        cfg.Max,
+		Expiration: cfg.Expiration,
+		KeyGenerator: func(c *fiber.Ctx) string {
+			key := c.Get("X-Forwarded-For", c.IP())
+			return key + ":" + cfg.Key
+		},
+		LimitReached: func(c *fiber.Ctx) error {
+			return errorspkg.SendError(c, fiber.StatusTooManyRequests, "too_many_requests")
+		},
+	})
+}
+
+// Pre-defined rate limiters
+var (
+	DefaultLimiter = RateLimitConfig{Max: 60, Expiration: time.Minute, Key: "gen"}
+	AuthLimiter    = RateLimitConfig{Max: 5, Expiration: time.Minute, Key: "auth"}
+	APIBaseLimiter = RateLimitConfig{Max: 100, Expiration: time.Minute, Key: "api"}
+)
+
+// ============================================
+// DYNAMICALLY GENERATED MIDDLEWARE
+// Generated from config.middleware.definitions
+// ============================================
+
+{% for middleware_def in config.middleware.definitions %}
+{% if middleware_def.type == 'api_key' %}
+// {{ middleware_def.name | capitalize }}Middleware - {{ middleware_def.description }}
+func {{ middleware_def.name | capitalize }}Middleware() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		apiKey := c.Get("{{ middleware_def.header | default('X-API-Key') }}")
+		if apiKey == "" {
+			return errorspkg.SendError(c, fiber.StatusUnauthorized, "missing_api_key")
+		}
+
+		{% if middleware_def.secret_key_env %}
+		expectedKey := viper.GetString("{{ middleware_def.secret_key_env }}")
+		{% else %}
+		expectedKey := viper.GetString("API_KEY")
+		{% endif %}
+		if apiKey != expectedKey {
+			return errorspkg.SendError(c, fiber.StatusUnauthorized, "invalid_api_key")
+		}
+
+		return c.Next()
+	}
+}
+
+{% elif middleware_def.type == 'session_auth' %}
+// {{ middleware_def.name | capitalize }}Middleware - {{ middleware_def.description }}
+func {{ middleware_def.name | capitalize }}Middleware() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		sessVal := c.Locals("{{ config.middleware.locals.session | default('session') }}")
+		if sessVal == nil {
+			{% if middleware_def.redirect_on_fail %}
+			c.Set("HX-Redirect", "{{ middleware_def.redirect_on_fail }}")
+			return c.Redirect("{{ middleware_def.redirect_on_fail }}")
+			{% else %}
+			return errorspkg.SendError(c, fiber.StatusUnauthorized, "session_missing")
+			{% endif %}
+		}
+		sess := sessVal.(*session.Session)
+
+		auth := sess.Get("{{ middleware_def.session_key | default('authenticated') }}")
+		if auth != true {
+			{% if middleware_def.redirect_on_fail %}
+			c.Set("HX-Redirect", "{{ middleware_def.redirect_on_fail }}")
+			return c.Redirect("{{ middleware_def.redirect_on_fail }}")
+			{% else %}
+			return errorspkg.SendError(c, fiber.StatusUnauthorized, "not_authenticated")
+			{% endif %}
+		}
+
+		return c.Next()
+	}
+}
+
+{% elif middleware_def.type == 'jwt' %}
+// {{ middleware_def.name | capitalize }}Middleware - {{ middleware_def.description }}
+func {{ middleware_def.name | capitalize }}Middleware() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		authHeader := c.Get("{{ middleware_def.header_name | default('Authorization') }}")
+		if authHeader == "" {
+			return errorspkg.SendError(c, fiber.StatusUnauthorized, "authorization_missing")
+		}
+
+		scheme := "{{ middleware_def.scheme | default('Bearer') }} "
+		if !strings.HasPrefix(authHeader, scheme) {
+			return errorspkg.SendError(c, fiber.StatusUnauthorized, "invalid_auth_scheme")
+		}
+		tokenString := strings.TrimPrefix(authHeader, scheme)
+
+		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+			{% if middleware_def.algorithm %}
+			// Verify algorithm: {{ middleware_def.algorithm }}
+			{% if middleware_def.algorithm.startswith('HS') or middleware_def.algorithm.startswith('hmac') %}
+			expectedAlg := "{{ middleware_def.algorithm.upper().replace('HMAC_SHA', 'HS') }}"
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok || token.Method.Alg() != expectedAlg {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+			{% elif middleware_def.algorithm.startswith('RS') or middleware_def.algorithm.startswith('rsa') %}
+			expectedAlg := "{{ middleware_def.algorithm.upper().replace('RSA_SHA', 'RS') }}"
+			if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok || token.Method.Alg() != expectedAlg {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+			{% elif middleware_def.algorithm.startswith('ES') or middleware_def.algorithm.startswith('ecdsa') %}
+			expectedAlg := "{{ middleware_def.algorithm.upper().replace('ECDSA_SHA', 'ES') }}"
+			if _, ok := token.Method.(*jwt.SigningMethodECDSA); !ok || token.Method.Alg() != expectedAlg {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+			{% else %}
+			// Default HMAC check
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+			{% endif %}
+			{% else %}
+			// No algorithm specified, accept any HMAC
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+			{% endif %}
+			
+			{% if middleware_def.secret_key_env %}
+			return []byte(viper.GetString("{{ middleware_def.secret_key_env }}")), nil
+			{% else %}
+			return []byte(viper.GetString("JWT_SECRET")), nil
+			{% endif %}
+		})
+
+		if err != nil || !token.Valid {
+			return errorspkg.SendError(c, fiber.StatusUnauthorized, "invalid_token")
+		}
+
+		claims, ok := token.Claims.(jwt.MapClaims)
+		if !ok {
+			return errorspkg.SendError(c, fiber.StatusUnauthorized, "invalid_claims")
+		}
+
+		{% if middleware_def.claims %}
+		// Extract claims with type conversion
+		{% for claim in middleware_def.claims %}
+		if val, ok := claims["{{ claim.name }}"]; ok {
+			{% if claim.type == 'uint' or claim.type == 'uint64' %}
+			if floatVal, ok := val.(float64); ok {
+				c.Locals("{{ claim.context_key | default(claim.name) }}", uint(floatVal))
+			}
+			{% elif claim.type == 'int' or claim.type == 'int64' %}
+			if floatVal, ok := val.(float64); ok {
+				c.Locals("{{ claim.context_key | default(claim.name) }}", int(floatVal))
+			}
+			{% elif claim.type == 'string' %}
+			if strVal, ok := val.(string); ok {
+				c.Locals("{{ claim.context_key | default(claim.name) }}", strVal)
+			}
+			{% elif claim.type == 'bool' %}
+			if boolVal, ok := val.(bool); ok {
+				c.Locals("{{ claim.context_key | default(claim.name) }}", boolVal)
+			}
+			{% elif claim.type == 'float64' %}
+			if floatVal, ok := val.(float64); ok {
+				c.Locals("{{ claim.context_key | default(claim.name) }}", floatVal)
+			}
+			{% else %}
+			// Custom type or no type - store as-is
+			c.Locals("{{ claim.context_key | default(claim.name) }}", val)
+			{% endif %}
+			{% if claim.required %}
+		} else {
+			return errorspkg.SendError(c, fiber.StatusUnauthorized, "missing_claim_{{ claim.name }}")
+			{% endif %}
+		}
+		{% endfor %}
+		{% elif middleware_def.claims_required %}
+		// Legacy claims_required format (backward compatible)
+		{% for claim in middleware_def.claims_required %}
+		if val, ok := claims["{{ claim }}"]; ok {
+			{% if claim == 'user_id' %}
+			c.Locals("{{ config.middleware.locals.user_id | default('user_id') }}", uint(val.(float64)))
+			{% elif claim == 'email' %}
+			c.Locals("{{ config.middleware.locals.email | default('email') }}", val)
+			{% else %}
+			c.Locals("{{ claim }}", val)
+			{% endif %}
+		} else {
+			return errorspkg.SendError(c, fiber.StatusUnauthorized, "missing_claim_{{ claim }}")
+		}
+		{% endfor %}
+		{% else %}
+		// No required claims - extract all available
+		for key, val := range claims {
+			c.Locals(key, val)
+		}
+		{% endif %}
+
+		c.Locals("{{ middleware_def.context_key | default('user') }}", token)
+		return c.Next()
+	}
+}
+
+{% elif middleware_def.type == 'combined' %}
+// {{ middleware_def.name | capitalize }}Middleware - {{ middleware_def.description }}
+func {{ middleware_def.name | capitalize }}Middleware() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		{% for component in middleware_def.components %}
+		{% if component.type == 'api_key' %}
+		// Validate API Key
+		apiKey := c.Get("{{ component.header }}")
+		if apiKey == "" {
+			return errorspkg.SendError(c, fiber.StatusUnauthorized, "api_key_missing")
+		}
+		
+
+		{% if component.secret_key_env %}
+		expectedAPIKey := viper.GetString("{{ component.secret_key_env }}",'')
+		{% else %}
+		expectedAPIKey := viper.GetString("API_KEY")
+		{% endif %}
+
+		if apiKey != expectedAPIKey {
+			return errorspkg.SendError(c, fiber.StatusUnauthorized, "api_key_invalid")
+		}
+
+		{% endif %}
+		{% if component.type == 'app_token' %}
+		// Validate App Token (JWT)
+		appToken := c.Get("{{ component.header }}")
+		if appToken == "" {
+			return errorspkg.SendError(c, fiber.StatusUnauthorized, "app_token_missing")
+		}
+
+		appTokenParsed, err := jwt.Parse(appToken, func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+			
+			return []byte(viper.GetString("{{ component.secret_key_env }}")), nil
+		})
+
+		if err != nil || !appTokenParsed.Valid {
+			return errorspkg.SendError(c, fiber.StatusUnauthorized, "app_token_invalid")
+		}
+
+		appClaims, ok := appTokenParsed.Claims.(jwt.MapClaims)
+		if !ok {
+			return errorspkg.SendError(c, fiber.StatusUnauthorized, "app_token_invalid_claims")
+		}
+
+		{% for claim in component.claims_required %}
+		if _, ok := appClaims["{{ claim }}"]; !ok {
+			return errorspkg.SendError(c, fiber.StatusUnauthorized, "app_token_missing_{{ claim }}")
+		}
+		{% endfor %}
+
+		appID, _ := appClaims["app_id"].(string)
+		c.Locals("{{ config.middleware.locals.app_id | default('app_id') }}", appID)
+
+		{% endif %}
+		{% if component.type == 'signature' %}
+		// Validate HMAC Signature
+		signature := c.Get("{{ component.header }}")
+		timestamp := c.Get("{{ component.timestamp_header }}")
+
+		if signature == "" || timestamp == "" {
+			return errorspkg.SendError(c, fiber.StatusUnauthorized, "signature_headers_missing")
+		}
+
+		// Parse timestamp
+		{% if component.timestamp_format == 'Unix' %}
+		ts, err := strconv.ParseInt(timestamp, 10, 64)
+		if err != nil {
+			return errorspkg.SendError(c, fiber.StatusUnauthorized, "timestamp_invalid_format")
+		}
+		requestTime := time.Unix(ts, 0)
+		{% else %}
+		requestTime, err := time.Parse(time.RFC3339, timestamp)
+		if err != nil {
+			return errorspkg.SendError(c, fiber.StatusUnauthorized, "timestamp_invalid_format")
+		}
+		{% endif %}
+
+		// Check timestamp window
+		maxAge, _ := time.ParseDuration("{{ component.timestamp_window }}")
+		if time.Since(requestTime) > maxAge {
+			return errorspkg.SendError(c, fiber.StatusUnauthorized, "timestamp_stale")
+		}
+
+		// Compute HMAC signature
+		data := ""
+		{% for field in component.signature_fields %}
+		data += c.Get("{{ field }}")
+		{% endfor %}
+
+		{% if component.algorithm == 'hmac_sha512' %}
+		mac := hmac.New(sha512.New, []byte(viper.GetString("{{ component.secret_key_env }}")))
+		{% else %}
+		mac := hmac.New(sha256.New, []byte(viper.GetString("{{ component.secret_key_env }}")))
+		{% endif %}
+		mac.Write([]byte(data))
+		expectedSignature := base64.StdEncoding.EncodeToString(mac.Sum(nil))
+
+		if !hmac.Equal([]byte(signature), []byte(expectedSignature)) {
+			return errorspkg.SendError(c, fiber.StatusUnauthorized, "signature_invalid")
+		}
+
+		{% endif %}
+		{% if component.type == 'jwt' %}
+		// Validate User JWT
+		authHeader := c.Get("{{ component.header }}")
+		if authHeader == "" {
+			authHeader = c.Query("token") // WebSocket fallback
+		}
+
+		if authHeader == "" {
+			return errorspkg.SendError(c, fiber.StatusUnauthorized, "authorization_missing")
+		}
+
+		{% if component.scheme %}
+		tokenString := strings.TrimPrefix(authHeader, "{{ component.scheme }} ")
+		{% else %}
+		tokenString := authHeader
+		{% endif %}
+
+		userJWT, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+			{% if component.algorithm %}
+			// Verify algorithm: {{ component.algorithm }}
+			{% if component.algorithm.startswith('HS') or component.algorithm.startswith('hmac') %}
+			expectedAlg := "{{ component.algorithm.upper().replace('HMAC_SHA', 'HS') }}"
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok || token.Method.Alg() != expectedAlg {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+			{% elif component.algorithm.startswith('RS') or component.algorithm.startswith('rsa') %}
+			expectedAlg := "{{ component.algorithm.upper().replace('RSA_SHA', 'RS') }}"
+			if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok || token.Method.Alg() != expectedAlg {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+			{% elif component.algorithm.startswith('ES') or component.algorithm.startswith('ecdsa') %}
+			expectedAlg := "{{ component.algorithm.upper().replace('ECDSA_SHA', 'ES') }}"
+			if _, ok := token.Method.(*jwt.SigningMethodECDSA); !ok || token.Method.Alg() != expectedAlg {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+			{% else %}
+			// Default HMAC check
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+			{% endif %}
+			{% else %}
+			// No algorithm specified, accept any HMAC
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+			{% endif %}
+			
+			{% if component.secret_key_env %}
+			return []byte(viper.GetString("{{ component.secret_key_env }}")), nil
+			{% else %}
+			return []byte(viper.GetString("JWT_SECRET")), nil
+			{% endif %}
+		})
+
+		if err != nil || !userJWT.Valid {
+			return errorspkg.SendError(c, fiber.StatusUnauthorized, "user_token_invalid")
+		}
+
+		userClaims, ok := userJWT.Claims.(jwt.MapClaims)
+		if !ok {
+			return errorspkg.SendError(c, fiber.StatusUnauthorized, "user_token_invalid_claims")
+		}
+
+		{% if component.claims %}
+		// New typed claims format
+		{% for claim in component.claims %}
+		if val, ok := userClaims["{{ claim.name }}"]; ok {
+			{% if claim.type == 'uint' or claim.type == 'uint64' %}
+			if floatVal, ok := val.(float64); ok {
+				c.Locals("{{ claim.context_key | default(claim.name) }}", uint(floatVal))
+			}
+			{% elif claim.type == 'int' or claim.type == 'int64' %}
+			if floatVal, ok := val.(float64); ok {
+				c.Locals("{{ claim.context_key | default(claim.name) }}", int(floatVal))
+			}
+			{% elif claim.type == 'string' %}
+			if strVal, ok := val.(string); ok {
+				c.Locals("{{ claim.context_key | default(claim.name) }}", strVal)
+			}
+			{% elif claim.type == 'bool' %}
+			if boolVal, ok := val.(bool); ok {
+				c.Locals("{{ claim.context_key | default(claim.name) }}", boolVal)
+			}
+			{% elif claim.type == 'float64' %}
+			if floatVal, ok := val.(float64); ok {
+				c.Locals("{{ claim.context_key | default(claim.name) }}", floatVal)
+			}
+			{% else %}
+			c.Locals("{{ claim.context_key | default(claim.name) }}", val)
+			{% endif %}
+			{% if claim.required %}
+		} else {
+			return errorspkg.SendError(c, fiber.StatusUnauthorized, "missing_claim_{{ claim.name }}")
+			{% endif %}
+		}
+		{% endfor %}
+		{% elif component.claims_required %}
+		// Legacy claims_required format
+		{% for claim in component.claims_required %}
+		if val, ok := userClaims["{{ claim }}"]; ok {
+			{% if claim == 'user_id' %}
+			c.Locals("{{ config.middleware.locals.user_id | default('user_id') }}", uint(val.(float64)))
+			{% elif claim == 'email' %}
+			c.Locals("{{ config.middleware.locals.email | default('email') }}", val)
+			{% else %}
+			c.Locals("{{ claim }}", val)
+			{% endif %}
+		} else {
+			return errorspkg.SendError(c, fiber.StatusUnauthorized, "missing_claim_{{ claim }}")
+		}
+		{% endfor %}
+		{% else %}
+		// No claims specified - extract all
+		for key, val := range userClaims {
+			c.Locals(key, val)
+		}
+		{% endif %}
+
+		{% endif %}
+		{% endfor %}
+		return c.Next()
+	}
+}
+
+{% elif middleware_def.type == 'rate_limit' %}
+// {{ middleware_def.name | capitalize }}Middleware - {{ middleware_def.description }}
+func {{ middleware_def.name | capitalize }}Middleware() fiber.Handler {
+	window, _ := time.ParseDuration("{{ middleware_def.window | default('1m') }}")
+	return limiter.New(limiter.Config{
+		Max:        {{ middleware_def.max_requests | default(60) }},
+		Expiration: window,
+		KeyGenerator: func(c *fiber.Ctx) string {
+			{% if middleware_def.key_generator == 'ip' %}
+			return c.IP()
+			{% elif middleware_def.key_generator == 'user_id' %}
+			if userID, ok := c.Locals("{{ config.middleware.locals.user_id | default('user_id') }}").(uint); ok {
+				return fmt.Sprintf("user_%d", userID)
+			}
+			return c.IP()
+			{% elif middleware_def.key_generator == 'api_key' %}
+			return c.Get("X-API-Key")
+			{% else %}
+			return c.IP()
+			{% endif %}
+		},
+		LimitReached: func(c *fiber.Ctx) error {
+			return errorspkg.SendError(c, fiber.StatusTooManyRequests, "rate_limit_exceeded")
+		},
+	})
+}
+
+{% elif middleware_def.type == 'role_check' %}
+// {{ middleware_def.name | capitalize }}Middleware - {{ middleware_def.description }}
+// NOTE: Assumes User model has .IsAdmin field (if check_is_admin) or .Role field (if required_role)
+func {{ middleware_def.name | capitalize }}Middleware() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		{% if middleware_def.check_is_admin %}
+		// Check if user is admin
+		isAdminVal := c.Locals("{{ config.middleware.locals.is_admin | default('is_admin') }}")
+		if isAdmin, ok := isAdminVal.(bool); ok && isAdmin {
+			return c.Next()
+		}
+
+		userID := c.Locals("{{ config.middleware.locals.user_id | default('user_id') }}").(uint)
+		db := utilspkg.GetDB(c)
+		user, err := cache.GetUser(userID, db)
+		if err != nil || !user.IsAdmin {
+			return errorspkg.SendError(c, fiber.StatusForbidden, "admin_access_required")
+		}
+		{% elif middleware_def.required_role %}
+		// Check for specific role
+		roleVal := c.Locals("{{ config.middleware.locals.role | default('role') }}")
+		if userRole, ok := roleVal.(string); ok && userRole == "{{ middleware_def.required_role }}" {
+			return c.Next()
+		}
+
+		userID := c.Locals("{{ config.middleware.locals.user_id | default('user_id') }}").(uint)
+		db := utilspkg.GetDB(c)
+		user, err := cache.GetUser(userID, db)
+		if err != nil || user.Role != "{{ middleware_def.required_role }}" {
+			return errorspkg.SendError(c, fiber.StatusForbidden, "insufficient_permissions")
+		}
+		{% endif %}
+		return c.Next()
+	}
+}
+
+{% elif middleware_def.type == 'ownership_check' %}
+// {{ middleware_def.name | capitalize }}Middleware - {{ middleware_def.description }}
+// NOTE: If allow_admin is true, assumes User model has .IsAdmin field
+func {{ middleware_def.name | capitalize }}Middleware() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		userID := c.Locals("{{ config.middleware.locals.user_id | default('user_id') }}").(uint)
+		resourceID := c.Params("{{ middleware_def.resource_id_param }}")
+
+		{% if middleware_def.allow_admin %}
+		// Check if user is admin first
+		db := utilspkg.GetDB(c)
+		user, err := cache.GetUser(userID, db)
+		if err == nil && user.IsAdmin {
+			return c.Next()
+		}
+		{% endif %}
+
+		// TODO: Implement resource ownership check
+		// This would typically query the resource and check if {{ middleware_def.user_id_field }} matches userID
+
+		return c.Next()
+	}
+}
+
+{% elif middleware_def.type == 'header_check' %}
+// {{ middleware_def.name | capitalize }}Middleware - {{ middleware_def.description }}
+func {{ middleware_def.name | capitalize }}Middleware() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		{% for header in middleware_def.required_headers %}
+		if c.Get("{{ header.name }}") == "" {
+			return errorspkg.SendError(c, fiber.StatusBadRequest, "missing_header_{{ header.name | lower | replace('-', '_') }}")
+		}
+		{% if header.value %}
+		if c.Get("{{ header.name }}") != "{{ header.value }}" {
+			return errorspkg.SendError(c, fiber.StatusBadRequest, "invalid_header_{{ header.name | lower | replace('-', '_') }}")
+		}
+		{% endif %}
+		{% endfor %}
+		return c.Next()
+	}
+}
+
+{% endif %}
+{% endfor %}
+
+{% if config.middleware.custom %}
+// ============================================
+// CUSTOM USER-DEFINED MIDDLEWARE
+// ============================================
+
+{% for custom_mw in config.middleware.custom %}
+// {{ custom_mw.name | capitalize }}Middleware - Custom middleware
+// Handler implementation: {{ custom_mw.handler }}
+{% endfor %}
+{% endif %}

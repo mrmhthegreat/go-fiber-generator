@@ -1,0 +1,59 @@
+package user
+
+import (
+	"github.com/gofiber/contrib/websocket"
+	"github.com/gofiber/fiber/v2"
+
+	ws "{{ config.project.module }}/websocket"
+)
+
+{% if config.websocket.enabled and config.websocket.handler_type == 'dedicated' %}
+{% if config.websocket.get('dedicated', {}).get('user', {}).get('enabled', true) %}
+
+func authenticateDedicatedWS(c *websocket.Conn) (uint, error) {
+{% if config.websocket.authentication.method in ['jwt', 'unified'] %}
+	appToken   := c.Headers("{{ config.websocket.authentication.get('app_token', {}).get('header_name', 'X-App-Token') }}", c.Query("{{ config.websocket.authentication.get('app_token', {}).get('query_param', 'app_token') }}"))
+	authHeader := c.Headers("{{ config.websocket.authentication.get('jwt', {}).get('extraction', {}).get('header', 'Authorization') }}")
+	if authHeader == "" {
+		authHeader = "{{ config.websocket.authentication.get('jwt', {}).get('extraction', {}).get('header_prefix', 'Bearer ') }}" + c.Query("{{ config.websocket.authentication.get('jwt', {}).get('extraction', {}).get('query_param', 'token') }}")
+	}
+	return ValidateUnifiedTokens(appToken, authHeader)
+{% else %}
+	return 0, nil
+{% endif %}
+}
+
+// UserWebSocketHandler handles user presence and generic user-specific events.
+// Path: {{ config.websocket.get('dedicated', {}).get('user', {}).get('path', '/ws/user') }}
+// Note: user pool registration is owned by ChatHub (/ws/chat).
+//       Connect here for presence-only or lightweight event connections.
+func UserWebSocketHandler(c *websocket.Conn) {
+	userID, err := authenticateDedicatedWS(c)
+	if err != nil {
+		_ = c.WriteJSON(fiber.Map{"error": err.Error()})
+		c.Close()
+		return
+	}
+
+	safeConn := ws.NewSafeConn(c)
+
+{% if config.websocket.get('presence', {}).get('enabled', false) %}
+	// Signal online via registry — ChatHub owns the connection pool
+	if ws.BroadcastRegistry.User != nil {
+		_ = safeConn // connection tracked locally only; pool in ChatHub
+	}
+{% endif %}
+
+	for {
+		var msg map[string]interface{}
+		if err := safeConn.ReadJSON(&msg); err != nil {
+			break
+		}
+		_ = userID
+		// Forward to EventsHub for processing — or handle presence pings directly
+		_ = msg
+	}
+}
+
+{% endif %}{# dedicated.user #}
+{% endif %}{# websocket.enabled #}

@@ -1,0 +1,114 @@
+{% if config.authentication.app_check_tokens %}
+package handlers
+
+import (
+"log"
+"time"
+
+"github.com/gofiber/fiber/v2"
+"github.com/golang-jwt/jwt/v5"
+"github.com/spf13/viper"
+
+
+	errorspkg "{{ config.project.module }}/pkg/errors"
+resppkg "{{ config.project.module }}/pkg/response"
+)
+
+{% for token_config in config.authentication.app_check_tokens %}
+// Generate{{ token_config.name | replace('_', ' ') | title | replace(' ', '') }} generates a {{ token_config.name }} JWT token
+// @Summary Generate {{ token_config.name }} token
+// @Description Generate a JWT token for {{ token_config.name }}
+// @Tags App Check Tokens
+// @Accept json
+// @Produce json
+{% for middleware in token_config.middleware %}
+// @Security {{ middleware | capitalize }}Auth
+{% endfor %}
+// @Param input body resppkg.{{ token_config.name | replace('_', ' ') | title | replace(' ', '') }}Input true "Token generation input"
+// @Success 200 {object} resppkg.TokenResponse "Token generated successfully"
+// @Failure 400 {object} resppkg.ErrorResponse "Invalid input"
+// @Failure 500 {object} resppkg.ErrorResponse "Internal server error"
+// @Router /api/auth/{{ token_config.endpoint }} [post]
+func Generate{{ token_config.name | replace('_', ' ') | title | replace(' ', '') }}(c *fiber.Ctx) error {
+var input resppkg.{{ token_config.name | replace('_', ' ') | title | replace(' ', '') }}Input
+if err := c.BodyParser(&input); err != nil {
+return errorspkg.SendError(c, fiber.StatusBadRequest, "invalid_json")
+}
+
+// Build claims
+claims := jwt.MapClaims{
+"exp": time.Now().Add(time.Hour * {{ token_config.expiry_hours }}).Unix(),
+"iat": time.Now().Unix(),
+"token_type": "{{ token_config.name }}",
+}
+
+// Add dynamic claims from config
+{% for claim in token_config.claims %}
+{% if claim.source == 'config' %}
+// Get {{ claim.name }} from config (viper)
+{% if claim.type == 'string' %}
+if val := viper.GetString("{{ claim.config_key }}"); val != "" {
+claims["{{ claim.name }}"] = val
+}
+{% elif claim.type == 'uint' or claim.type == 'int' %}
+if val := viper.GetInt("{{ claim.config_key }}"); val != 0 {
+claims["{{ claim.name }}"] = val
+}
+{% elif claim.type == 'bool' %}
+claims["{{ claim.name }}"] = viper.GetBool("{{ claim.config_key }}")
+{% endif %}
+{% else %}
+// Get {{ claim.name }} from input
+{% if claim.type == 'uint' %}
+if input.{{ claim.name | title | replace('_', '') }} != 0 {
+claims["{{ claim.name }}"] = input.{{ claim.name | title | replace('_', '') }}
+}
+{% elif claim.type == 'string' %}
+if input.{{ claim.name | title | replace('_', '') }} != "" {
+claims["{{ claim.name }}"] = input.{{ claim.name | title | replace('_', '') }}
+}
+{% elif claim.type == '[]string' %}
+if len(input.{{ claim.name | title | replace('_', '') }}) > 0 {
+claims["{{ claim.name }}"] = input.{{ claim.name | title | replace('_', '') }}
+}
+{% elif claim.type == 'bool' %}
+claims["{{ claim.name }}"] = input.{{ claim.name | title | replace('_', '') }}
+{% else %}
+claims["{{ claim.name }}"] = input.{{ claim.name | title | replace('_', '') }}
+{% endif %}
+{% endif %}
+{% endfor %}
+
+// Get secret from environment
+secret := viper.GetString("{{ token_config.secret_key_env }}")
+if secret == "" {
+log.Printf("Warning: {{ token_config.secret_key_env }} not set, using default JWT secret")
+secret = viper.GetString("JWT_SECRET")
+}
+
+// Create token with configured algorithm
+var token *jwt.Token
+{% if token_config.algorithm == 'HS384' %}
+token = jwt.NewWithClaims(jwt.SigningMethodHS384, claims)
+{% elif token_config.algorithm == 'HS512' %}
+token = jwt.NewWithClaims(jwt.SigningMethodHS512, claims)
+{% else %}
+token = jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+{% endif %}
+
+tokenString, err := token.SignedString([]byte(secret))
+if err != nil {
+log.Printf("Error generating {{ token_config.name }}: %v", err)
+return errorspkg.SendError(c, fiber.StatusInternalServerError, "token_generation_failed")
+}
+
+return c.JSON(resppkg.TokenResponse{
+Token:     tokenString,
+Algorithm: "{{ token_config.algorithm }}",
+ExpiresIn: {{ token_config.expiry_hours }} * 3600,
+TokenType: "{{ token_config.name }}",
+})
+}
+
+{% endfor %}
+{% endif %}

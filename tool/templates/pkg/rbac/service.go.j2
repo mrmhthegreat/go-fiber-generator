@@ -1,0 +1,262 @@
+package helpers
+
+import (
+    "context"
+    "encoding/json"
+    "fmt"
+    "log"
+    "os"
+    "time"
+
+    "github.com/redis/go-redis/v9"
+    "gopkg.in/yaml.v3"
+    "gorm.io/gorm"
+
+    "{{ config.project.module }}/internal/domain"
+)
+{% if config.rbac.enabled %}
+
+// PermissionConfig represents the YAML configuration structure
+type PermissionConfig struct {
+    Permissions []struct {
+        Key         string `yaml:"key"`
+        DisplayName string `yaml:"display_name"`
+        Description string `yaml:"description"`
+        Category    string `yaml:"category"`
+    } `yaml:"permissions"`
+    RoleDefaults map[string][]string `yaml:"role_defaults"`
+    FeatureFlags map[string]bool     `yaml:"feature_flags"`
+}
+
+// RBACService handles permission checking with caching
+type RBACService struct {
+    DB          *gorm.DB
+    redis       *redis.Client
+    Config      *PermissionConfig
+    cacheTTL    time.Duration
+    cachePrefix string
+}
+
+// NewRBACService creates a new RBAC service instance
+func NewRBACService(db *gorm.DB, redisClient *redis.Client) (*RBACService, error) {
+    service := &RBACService{
+        DB:          db,
+        redis:       redisClient,
+        cacheTTL:    15 * time.Minute,
+        cachePrefix: "rbac:",
+    }
+
+    if err := service.loadConfig(); err != nil {
+        return nil, fmt.Errorf("failed to load RBAC config: %w", err)
+    }
+
+    return service, nil
+}
+
+// loadConfig loads the permissions.yaml configuration
+func (s *RBACService) loadConfig() error {
+    data, err := os.ReadFile("permissions.yaml")
+    if err != nil {
+        return err
+    }
+
+    s.Config = &PermissionConfig{}
+    if err := yaml.Unmarshal(data, s.Config); err != nil {
+        return err
+    }
+
+    log.Printf("[RBAC] Loaded %d permissions from config", len(s.Config.Permissions))
+    return nil
+}
+
+// HasPermission checks if a user has a specific permission
+func (s *RBACService) HasPermission(ctx context.Context, userID uint, permissionKey string) (bool, error) {
+    cacheKey := fmt.Sprintf("%suser:%d:perm:%s", s.cachePrefix, userID, permissionKey)
+    if cached, err := s.redis.Get(ctx, cacheKey).Result(); err == nil {
+        return cached == "1", nil
+    }
+
+    var user domain.{{config.project.user_model_name}}
+    if err := s.DB.First(&user, userID).Error; err != nil {
+        return false, err
+    }
+
+    if user.{{config.rbac.model_field}} == "{{config.rbac.all_privileges}}" {
+        s.cachePermission(ctx, cacheKey, true)
+        return true, nil
+    }
+
+    var perm domain.Permission
+    if err := s.DB.Where("key = ?", permissionKey).First(&perm).Error; err != nil {
+        return false, nil
+    }
+
+    // Check user-specific override
+    var userOverride domain.UserPermissionOverride
+    err := s.DB.Where("user_id = ? AND permission_id = ?", userID, perm.ID).First(&userOverride).Error
+    if err == nil {
+        if userOverride.ExpiresAt == nil || userOverride.ExpiresAt.After(time.Now()) {
+            s.cachePermission(ctx, cacheKey, userOverride.Allow)
+            return userOverride.Allow, nil
+        }
+    }
+
+    roleName := s.getUserRole(&user)
+    var role domain.Role
+    if err := s.DB.Where("name = ?", roleName).First(&role).Error; err != nil {
+        return false, nil
+    }
+
+    // Check role permission (database override)
+    var rolePerm domain.RolePermission
+    err = s.DB.Where("role_id = ? AND permission_id = ?", role.ID, perm.ID).First(&rolePerm).Error
+    if err == nil {
+        s.cachePermission(ctx, cacheKey, rolePerm.Allow)
+        return rolePerm.Allow, nil
+    }
+
+    // Fall back to YAML defaults
+    defaultPerms, exists := s.Config.RoleDefaults[roleName]
+    if !exists {
+        s.cachePermission(ctx, cacheKey, false)
+        return false, nil
+    }
+
+    hasDefault := s.containsPermission(defaultPerms, permissionKey)
+    s.cachePermission(ctx, cacheKey, hasDefault)
+    return hasDefault, nil
+}
+
+// GetUserPermissions returns all permissions for a user
+func (s *RBACService) GetUserPermissions(ctx context.Context, userID uint) (map[string]bool, error) {
+    cacheKey := fmt.Sprintf("%suser:%d:all_perms", s.cachePrefix, userID)
+    if cached, err := s.redis.Get(ctx, cacheKey).Result(); err == nil {
+        var perms map[string]bool
+        if err := json.Unmarshal([]byte(cached), &perms); err == nil {
+            return perms, nil
+        }
+    }
+
+    var user domain.{{config.project.user_model_name}}
+    if err := s.DB.First(&user, userID).Error; err != nil {
+        return nil, err
+    }
+
+    perms := make(map[string]bool)
+
+    if user.{{config.rbac.model_field}} == "{{ config.rbac.all_privileges }}" {
+        var allPerms []domain.Permission
+        s.DB.Find(&allPerms)
+        for _, p := range allPerms {
+            perms[p.Key] = true
+        }
+        s.cacheAllPermissions(ctx, cacheKey, perms)
+        return perms, nil
+    }
+
+    var allPerms []domain.Permission
+    s.DB.Find(&allPerms)
+
+    for _, perm := range allPerms {
+        hasIt, _ := s.HasPermission(ctx, userID, perm.Key)
+        perms[perm.Key] = hasIt
+    }
+
+    s.cacheAllPermissions(ctx, cacheKey, perms)
+    return perms, nil
+}
+
+// InvalidateUserCache invalidates cached permissions for a user
+func (s *RBACService) InvalidateUserCache(ctx context.Context, userID uint) error {
+    pattern := fmt.Sprintf("%suser:%d:*", s.cachePrefix, userID)
+    iter := s.redis.Scan(ctx, 0, pattern, 0).Iterator()
+    for iter.Next(ctx) {
+        if err := s.redis.Del(ctx, iter.Val()).Err(); err != nil {
+            return err
+        }
+    }
+    return iter.Err()
+}
+
+// GetRoleDefaultPermissions returns the default permissions for a role
+func (s *RBACService) GetRoleDefaultPermissions(roleName string) []string {
+    if perms, exists := s.Config.RoleDefaults[roleName]; exists {
+        return perms
+    }
+    return []string{}
+}
+
+func (s *RBACService) getUserRole(user *domain.{{config.project.user_model_name}}) string {
+    if user.{{config.rbac.model_field}} != "" {
+        return user.{{config.rbac.model_field}}
+    }
+
+    return "{{ config.rbac.default_role }}"
+}
+
+func (s *RBACService) containsPermission(perms []string, key string) bool {
+    for _, p := range perms {
+        if p == key || p == "*" {
+            return true
+        }
+    }
+    return false
+}
+
+func (s *RBACService) cachePermission(ctx context.Context, key string, allow bool) {
+    val := "0"
+    if allow {
+        val = "1"
+    }
+    s.redis.Set(ctx, key, val, s.cacheTTL)
+}
+
+func (s *RBACService) cacheAllPermissions(ctx context.Context, key string, perms map[string]bool) {
+    data, err := json.Marshal(perms)
+    if err == nil {
+        s.redis.Set(ctx, key, data, s.cacheTTL)
+    }
+}
+
+// SeedDefaultRolesAndPermissions seeds the database
+func (s *RBACService) SeedDefaultRolesAndPermissions() error {
+    // Create permissions from config
+    for _, p := range s.Config.Permissions {
+        perm := domain.Permission{
+            Key:         p.Key,
+            DisplayName: p.DisplayName,
+            Description: p.Description,
+            Category:    p.Category,
+        }
+        s.DB.Where("key = ?", p.Key).FirstOrCreate(&perm)
+    }
+
+    // Role seeding logic would go here based on config.yaml
+    {% for role in config.rbac.roles %}
+    {
+        role := domain.Role{
+            Name:        "{{ role.name }}",
+            DisplayName: "{{ role.name | capitalize }}",
+            IsSystem:    {{ config.rbac.all_privileges == role.name }},
+        }
+        s.DB.Where("name = ?", role.Name).FirstOrCreate(&role)
+        
+        if perms, exists := s.Config.RoleDefaults[role.Name]; exists {
+            for _, permKey := range perms {
+                var p domain.Permission
+                if err := s.DB.Where("key = ?", permKey).First(&p).Error; err == nil {
+                    rolePerm := domain.RolePermission{
+                        RoleID:       role.ID,
+                        PermissionID: p.ID,
+                        Allow:        true,
+                    }
+                    s.DB.Where("role_id = ? AND permission_id = ?", role.ID, p.ID).FirstOrCreate(&rolePerm)
+                }
+            }
+        }
+    }
+    {% endfor %}
+
+    return nil
+}
+{% endif %}

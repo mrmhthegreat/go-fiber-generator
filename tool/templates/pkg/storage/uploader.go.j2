@@ -1,0 +1,210 @@
+package helpers
+
+import (
+    "bytes"
+    "fmt"
+    "io"
+    "mime/multipart"
+    "net/http"
+    "net/url"
+    "path"
+    "path/filepath"
+    "strings"
+    "time"
+
+    "{{ config.project.module }}/storage"
+)
+
+// ---------------------------------------------------------------------------
+// Allowed file types
+// ---------------------------------------------------------------------------
+
+var allowedImageExts = map[string]bool{
+    ".jpg":  true,
+    ".jpeg": true,
+    ".png":  true,
+}
+
+var allowedImageMimes = map[string]bool{
+    "image/jpeg": true,
+    "image/png":  true,
+}
+
+// extToMime is a fallback when http.DetectContentType is inconclusive.
+var extToMime = map[string]string{
+    ".jpg":  "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png":  "image/png",
+    ".pdf":  "application/pdf",
+}
+
+const maxFileSizeBytes = 5 * 1024 * 1024 // 5 MB
+
+// ---------------------------------------------------------------------------
+// SaveUploadedFile — images (jpg / jpeg / png)
+// ---------------------------------------------------------------------------
+
+// SaveUploadedFile validates, reads, and uploads an image via the active
+// storage provider. Returns the public URL of the stored file.
+//
+// folder:  logical subfolder, e.g. "avatars" or "products"
+// name:    optional base-name override (default: "profile")
+func SaveUploadedFile(file *multipart.FileHeader, folder string, name ...string) (string, error) {
+    ext := strings.ToLower(filepath.Ext(file.Filename))
+    if !allowedImageExts[ext] {
+        return "", fmt.Errorf("invalid file extension %q: only jpg/jpeg/png are accepted", ext)
+    }
+
+    filen := "profile"
+    if len(name) > 0 && name[0] != "" {
+        filen = name[0]
+    }
+
+    fileBytes, contentType, err := readAndValidate(file, maxFileSizeBytes)
+    if err != nil {
+        return "", err
+    }
+
+    // Verify MIME type
+    if !allowedImageMimes[contentType] {
+        if mime, ok := extToMime[ext]; ok {
+            contentType = mime
+        } else {
+            return "", fmt.Errorf("unsupported content type %q", contentType)
+        }
+    }
+
+    key := fmt.Sprintf("%s/%d-%s%s", folder, time.Now().UTC().Unix(), filen, ext)
+    return storage.Current.Upload(bytes.NewReader(fileBytes), key, contentType)
+}
+
+// ---------------------------------------------------------------------------
+// SaveUploadedPDFFile — PDFs only
+// ---------------------------------------------------------------------------
+
+// SaveUploadedPDFFile validates and uploads a PDF file.
+//
+// folder:  logical subfolder, e.g. "documents"
+// filen:   base name for the stored file (required)
+func SaveUploadedPDFFile(file *multipart.FileHeader, folder string, filen string) (string, error) {
+    ext := strings.ToLower(filepath.Ext(file.Filename))
+    if ext != ".pdf" {
+        return "", fmt.Errorf("invalid file extension %q: only .pdf is accepted", ext)
+    }
+
+    fileBytes, _, err := readAndValidate(file, maxFileSizeBytes)
+    if err != nil {
+        return "", err
+    }
+
+    contentType := "application/pdf"
+    key := fmt.Sprintf("%s/%d-%s%s", folder, time.Now().UTC().Unix(), filen, ext)
+    return storage.Current.Upload(bytes.NewReader(fileBytes), key, contentType)
+}
+
+// ---------------------------------------------------------------------------
+// SaveUpdateFile — replace an existing image in-place when possible
+// ---------------------------------------------------------------------------
+
+// SaveUpdateFile uploads a new image and attempts to overwrite the old file
+// when the extension matches, otherwise deletes the old file first.
+//
+// folder:    logical subfolder
+// oldURL:    public URL of the file being replaced
+// name:      optional base-name override (default: "profile")
+func SaveUpdateFile(file *multipart.FileHeader, folder string, oldURL string, name ...string) (string, error) {
+    ext := strings.ToLower(filepath.Ext(file.Filename))
+    if !allowedImageExts[ext] {
+        return "", fmt.Errorf("invalid file extension %q: only jpg/jpeg/png are accepted", ext)
+    }
+
+    filen := "profile"
+    if len(name) > 0 && name[0] != "" {
+        filen = name[0]
+    }
+
+    fileBytes, contentType, err := readAndValidate(file, maxFileSizeBytes)
+    if err != nil {
+        return "", err
+    }
+    if !allowedImageMimes[contentType] {
+        if mime, ok := extToMime[ext]; ok {
+            contentType = mime
+        }
+    }
+
+    // Determine whether the extension changed.
+    oldFilename, _ := GetFilenameFromURL(oldURL)
+    oldExt := strings.ToLower(filepath.Ext(oldFilename))
+
+    var key string
+    if oldExt == ext {
+        // Same extension — reuse the original filename key so we overwrite it.
+        // The provider's Upload uses Upsert/PutObject which replaces the object.
+        key = fmt.Sprintf("%s/%s", folder, oldFilename)
+    } else {
+        // Extension changed — delete old file and upload under a new key.
+        _ = storage.Current.Delete(oldURL) // best-effort; continue even on error
+        key = fmt.Sprintf("%s/%d-%s%s", folder, time.Now().UTC().Unix(), filen, ext)
+    }
+
+    return storage.Current.Upload(bytes.NewReader(fileBytes), key, contentType)
+}
+
+// ---------------------------------------------------------------------------
+// DeleteFileFromURL — delete a file given its public URL
+// ---------------------------------------------------------------------------
+
+// DeleteFileFromURL deletes the remote file identified by its public URL.
+func DeleteFileFromURL(publicURL string) error {
+    if publicURL == "" {
+        return nil
+    }
+    if err := storage.Current.Delete(publicURL); err != nil {
+        return fmt.Errorf("failed to delete file at %q: %w", publicURL, err)
+    }
+    return nil
+}
+
+// ---------------------------------------------------------------------------
+// File utilities
+// ---------------------------------------------------------------------------
+
+// GetFilenameFromURL extracts the bare filename from a URL path.
+func GetFilenameFromURL(rawURL string) (string, error) {
+    parsed, err := url.Parse(rawURL)
+    if err != nil {
+        return "", fmt.Errorf("failed to parse URL %q: %w", rawURL, err)
+    }
+
+    filename := path.Base(parsed.Path)
+    if filename == "" || filename == "/" || filename == "." {
+        return "", fmt.Errorf("no valid filename found in URL %q", rawURL)
+    }
+
+    filename = strings.SplitN(filename, "?", 2)[0]
+    filename = strings.SplitN(filename, "#", 2)[0]
+    return filename, nil
+}
+
+// readAndValidate opens the multipart file, reads its bytes, enforces the size
+// limit, and detects the MIME content type.
+func readAndValidate(file *multipart.FileHeader, maxBytes int) ([]byte, string, error) {
+    f, err := file.Open()
+    if err != nil {
+        return nil, "", fmt.Errorf("failed to open uploaded file: %w", err)
+    }
+    defer f.Close()
+
+    data, err := io.ReadAll(f)
+    if err != nil {
+        return nil, "", fmt.Errorf("failed to read uploaded file: %w", err)
+    }
+
+    if len(data) > maxBytes {
+        return nil, "", fmt.Errorf("file size %d bytes exceeds limit of %d bytes", len(data), maxBytes)
+    }
+
+    contentType := http.DetectContentType(data)
+    return data, contentType, nil
+}

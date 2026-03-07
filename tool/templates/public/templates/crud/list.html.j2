@@ -1,0 +1,65 @@
+{% extends 'html/layouts/main.html.j2' %}
+
+{% block title %}{{ model.name }} List | {{ config.project.name }}{% endblock %}
+{% block active_page %}{{ model.name }}{% endblock %}
+{% block content %}
+<div class="space-y-6">
+    <!-- Header Section -->
+    <div class="flex items-center justify-between">
+        <div>
+            <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{{ model.name }} Management</h1>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Manage your {{ model.name | lower }} list, search and filter results.</p>
+        </div>
+        <a href="/dashboard/{{ model.name | lower }}/create" class="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary-600">
+            <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
+            Add {{ model.name }}
+        </a>
+    </div>
+    <!-- Filters and Search -->
+    <div class="rounded-xl bg-white p-4 shadow-sm dark:bg-gray-800">
+        <form hx-get="/dashboard/{{ model.name | lower }}/table" hx-target="#{{ model.name | lower }}-table-body" hx-trigger="keyup changed delay:500ms from:input" class="flex flex-wrap items-center gap-4">
+            <div class="relative flex-1 min-w-[200px]">
+                <span class="absolute inset-y-0 left-0 flex items-center pl-3">
+                    <svg class="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                </span>
+                <input type="text" name="search" placeholder="Search {{ model.name | lower }}..." class="block w-full rounded-lg border border-gray-300 bg-gray-50 py-2 pl-10 pr-3 text-sm focus:border-primary focus:ring-primary dark:border-gray-600 dark:bg-gray-700 dark:text-white">
+            </div>
+            
+            {% if model.filters %}
+            <div class="flex items-center gap-2">
+                <span class="text-sm text-gray-500">Filter:</span>
+                <select name="status" class="rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-sm focus:border-primary focus:ring-primary dark:border-gray-600 dark:bg-gray-700 dark:text-white">
+                    <option value="">All Status</option>
+                    <option value="active">Active</option>
+                    <option value="inactive">Inactive</option>
+                </select>
+            {% endif %}
+        </form>
+    <!-- Table Section -->
+    <div class="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm text-gray-500 dark:text-gray-400">
+                <thead class="bg-gray-50 text-xs uppercase text-gray-700 dark:bg-gray-700 dark:text-gray-400">
+                    <tr>
+                        {% set display_fields = model.list_resppkg.fields if model.list_resppkg.enabled else model.fields %}
+                        {% for field in display_fields %}
+                        {% if field.json != "-" and field.json_name != "-" %}
+                        <th class="px-6 py-3 font-semibold">{{ field.name | replace('_', ' ') }}</th>
+                        {% endif %}
+                        {% endfor %}
+                        <th class="px-6 py-3 text-center font-semibold">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="{{ model.name | lower }}-table-body">
+                    <!-- HTMX will load rows here optionally, or we render them initially -->
+                    {% include 'html/crud/' ~ model.name | lower ~ '/table_rows.html' ignore missing %}
+                </tbody>
+            </table>
+        
+        <!-- Pagination Placeholder -->
+        <div class="flex items-center justify-between border-t border-gray-200 px-6 py-3 dark:border-gray-700">
+            <span class="text-xs text-gray-500">Showing page <span class="font-medium text-gray-900 dark:text-white">1</span> of <span class="font-medium text-gray-900 dark:text-white">10</span></span>
+                <button class="rounded-lg border border-gray-300 px-3 py-1 hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-700">Previous</button>
+                <button class="rounded-lg border border-gray-300 px-3 py-1 hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-700">Next</button>
+</div>
+{% endblock %}

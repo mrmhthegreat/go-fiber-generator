@@ -1,0 +1,77 @@
+package helpers
+
+import (
+"time"
+
+"github.com/golang-jwt/jwt/v5"
+
+"{{ config.project.module }}/config"
+)
+
+// GenerateJWT generates a JWT token for a user with dynamic configuration
+func GenerateJWT(userID uint, fullname string, email string, verified bool) (string, error) {
+{% set expiry_hours = config.authentication.jwt.expiry_hours | default(24) %}
+{% set algorithm = config.authentication.jwt.algorithm | default('HS256') %}
+claims := jwt.MapClaims{
+"user_id":  userID,
+"fullname": fullname,
+"email":    email,
+"verified": verified,
+"exp":      time.Now().Add(time.Hour * {{ expiry_hours }}).Unix(),
+"iat":      time.Now().Unix(),
+{% if config.authentication.jwt.claims %}
+// Add configured dynamic claims if any
+{% for claim in config.authentication.jwt.claims %}
+{% if claim.name not in ['user_id', 'fullname', 'email', 'verified', 'exp', 'iat'] %}
+// Note: {{ claim.name }} should be passed by caller if needed
+{% endif %}
+{% endfor %}
+{% endif %}
+}
+
+var token *jwt.Token
+{% if algorithm == 'HS384' %}
+token = jwt.NewWithClaims(jwt.SigningMethodHS384, claims)
+{% elif algorithm == 'HS512' %}
+token = jwt.NewWithClaims(jwt.SigningMethodHS512, claims)
+{% else %}
+token = jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+{% endif %}
+
+return token.SignedString([]byte(viper.GetString("{{ config.authentication.jwt.secret_key | default('JWT_SECRET') }}")))
+}
+
+{% if config.authentication.refresh_token.enabled %}
+// GenerateRefreshJWT generates a refresh JWT token with dynamic configuration
+func GenerateRefreshJWT(userID uint, fullname string, email string, verified bool) (string, error) {
+{% set refresh_expiry = config.authentication.refresh_token.expiry | default('168h') %}
+{% set algorithm = config.authentication.jwt.algorithm | default('HS256') %}
+expiry, _ := time.ParseDuration("{{ refresh_expiry }}")
+
+claims := jwt.MapClaims{
+"user_id":  userID,
+"fullname": fullname,
+"email":    email,
+"verified": verified,
+"exp":      time.Now().Add(expiry).Unix(),
+"iat":      time.Now().Unix(),
+"type":     "refresh",
+}
+
+
+
+var token *jwt.Token
+{% if algorithm == 'HS384' %}
+token = jwt.NewWithClaims(jwt.SigningMethodHS384, claims)
+{% elif algorithm == 'HS512' %}
+token = jwt.NewWithClaims(jwt.SigningMethodHS512, claims)
+{% else %}
+token = jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+{% endif %}
+
+return token.SignedString([]byte(viper.GetString("{{ config.authentication.jwt.secret_key | default('JWT_SECRET') }}")))
+}
+{% endif %}
+
+
+

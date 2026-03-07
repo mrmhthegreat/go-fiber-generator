@@ -1,0 +1,9 @@
+package dto
+
+{% if config.imap.enabled %}
+type ComposeEmailRequest struct {
+	To      string `json:"to" validate:"required,email"`
+	Subject string `json:"subject" validate:"required"`
+	Message string `json:"message" validate:"required"`
+}
+{% endif %}

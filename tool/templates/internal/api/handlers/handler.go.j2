@@ -1,0 +1,656 @@
+package handlers
+
+import (
+    "errors"
+{% if ctrl.needs_strconv %}
+    "strconv"
+{% endif %}
+{% if ctrl.needs_strings %}
+    "strings"
+{% endif %}
+{% if ctrl.needs_time %}
+    "time"
+{% endif %}
+{% if ctrl.needs_uuid %}
+    "github.com/google/uuid"
+{% endif %}
+{% if ctrl.needs_validator %}
+    "github.com/go-playground/validator/v10"
+{% endif %}
+
+    "github.com/gofiber/fiber/v2"
+    "gorm.io/gorm"
+
+	dtopkg "{{ config.project.module }}/pkg/dto"
+   
+	utilspkg "{{ config.project.module }}/pkg/utils"
+	storagepkg "{{ config.project.module }}/pkg/storage"
+	errorspkg "{{ config.project.module }}/pkg/errors"
+    "{{{ config.project.module }}/internal/domain"
+    "{{ config.project.module }}/repository"
+    resppkg "{{ config.project.module }}/pkg/response"
+    "{{ config.project.module }}/contexthelpers"
+)
+
+{# ────────────────────────────────────────────────────────────── #}
+{# Helper: Get repository from context for API controllers         #}
+{# ────────────────────────────────────────────────────────────── #}
+{% macro getRepo(modelName) %}
+    dbConn := utilspkg.GetDB(c)
+    if dbConn == nil {
+        return errorspkg.SendError(c, fiber.StatusInternalServerError, "db_connection_failed")
+    }
+    
+    repo := utilspkg.Get{{ modelName }}Repository(dbConn)
+    if repo == nil {
+        return errorspkg.SendError(c, fiber.StatusInternalServerError, "db_connection_failed")
+    }
+{% endmacro %}
+
+{# ── parse_param macro ──────────────────────────────────────────────── #}
+{# Emits the Go code to read one param from the right source            #}
+{% macro parse_param(p) %}{% if p.source == 'claim' %}
+    {{ p.var_name }}, ok := c.Locals("user_id").({{ p.go_type }})
+    if !ok {
+        return errorspkg.SendError(c, fiber.StatusUnauthorized, "unauthorized")
+    }
+{% elif p.source == 'path' %}{% if p.go_type in ('uint', 'int', 'int64') %}
+    {{ p.var_name }}Raw, err := c.ParamsInt("{{ p.name }}")
+    if err != nil || {{ p.var_name }}Raw <= 0 {
+        return errorspkg.SendError(c, fiber.StatusBadRequest, "invalid_{{ p.name }}")
+    }
+    {{ p.var_name }} := {{ p.go_type }}({{ p.var_name }}Raw)
+{% else %}
+    {{ p.var_name }} := c.Params("{{ p.name }}")
+    if {{ p.var_name }} == "" {
+        return errorspkg.SendError(c, fiber.StatusBadRequest, "invalid_{{ p.name }}")
+    }
+{% endif %}{% elif p.source == 'query' %}{% if p.go_type in ('uint','int','int64') %}
+    {{ p.var_name }} := {{ p.go_type }}(c.QueryInt("{{ p.name }}", 0))
+{% else %}
+    {{ p.var_name }} := c.Query("{{ p.name }}", "")
+{% endif %}{% endif %}{% endmacro %}
+
+// {{ ctrl.model }}Controller handles API requests for {{ ctrl.model }}
+type {{ ctrl.model }}Controller struct {
+}
+
+// New{{ ctrl.model }}Controller creates a new {{ ctrl.model }}Controller
+func New{{ ctrl.model }}Controller() *{{ ctrl.model }}Controller {
+    return &{{ ctrl.model }}Controller{}
+}
+
+// Register registers all routes for {{ ctrl.model }}
+func (h *{{ ctrl.model }}Controller) Register(router fiber.Router) {
+{% for ep in ctrl.endpoints %}
+{% set rp = ep.path | replace(ctrl.base_path, '') %}
+    router.{{ ep.method }}("{{ rp if rp else '/' }}", h.{{ ep.func_name }})
+{% endfor %}
+{% for ep in ctrl.getter_endpoints %}
+    router.{{ ep.method }}("{{ ep.path | replace(ctrl.base_path, '') }}", h.{{ ep.func_name }})
+{% endfor %}
+}
+
+// ============================================================================
+// CRUD Endpoints
+// ============================================================================
+
+{% for ep in ctrl.endpoints %}
+{# ───────────────────── CREATE ───────────────────── #}
+{% if ep.type == 'create' %}
+// {{ ep.func_name }} creates a new {{ ep.model | lower }}.
+// @Summary Create {{ ep.model | lower }}
+// @Tags {{ ep.tag }}
+// @Accept {% if ep.has_file_uploads %}multipart/form-data{% else %}json{% endif %}
+// @Produce json
+{% for mw in ep.middleware %}
+// @Security {{ mw | capitalize }}Auth
+{% endfor %}
+{% if ep.has_file_uploads %}
+{% for f in ep.file_uploads %}
+// @Param {{ f.form_field }} formData file true "{{ f.field }} file"
+{% endfor %}
+// @Param input formData dtopkg.{{ ep.dto_name }} true "{{ ep.model }} data"
+{% else %}
+// @Param input body dtopkg.{{ ep.dto_name }} true "{{ ep.model }} data"
+{% endif %}
+// @Success 201 {object} resppkg.{{ ep.resppkg.struct }}
+// @Failure 400 {object} resppkg.ErrorResponse
+// @Failure 401 {object} resppkg.ErrorResponse
+// @Failure 500 {object} resppkg.ErrorResponse
+// @Router {{ ep.path }} [{{ ep.method | lower }}]
+func (h *{{ ep.model }}Controller) {{ ep.func_name }}(c *fiber.Ctx) error {
+{% if ep.needs_claim %}
+    userID, ok := c.Locals("user_id").(uint)
+    if !ok {
+        return errorspkg.SendError(c, fiber.StatusUnauthorized, "unauthorized")
+    }
+{% endif %}
+
+    // Get repository from context
+    dbConn := utilspkg.GetDB(c)
+    if dbConn == nil {
+        return errorspkg.SendError(c, fiber.StatusInternalServerError, "db_connection_failed")
+    }
+    repo := utilspkg.Get{{ ep.model }}Repository(dbConn)
+    if repo == nil {
+        return errorspkg.SendError(c, fiber.StatusInternalServerError, "db_connection_failed")
+    }
+
+    var input dtopkg.{{ ep.dto_name }}
+    if err := c.BodyParser(&input); err != nil {
+        return errorspkg.SendError(c, fiber.StatusBadRequest, "invalid_input", err.Error())
+    }
+{% if ep.validation.use_validator %}
+    if err := validator.New().Struct(&input); err != nil {
+        return errorspkg.SendError(c, fiber.StatusBadRequest, "validation_failed", err.Error())
+    }
+{% endif %}
+
+{% for f in ep.file_uploads %}
+    var {{ f.field | lower }}URL string
+    if fh, ferr := c.FormFile("{{ f.form_field }}"); ferr == nil {
+        if fh.Size > int64({{ f.max_size_mb }}*1024*1024) {
+            return errorspkg.SendError(c, fiber.StatusBadRequest, "file_too_large", "{{ f.field }} max {{ f.max_size_mb }}MB")
+        }
+{% if f.allowed_types %}
+        ct := fh.Header.Get("Content-Type")
+        allowed := false
+{% for at in f.allowed_types %}
+        if strings.HasPrefix(ct, "{{ at }}") { allowed = true }
+{% endfor %}
+        if !allowed {
+            return errorspkg.SendError(c, fiber.StatusBadRequest, "invalid_file_type")
+        }
+{% endif %}
+        saved, serr := storagepkg.SaveUploadedFile(fh, "{{ f.storage_path }}")
+        if serr != nil {
+            return errorspkg.SendError(c, fiber.StatusInternalServerError, "file_upload_failed")
+        }
+        {{ f.field | lower }}URL = saved
+
+
+    }
+    {% if f.required %}
+    else {
+        return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "{{ f.field | lower }}_required"})
+    }
+{% endif %}
+{% endfor %}
+
+    {{ ep.model | lower }} := models.{{ ep.model }}{}
+    input.ApplyTo(&{{ ep.model | lower }})
+{% if ep.ownership.enabled %}
+    {{ ep.model | lower }}.{{ ep.ownership.go_field }} = userID
+{% endif %}
+{% for af in ep.auto_fields %}
+{% if af.generator == 'uuid' %}
+    {{ ep.model | lower }}.{{ af.name | replace('_',' ') | title | replace(' ','') }} = uuid.New().String()
+{% elif af.source == 'context' and not ep.ownership.enabled %}
+    {{ ep.model | lower }}.{{ af.name | replace('_',' ') | title | replace(' ','') }} = userID
+{% endif %}
+{% endfor %}
+{% for f in ep.file_uploads %}
+    {{ ep.model | lower }}.{{ f.field }} = {{ f.field | lower }}URL
+{% endfor %}
+
+    if err := repo.Create(&{{ ep.model | lower }}); err != nil {
+        return errorspkg.SendError(c, fiber.StatusInternalServerError, "create_failed", err.Error())
+    }
+
+{% if ep.resppkg.converter %}
+    return c.Status(fiber.StatusCreated).JSON(resppkg.{{ ep.resppkg.converter }}(&{{ ep.model | lower }}))
+{% else %}
+    return c.Status(fiber.StatusCreated).JSON(resppkg.SuccessResponse{Message: "{{ ep.model }} created"})
+{% endif %}
+}
+
+{# ───────────────────── GET ───────────────────── #}
+{% elif ep.type == 'get' %}
+// {{ ep.func_name }} retrieves a {{ ep.model | lower }}.
+// @Summary Get {{ ep.model | lower }}
+// @Tags {{ ep.tag }}
+// @Produce json
+{% for mw in ep.middleware %}
+// @Security {{ mw | capitalize }}Auth
+{% endfor %}
+{% for p in ep.params %}
+{% if p.source == 'path' %}
+// @Param {{ p.name }} path {{ p.swagger_type }} true "{{ p.name }}"
+{% elif p.source == 'query' %}
+// @Param {{ p.name }} query {{ p.swagger_type }} false "{{ p.name }}"
+{% endif %}
+{% endfor %}
+// @Success 200 {object} resppkg.{{ ep.resppkg.struct }}
+// @Failure 400 {object} resppkg.ErrorResponse
+// @Failure 404 {object} resppkg.ErrorResponse
+// @Router {{ ep.path }} [get]
+func (h *{{ ep.model }}Controller) {{ ep.func_name }}(c *fiber.Ctx) error {
+{% for p in ep.params %}
+{{ parse_param(p) }}
+{% endfor %}
+
+    dbConn := utilspkg.GetDB(c)
+    if dbConn == nil {
+        return errorspkg.SendError(c, fiber.StatusInternalServerError, "db_connection_failed")
+    }
+    repo := utilspkg.Get{{ ep.model }}Repository(dbConn)
+    if repo == nil {
+        return errorspkg.SendError(c, fiber.StatusInternalServerError, "db_connection_failed")
+    }
+
+    {{ ep.model | lower }}, err := repo.{{ ep.repo_method.method }}({{ ep.repo_method.args_str }})
+    if err != nil {
+        if errors.Is(err, gorm.ErrRecordNotFound) {
+            return errorspkg.SendError(c, fiber.StatusNotFound, "{{ ep.model | lower }}_not_found")
+        }
+        return errorspkg.SendError(c, fiber.StatusInternalServerError, "fetch_failed", err.Error())
+    }
+
+{% if ep.ownership.enabled and ep.ownership.verify == 'field' %}
+{% for p in ep.params %}
+{% if p.source == 'claim' %}
+    if {{ ep.model | lower }}.{{ ep.ownership.go_field }} != {{ p.var_name }} {
+        return errorspkg.SendError(c, fiber.StatusForbidden, "access_denied")
+    }
+{% endif %}
+{% endfor %}
+{% endif %}
+
+{% if ep.resppkg.converter %}
+    return c.Status(fiber.StatusOK).JSON(resppkg.{{ ep.resppkg.converter }}({{ ep.model | lower }}))
+{% else %}
+    return c.Status(fiber.StatusOK).JSON({{ ep.model | lower }})
+{% endif %}
+}
+
+{# ───────────────────── UPDATE ───────────────────── #}
+{% elif ep.type == 'update' %}
+// {{ ep.func_name }} updates a {{ ep.model | lower }}.
+// @Summary Update {{ ep.model | lower }}
+// @Tags {{ ep.tag }}
+// @Accept {% if ep.has_file_uploads %}multipart/form-data{% else %}json{% endif %}
+// @Produce json
+{% for mw in ep.middleware %}
+// @Security {{ mw | capitalize }}Auth
+{% endfor %}
+{% for p in ep.params %}
+{% if p.source == 'path' %}
+// @Param {{ p.name }} path {{ p.swagger_type }} true "{{ p.name }}"
+{% endif %}
+{% endfor %}
+{% if ep.has_file_uploads %}
+{% for f in ep.file_uploads %}
+// @Param {{ f.form_field }} formData file false "{{ f.field }} file"
+{% endfor %}
+// @Param input formData dtopkg.{{ ep.dto_name }} false "Update data"
+{% else %}
+// @Param input body dtopkg.{{ ep.dto_name }} false "Update data"
+{% endif %}
+// @Success 200 {object} resppkg.{{ ep.resppkg.struct }}
+// @Failure 400 {object} resppkg.ErrorResponse
+// @Failure 403 {object} resppkg.ErrorResponse
+// @Failure 404 {object} resppkg.ErrorResponse
+// @Router {{ ep.path }} [{{ ep.method | lower }}]
+func (h *{{ ep.model }}Controller) {{ ep.func_name }}(c *fiber.Ctx) error {
+{% for p in ep.params %}
+{{ parse_param(p) }}
+{% endfor %}
+
+    dbConn := utilspkg.GetDB(c)
+    if dbConn == nil {
+        return errorspkg.SendError(c, fiber.StatusInternalServerError, "db_connection_failed")
+    }
+    repo := utilspkg.Get{{ ep.model }}Repository(dbConn)
+    if repo == nil {
+        return errorspkg.SendError(c, fiber.StatusInternalServerError, "db_connection_failed")
+    }
+
+    existing, err := repo.{{ ep.repo_method.method }}({{ ep.repo_method.args_str }})
+    if err != nil {
+        if errors.Is(err, gorm.ErrRecordNotFound) {
+            return errorspkg.SendError(c, fiber.StatusNotFound, "{{ ep.model | lower }}_not_found")
+        }
+        return errorspkg.SendError(c, fiber.StatusInternalServerError, "fetch_failed", err.Error())
+    }
+{# verify:field → compare model field; verify:param → repo already enforced it #}
+{% if ep.ownership.enabled and ep.ownership.verify == 'field' %}
+{% for p in ep.params %}
+{% if p.source == 'claim' %}
+    if existing.{{ ep.ownership.go_field }} != {{ p.var_name }} {
+        return errorspkg.SendError(c, fiber.StatusForbidden, "access_denied")
+    }
+{% endif %}
+{% endfor %}
+{% endif %}
+
+    var input dtopkg.{{ ep.dto_name }}
+    if err := c.BodyParser(&input); err != nil {
+        return errorspkg.SendError(c, fiber.StatusBadRequest, "invalid_input", err.Error())
+    }
+{% if ep.validation.use_validator %}
+    if err := validator.New().Struct(&input); err != nil {
+        return errorspkg.SendError(c, fiber.StatusBadRequest, "validation_failed", err.Error())
+    }
+{% endif %}
+
+{% for f in ep.file_uploads %}
+    if fh, ferr := c.FormFile("{{ f.form_field }}"); ferr == nil {
+        if fh.Size > int64({{ f.max_size_mb }}*1024*1024) {
+            return errorspkg.SendError(c, fiber.StatusBadRequest, "file_too_large", "{{ f.field }} max {{ f.max_size_mb }}MB")
+        }
+{% if f.allowed_types %}
+        ct := fh.Header.Get("Content-Type")
+        allowed := false
+{% for at in f.allowed_types %}
+        if strings.HasPrefix(ct, "{{ at }}") { allowed = true }
+{% endfor %}
+        if !allowed {
+            return errorspkg.SendError(c, fiber.StatusBadRequest, "invalid_file_type")
+        }
+{% endif %}
+        saved, serr := storagepkg.SaveUploadedFile(fh, "{{ f.storage_path }}")
+        if serr != nil {
+            return errorspkg.SendError(c, fiber.StatusInternalServerError, "file_upload_failed")
+        }
+        existing.{{ f.field }} = saved
+    }
+    {% if f.required %}
+    else {
+        return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "{{ f.field | lower }}_required"})
+    }
+{% endif %}
+{% endfor %}
+
+    input.ApplyTo(existing)
+
+    if err := repo.Update(existing); err != nil {
+        return errorspkg.SendError(c, fiber.StatusInternalServerError, "update_failed", err.Error())
+    }
+
+{% if ep.resppkg.converter %}
+    return c.Status(fiber.StatusOK).JSON(resppkg.{{ ep.resppkg.converter }}(existing))
+{% else %}
+    return c.Status(fiber.StatusOK).JSON(resppkg.SuccessResponse{Message: "{{ ep.model }} updated"})
+{% endif %}
+}
+
+{# ───────────────────── DELETE ───────────────────── #}
+{% elif ep.type == 'delete' %}
+// {{ ep.func_name }} deletes a {{ ep.model | lower }}.
+// @Summary Delete {{ ep.model | lower }}
+// @Tags {{ ep.tag }}
+{% for mw in ep.middleware %}
+// @Security {{ mw | capitalize }}Auth
+{% endfor %}
+{% for p in ep.params %}
+{% if p.source == 'path' %}
+// @Param {{ p.name }} path {{ p.swagger_type }} true "{{ p.name }}"
+{% endif %}
+{% endfor %}
+// @Success 200 {object} resppkg.SuccessResponse
+// @Failure 400 {object} resppkg.ErrorResponse
+// @Failure 403 {object} resppkg.ErrorResponse
+// @Failure 404 {object} resppkg.ErrorResponse
+// @Router {{ ep.path }} [delete]
+func (h *{{ ep.model }}Controller) {{ ep.func_name }}(c *fiber.Ctx) error {
+{% for p in ep.params %}
+{{ parse_param(p) }}
+{% endfor %}
+
+    dbConn := utilspkg.GetDB(c)
+    if dbConn == nil {
+        return errorspkg.SendError(c, fiber.StatusInternalServerError, "db_connection_failed")
+    }
+    repo := utilspkg.Get{{ ep.model }}Repository(dbConn)
+    if repo == nil {
+        return errorspkg.SendError(c, fiber.StatusInternalServerError, "db_connection_failed")
+    }
+
+{% if ep.ownership.enabled %}
+    existing, err := repo.{{ ep.repo_method.method }}({{ ep.repo_method.args_str }})
+    if err != nil {
+        if errors.Is(err, gorm.ErrRecordNotFound) {
+            return errorspkg.SendError(c, fiber.StatusNotFound, "{{ ep.model | lower }}_not_found")
+        }
+        return errorspkg.SendError(c, fiber.StatusInternalServerError, "fetch_failed", err.Error())
+    }
+{% if ep.ownership.verify == 'field' %}
+{% for p in ep.params %}
+{% if p.source == 'claim' %}
+    if existing.{{ ep.ownership.go_field }} != {{ p.var_name }} {
+        return errorspkg.SendError(c, fiber.StatusForbidden, "access_denied")
+    }
+{% endif %}
+{% endfor %}
+{% endif %}
+    _ = existing
+{% endif %}
+
+{% set id_param = namespace(found=none) %}
+{% for p in ep.params %}{% if p.source == 'path' and id_param.found is none %}{% set id_param.found = p %}{% endif %}{% endfor %}
+{% if ep.hard_delete %}
+    if err := repo.HardDelete({{ id_param.found.var_name if id_param.found else 'id' }}); err != nil {
+{% else %}
+    if err := repo.Delete({{ id_param.found.var_name if id_param.found else 'id' }}); err != nil {
+{% endif %}
+        return errorspkg.SendError(c, fiber.StatusInternalServerError, "delete_failed", err.Error())
+    }
+
+    return c.Status(fiber.StatusOK).JSON(resppkg.SuccessResponse{Message: "{{ ep.model }} deleted"})
+}
+
+{# ───────────────────── BATCH DELETE ───────────────────── #}
+{% elif ep.type == 'batch_delete' %}
+// {{ ep.func_name }} batch-deletes {{ ep.model | lower }}s.
+// @Summary Batch delete {{ ep.model | lower }}s
+// @Tags {{ ep.tag }}
+{% for mw in ep.middleware %}
+// @Security {{ mw | capitalize }}Auth
+{% endfor %}
+// @Param input body object true "IDs to delete"
+// @Success 200 {object} resppkg.SuccessResponse
+// @Failure 400 {object} resppkg.ErrorResponse
+// @Router {{ ep.path }} [delete]
+func (h *{{ ep.model }}Controller) {{ ep.func_name }}(c *fiber.Ctx) error {
+{% if ep.needs_claim %}
+    userID, ok := c.Locals("user_id").(uint)
+    if !ok {
+        return errorspkg.SendError(c, fiber.StatusUnauthorized, "unauthorized")
+    }
+    _ = userID
+{% endif %}
+
+    dbConn := utilspkg.GetDB(c)
+    if dbConn == nil {
+        return errorspkg.SendError(c, fiber.StatusInternalServerError, "db_connection_failed")
+    }
+    repo := utilspkg.Get{{ ep.model }}Repository(dbConn)
+    if repo == nil {
+        return errorspkg.SendError(c, fiber.StatusInternalServerError, "db_connection_failed")
+    }
+
+    var req struct {
+        IDs []string `json:"ids"`
+    }
+    if err := c.BodyParser(&req); err != nil || len(req.IDs) == 0 {
+        return errorspkg.SendError(c, fiber.StatusBadRequest, "invalid_input", "ids required")
+    }
+
+    var ids []uint
+    for _, s := range req.IDs {
+        if v, err := strconv.ParseUint(s, 10, 64); err == nil {
+            ids = append(ids, uint(v))
+        }
+    }
+    if len(ids) == 0 {
+        return errorspkg.SendError(c, fiber.StatusBadRequest, "invalid_ids")
+    }
+
+{% if ep.hard_delete %}
+    if err := repo.HardDeleteMultiple(ids); err != nil {
+{% else %}
+    if err := repo.DeleteMultiple(ids); err != nil {
+{% endif %}
+        return errorspkg.SendError(c, fiber.StatusInternalServerError, "batch_delete_failed", err.Error())
+    }
+
+    return c.Status(fiber.StatusOK).JSON(resppkg.SuccessResponse{Message: "Batch delete successful"})
+}
+
+{% endif %}
+{% endfor %}
+
+// ============================================================================
+// Custom Getter Endpoints
+// ============================================================================
+
+{% for ep in ctrl.getter_endpoints %}
+// {{ ep.func_name }} — {{ ep.description | default(ep.getter_name) }}
+// @Summary {{ ep.description | default(ep.func_name) }}
+// @Tags {{ ep.tag }}
+// @Produce json
+{% for mw in ep.middleware %}
+// @Security {{ mw | capitalize }}Auth
+{% endfor %}
+{% for pp in ep.path_params %}
+// @Param {{ pp.name }} path {% if pp.type in ('uint', 'int', 'int64') %}integer{% else %}string{% endif %} true "{{ pp.name }}"
+{% endfor %}
+{% if ep.has_pagination %}
+// @Param page query integer false "Page" default(1)
+// @Param page_size query integer false "Page size" default(10)
+{% endif %}
+{% for p in ep.query_params %}
+{% if p.enum_values %}
+// @Param {{ p.name }} query {{ p.swagger_type }} false "{{ p.name }}" Enums({{ p.enum_values | join(', ') }}){% if p.default %} default({{ p.default }}){% endif %}
+
+{% elif p.type == 'date' %}
+// @Param {{ p.name }} query string false "{{ p.name }}" format(date)
+{% else %}
+// @Param {{ p.name }} query {{ p.swagger_type }} false "{{ p.name }}"{% if p.default and p.default != '' %} default({{ p.default }}){% endif %}
+
+{% endif %}
+{% endfor %}
+// @Success 200 {object} resppkg.{{ ep.resppkg.struct }}
+// @Failure 400 {object} resppkg.ErrorResponse
+// @Failure 404 {object} resppkg.ErrorResponse
+// @Router {{ ep.path }} [{{ ep.method | lower }}]
+func (h *{{ ep.model }}Controller) {{ ep.func_name }}(c *fiber.Ctx) error {
+{% if ep.ownership.enabled %}
+    userID, ok := c.Locals("user_id").(uint)
+    if !ok {
+        return errorspkg.SendError(c, fiber.StatusUnauthorized, "unauthorized")
+    }
+{% endif %}
+
+{% for pp in ep.path_params %}
+{% if pp.type in ('uint', 'int', 'int64') %}
+    {{ pp.name }}Raw, err := c.ParamsInt("{{ pp.name }}")
+    if err != nil || {{ pp.name }}Raw <= 0 {
+        return errorspkg.SendError(c, fiber.StatusBadRequest, "invalid_{{ pp.name }}")
+    }
+    {{ pp.name }} := {{ pp.type }}({{ pp.name }}Raw)
+{% else %}
+    {{ pp.name }} := c.Params("{{ pp.name }}")
+    if {{ pp.name }} == "" {
+        return errorspkg.SendError(c, fiber.StatusBadRequest, "invalid_{{ pp.name }}")
+    }
+{% endif %}
+{% endfor %}
+
+{% if ep.has_pagination %}
+    page := c.QueryInt("page", 1)
+    pageSize := c.QueryInt("page_size", 10)
+    if page < 1 { page = 1 }
+    if pageSize < 1 || pageSize > 100 { pageSize = 10 }
+{% endif %}
+
+{% for p in ep.query_params %}
+{% if p.name not in ('sort_by', 'sort_order') %}
+{% if p.type == 'date' %}
+    var {{ p.name }}Val *time.Time
+    if s := c.Query("{{ p.name }}"); s != "" {
+        if t, terr := time.Parse("{{ p.format | default('2006-01-02') }}", s); terr == nil {
+            {{ p.name }}Val = &t
+        }
+    }
+{% elif p.go_parse == 'int' %}
+    {{ p.name }}Val := {{ p.type }}(c.QueryInt("{{ p.name }}", {{ p.default | default(0) }}))
+{% elif p.go_parse == 'bool' %}
+    var {{ p.name }}Val *bool
+    if s := c.Query("{{ p.name }}", ""); s != "" {
+        b := s == "true"
+        {{ p.name }}Val = &b
+    }
+{% else %}
+    {{ p.name }}Val := c.Query("{{ p.name }}", "{{ p.default | default('') }}")
+{% endif %}
+{% endif %}
+{% endfor %}
+
+{% if ep.options_type %}
+    opts := repository.{{ ep.options_type }}{
+{% if ep.has_pagination %}
+        Page:     page,
+        PageSize: pageSize,
+{% endif %}
+{% for p in ep.query_params %}
+{% if p.name == 'sort_by' %}
+        SortBy:    c.Query("sort_by", "{{ p.default | default('created_at') }}"),
+{% elif p.name == 'sort_order' %}
+        SortOrder: c.Query("sort_order", "{{ p.default | default('desc') }}"),
+{% else %}
+        {{ p.name | replace('_',' ') | title | replace(' ','') }}: {{ p.name }}Val,
+{% endif %}
+{% endfor %}
+{% if ep.ownership.enabled %}
+        {{ ep.ownership.field | replace('_',' ') | title | replace(' ','') }}: &userID,
+{% endif %}
+    }
+{% endif %}
+
+    dbConn := utilspkg.GetDB(c)
+    if dbConn == nil {
+        return errorspkg.SendError(c, fiber.StatusInternalServerError, "db_connection_failed")
+    }
+    repo := utilspkg.Get{{ ep.model }}Repository(dbConn)
+    if repo == nil {
+        return errorspkg.SendError(c, fiber.StatusInternalServerError, "db_connection_failed")
+    }
+
+{% if ep.unique %}
+    result, err := repo.{{ ep.getter_name }}({% for pp in ep.path_params %}{{ pp.name }}{% if not loop.last %}, {% endif %}{% endfor %})
+{% elif ep.options_type %}
+    results, hasMore, err := repo.{{ ep.getter_name }}({% for pp in ep.path_params %}{{ pp.name }}{% if not loop.last %}, {% endif %}{% endfor %}{% if ep.path_params %}, {% endif %}opts)
+{% else %}
+    results, hasMore, err := repo.{{ ep.getter_name }}({% for pp in ep.path_params %}{{ pp.name }}{% if not loop.last %}, {% endif %}{% endfor %})
+{% endif %}
+
+    if err != nil {
+        return errorspkg.SendError(c, fiber.StatusNotFound, "not_found", err.Error())
+    }
+
+{% if ep.unique %}
+{% if ep.resppkg.converter %}
+    return c.Status(fiber.StatusOK).JSON(resppkg.{{ ep.resppkg.converter }}(result))
+{% else %}
+    return c.Status(fiber.StatusOK).JSON(result)
+{% endif %}
+{% else %}
+{% if ep.resppkg.converter %}
+    items := resppkg.{{ ep.resppkg.converter }}(results)
+{% else %}
+    items := results
+{% endif %}
+    return c.Status(fiber.StatusOK).JSON(fiber.Map{
+        "data":      items,
+        "has_more":  hasMore,
+{% if ep.has_pagination %}
+        "page":      page,
+        "page_size": pageSize,
+{% endif %}
+    })
+{% endif %}
+}
+
+{% endfor %}

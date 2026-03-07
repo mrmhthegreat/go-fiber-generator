@@ -1,0 +1,282 @@
+package chat
+
+import (
+	"log"
+	"time"
+{% if config.websocket.events | selectattr('rate_limit', 'defined') | selectattr('rate_limit.enabled') | list %}
+	"sync"
+{% endif %}
+	"fmt"
+
+	"github.com/gofiber/contrib/websocket"
+	"github.com/gofiber/fiber/v2"
+
+	"{{ config.project.module }}/config"
+	"{{ config.project.module }}/internal/domain"
+	ws "{{ config.project.module }}/websocket"
+)
+
+{% if config.websocket.enabled and config.websocket.handler_type == 'dedicated' %}
+{% if config.chat.enabled and config.websocket.get('dedicated', {}).get('chat', {}).get('enabled', true) %}
+
+{# Hub broadcast variables for shared handlers #}
+{% set hub_broadcast_all    = 'ws.BroadcastAll' %}
+{% set hub_broadcast_admins = 'ws.BroadcastRegistry.Admin.BroadcastToAdmins' %}
+{% set hub_broadcast_user   = 'ChatHubInst.BroadcastToUser' %}
+{% set hub_broadcast_room   = 'ChatHubInst.BroadcastToRoom' %}
+
+{# Auth helper #}
+func authenticateDedicatedWS(c *websocket.Conn) (uint, error) {
+{% if config.websocket.authentication.method in ['jwt', 'unified'] %}
+	appToken   := c.Headers("{{ config.websocket.authentication.get('app_token', {}).get('header_name', 'X-App-Token') }}", c.Query("{{ config.websocket.authentication.get('app_token', {}).get('query_param', 'app_token') }}"))
+	authHeader := c.Headers("{{ config.websocket.authentication.get('jwt', {}).get('extraction', {}).get('header', 'Authorization') }}")
+	if authHeader == "" {
+		authHeader = "{{ config.websocket.authentication.get('jwt', {}).get('extraction', {}).get('header_prefix', 'Bearer ') }}" + c.Query("{{ config.websocket.authentication.get('jwt', {}).get('extraction', {}).get('query_param', 'token') }}")
+	}
+	return ValidateUnifiedTokens(appToken, authHeader)
+{% elif config.websocket.authentication.method == 'session' %}
+	sessionID := c.Cookies("{{ config.websocket.authentication.get('session', {}).get('cookie_name', 'session_id') }}")
+	return {{ config.websocket.authentication.get('session', {}).get('validation_function', 'ValidateSession') }}(sessionID)
+{% else %}
+	return 0, nil
+{% endif %}
+}
+
+{# Validation #}
+{% if config.chat.get('controller', {}).get('validation', {}).get('message', {}).get('content') %}
+func validateMessageContent(content string) error {
+	{% if config.chat.controller.validation.message.content.get('required', false) %}
+	if content == "" {
+		return fmt.Errorf("content is required")
+	}
+	{% endif %}
+	{% if config.chat.controller.validation.message.content.get('min_length') %}
+	if len(content) < {{ config.chat.controller.validation.message.content.min_length }} {
+		return fmt.Errorf("content must be at least {{ config.chat.controller.validation.message.content.min_length }} characters")
+	}
+	{% endif %}
+	{% if config.chat.controller.validation.message.content.get('max_length') %}
+	if len(content) > {{ config.chat.controller.validation.message.content.max_length }} {
+		return fmt.Errorf("content must not exceed {{ config.chat.controller.validation.message.content.max_length }} characters")
+	}
+	{% endif %}
+	return nil
+}
+{% endif %}
+
+{# Rate limiters for chat_message events only #}
+{% for event in config.websocket.events %}
+{% if event.enabled and event.get('rate_limit') and event.rate_limit.get('enabled', false) and event.handler_type == 'chat_message' %}
+var rateLimiter{{ event.name | replace('_', '') | title }} = &struct {
+	requests map[string][]time.Time
+	mu       sync.RWMutex
+	max      int
+	window   time.Duration
+}{
+	requests: make(map[string][]time.Time),
+	max:      {{ event.rate_limit.max_per_minute }},
+	window:   time.Minute,
+}
+
+func checkRateLimit{{ event.name | replace('_', '') | title }}(userID uint) bool {
+	key := fmt.Sprintf("user_%d", userID)
+	limiter := rateLimiter{{ event.name | replace('_', '') | title }}
+	limiter.mu.Lock()
+	defer limiter.mu.Unlock()
+	now := time.Now()
+	times := limiter.requests[key]
+	filtered := make([]time.Time, 0)
+	for _, t := range times {
+		if now.Sub(t) < limiter.window {
+			filtered = append(filtered, t)
+		}
+	}
+	if len(filtered) >= limiter.max {
+		return false
+	}
+	filtered = append(filtered, now)
+	limiter.requests[key] = filtered
+	return true
+}
+{% endif %}
+{% endfor %}
+
+// ChatWebSocketHandler handles real-time user chat messages.
+// Path: {{ config.websocket.get('dedicated', {}).get('chat', {}).get('path', '/ws/chat') }}
+func ChatWebSocketHandler(c *websocket.Conn) {
+	userID, err := authenticateDedicatedWS(c)
+	if err != nil {
+		_ = c.WriteJSON(fiber.Map{"error": err.Error()})
+		c.Close()
+		return
+	}
+
+	safeConn := ws.NewSafeConn(c)
+
+{% set ns = namespace(user_pool=None) %}
+{% for pool in config.websocket.hub.pools %}
+{% if pool.enabled and 'user' in pool.name | lower and 'admin' not in pool.name | lower %}
+{% set ns.user_pool = pool %}
+{% endif %}
+{% endfor %}
+{% if ns.user_pool %}
+	userConn := &ws.UserConn{UserID: userID, Conn: safeConn}
+	ChatHubInst.register{{ ns.user_pool.name | title }} <- userConn
+	defer func() { ChatHubInst.unregister{{ ns.user_pool.name | title }} <- userConn }()
+{% endif %}
+
+{% if config.websocket.get('presence', {}).get('enabled', false) and config.websocket.presence.get('broadcast_on_connect', false) %}
+	ChatHubInst.BroadcastStatus(userID, true)
+{% endif %}
+
+	for {
+		var msg map[string]interface{}
+		if err := safeConn.ReadJSON(&msg); err != nil {
+			break
+		}
+		eventType, _ := msg["type"].(string)
+		switch eventType {
+{% for event in config.websocket.events %}
+{% if event.enabled and event.handler_type == 'chat_message' %}
+		case "{{ event.name }}":
+			{% if event.get('rate_limit') and event.rate_limit.get('enabled', false) %}
+			if !checkRateLimit{{ event.name | replace('_', '') | title }}(userID) {
+				_ = safeConn.WriteJSON(fiber.Map{"error": "rate_limit_exceeded", "event": "{{ event.name }}"})
+				continue
+			}
+			{% endif %}
+			{% if event.get('throttle') and event.throttle.get('enabled', false) %}
+			time.Sleep({{ event.throttle.delay_ms }} * time.Millisecond)
+			{% endif %}
+			handleChatMessage(msg, userID, safeConn)
+{% endif %}
+{% endfor %}
+		default:
+			_ = safeConn.WriteJSON(fiber.Map{"error": "unknown_event_type", "type": eventType})
+		}
+	}
+
+{% if config.websocket.get('presence', {}).get('enabled', false) and config.websocket.presence.get('broadcast_on_disconnect', false) %}
+	ChatHubInst.BroadcastStatus(userID, false)
+{% endif %}
+}
+
+{# ────────────────────────────────────────────────────────────── #}
+{% if config.chat.enabled %}
+{% set chat_event = config.websocket.events | selectattr('handler_type', 'defined') | selectattr('handler_type', 'equalto', 'chat_message') | first | default(none) %}
+func handleChatMessage(msg map[string]interface{}, userID uint, conn WSWriter) {
+	conversationIDFloat, _ := msg["conversation_id"].(float64)
+	conversationID := uint(conversationIDFloat)
+	content, _ := msg["content"].(string)
+
+	// Validation
+	if conversationID == 0 {
+		_ = conn.WriteJSON(fiber.Map{"error": "conversation_id is required"})
+		return
+	}
+
+	{% if config.chat.get('controller', {}).get('validation', {}).get('message', {}).get('content') %}
+	if err := validateMessageContent(content); err != nil {
+		_ = conn.WriteJSON(fiber.Map{"error": err.Error()})
+		return
+	}
+	{% else %}
+	if content == "" {
+		_ = conn.WriteJSON(fiber.Map{"error": "content is required"})
+		return
+	}
+	{% endif %}
+
+	// Fetch conversation for authorization
+	var conversation domain.Conversation
+	if err := config.DB.First(&conversation, conversationID).Error; err != nil {
+		log.Printf("Conversation %d not found", conversationID)
+		_ = conn.WriteJSON(fiber.Map{"error": "conversation not found"})
+		return
+	}
+
+	// Authorization: user must be owner or receiver of the conversation
+	{% set receiver_id_field = config.chat.domain.conversation.fields | selectattr('name', 'equalto', 'receiver_id') | first %}
+	isParticipant := conversation.UserID == userID
+	{% if receiver_id_field %}
+	isParticipant = isParticipant || (conversation.ReceiverID != nil && *conversation.ReceiverID == userID)
+	{% endif %}
+	if !isParticipant {
+		log.Printf("User %d is not authorized for conversation %d", userID, conversationID)
+		_ = conn.WriteJSON(fiber.Map{"error": "unauthorized"})
+		return
+	}
+
+	// Create message
+	chatMsg := domain.Message{
+		ConversationID: conversationID,
+		SenderID:       userID,
+		SenderType:     "user",
+		Content:        content,
+	}
+
+	{% if not chat_event or chat_event.get('persist', true) %}
+	// Save to database
+	if err := config.DB.Create(&chatMsg).Error; err != nil {
+		log.Println("Error creating chat message:", err)
+		_ = conn.WriteJSON(fiber.Map{"error": "failed to create message"})
+		return
+	}
+
+	// Update conversation last message
+	{% set last_message_field = config.chat.domain.conversation.fields | selectattr('name', 'equalto', 'last_message') | first %}
+	{% if last_message_field %}
+	config.DB.Model(&domain.Conversation{}).
+		Where("id = ?", conversationID).
+		Update("last_message", content)
+	{% endif %}
+	{% endif %}
+
+	{% if chat_event %}
+	// Broadcast to configured targets
+	{% for target in chat_event.get('broadcast_to', ['conversation']) %}
+	{% if target == 'conversation' or target == 'user' %}
+	NotifyUser(chatMsg)
+	{% elif target == 'admins' %}
+	NotifyAdmins(chatMsg)
+	{% elif target == 'all' %}
+	{{ hub_broadcast_all }}(map[string]interface{}{
+		"type": "message_sent",
+		"message": chatMsg,
+	})
+	{% endif %}
+	{% endfor %}
+	{% else %}
+	// Default broadcast behavior
+	NotifyUser(chatMsg)
+	NotifyAdmins(chatMsg)
+	{% endif %}
+
+	// Trigger notifications for offline users
+	{% if config.notifications.enabled %}
+	triggerData := map[string]interface{}{
+		"conversation_id": conversationID,
+		"user_id":         userID,
+		"content":         content,
+	}
+	{% set receiver_id_field = config.chat.domain.conversation.fields | selectattr('name', 'equalto', 'receiver_id') | first %}
+	{% if receiver_id_field %}
+	if conversation.ReceiverID != nil {
+		triggerData["receiver_id"] = *conversation.ReceiverID
+	}
+	{% endif %}
+	TriggerNotification("message_sent", triggerData)
+	{% endif %}
+
+	// Send success response
+	_ = conn.WriteJSON(fiber.Map{
+		"success": true,
+		"message": chatMsg,
+	})
+}
+{% endif %}
+
+{# ────────────────────────────────────────────────────────────── #}
+
+{% endif %}{# dedicated.chat #}
+{% endif %}{# websocket.enabled #}

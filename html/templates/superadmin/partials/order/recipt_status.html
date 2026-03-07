@@ -1,0 +1,29 @@
+{{if eq .ReceiptStatus "pending"}}
+<p
+  class="bg-yellow-50 text-xs text-yellow-600 dark:bg-yellow-500/15 dark:text-yellow-400 rounded-full px-2 py-0.5 font-medium" x-text="trans.pending"></p>
+{{else if eq .ReceiptStatus "approved"}}
+<p
+  class="bg-green-50 text-xs text-green-600 dark:bg-green-500/15 dark:text-green-500 rounded-full px-2 py-0.5 font-medium" x-text="trans.approved"></p>
+{{else if eq .ReceiptStatus "rejected"}}
+<p class="bg-red-50 text-xs text-red-600 dark:bg-red-500/15 dark:text-red-400 rounded-full px-2 py-0.5 font-medium" x-text="trans.rejected"></p>
+
+{{else}}
+<p class="bg-gray-50 text-xs text-gray-600 dark:bg-gray-500/15 dark:text-gray-400 rounded-full px-2 py-0.5 font-medium" x-text="trans.unknown"></p>
+{{end}} {{if eq .HasTwo "true"}}
+<div id="ReceiptStatus-Detail-{{.id}}" hx-swap-oob="innerHTML">
+  {{if eq .ReceiptStatus "pending"}}
+  <span
+    class="bg-yellow-50 text-xs text-yellow-600 dark:bg-yellow-500/15 dark:text-yellow-400 rounded-full px-2 py-0.5 font-medium" x-text="trans.pending"></span>
+  {{else if eq .ReceiptStatus "approved"}}
+  <span
+    class="bg-green-50 text-xs text-green-600 dark:bg-green-500/15 dark:text-green-500 rounded-full px-2 py-0.5 font-medium" x-text="trans.approved"></span>
+  {{else if eq .ReceiptStatus "rejected"}}
+  <span
+    class="bg-red-50 text-xs text-red-600 dark:bg-red-500/15 dark:text-red-400 rounded-full px-2 py-0.5 font-medium" x-text="trans.rejected"></span>
+ 
+  {{else}}
+  <span
+    class="bg-gray-50 text-xs text-gray-600 dark:bg-gray-500/15 dark:text-gray-400 rounded-full px-2 py-0.5 font-medium" x-text="trans.unknown"></span>
+  {{end}}
+</div>
+{{end}}

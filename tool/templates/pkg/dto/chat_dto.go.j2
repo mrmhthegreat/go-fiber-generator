@@ -1,0 +1,21 @@
+package dto
+
+import (
+	resppkg "{{ config.project.module }}/pkg/response"
+)
+
+{% if config.chat.enabled %}
+// SendMessageRequest represents the payload for sending a chat message
+type SendMessageRequest struct {
+	Content        string                   `json:"content" validate:"required"`
+	ConversationID uint                     `json:"conversation_id"`
+	ReceiverID     uint                     `json:"receiver_id"`
+	SearchData     *resppkg.SearchResponse `json:"search_data,omitempty"`
+}
+
+// MarkReadRequest represents the payload for marking messages as read
+type MarkReadRequest struct {
+	ConversationID uint   `json:"conversation_id" validate:"required"`
+	Source         string `json:"source" validate:"required"` // 'user' or 'admin'
+}
+{% endif %}

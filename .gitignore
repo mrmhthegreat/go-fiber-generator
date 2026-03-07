@@ -1,0 +1,168 @@
+# Generic .gitignore for multi-language projects
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+Icon?
+._*
+
+# IDEs and editors
+.vscode/
+*.code-workspace
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.swp
+*.swo
+*.kate-swp
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+dist/
+build/
+.next/
+.out/
+.cache/
+.env
+.env.local
+.env.*.local
+*.tgz
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+venv*/
+pip-log.txt
+pip-delete-this-directory.txt
+htmlcov/
+.coverage
+.coverage.*
+.cache
+.pytest_cache/
+cover/
+nosetests.xml
+coverage.xml
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+venv/
+
+# Java / Maven / Gradle
+target/
+build/
+.gradle/
+.gradle-cache/
+*.class
+*.jar
+*.war
+*.ear
+*.iml
+.idea/
+
+# .NET
+bin/
+obj/
+*.dll
+*.exe
+*.pdb
+*.cache
+*.userprefs
+*.vs/
+*.nupkg
+
+# Go
+bin/
+*.exe
+*.test
+
+# Rust
+target/
+**/*.rs.bk
+
+# Ruby
+*.gem
+log/
+tmp/
+.bundle/
+vendor/bundle/
+vendor/cache/
+coverage/
+
+# PHP / Composer
+vendor/
+composer.lock
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+override.tf
+override.tf.json
+*.tfvars
+terraform.tfvars
+
+# Docker
+docker-compose.override.yml
+docker-compose.*.yml
+*.log
+
+# Kubernetes / Helm
+*.kube/
+*.kubeconfig
+helm-debug-*
+
+# Ansible
+*.retry
+
+# CI / build artifacts
+coverage/
+reports/
+artifacts/
+dist/
+out/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Secrets / credentials
+.env
+.env.*.local
+*.pem
+*.key
+*.crt
+*.p12
+secrets.*
+credentials
+id_rsa
+id_rsa.pub
+
+# Archives and packages
+*.zip
+*.tar.gz
+*.tar.bz2
+*.rar
+
+# Misc
+.DS_Store
+Thumbs.db

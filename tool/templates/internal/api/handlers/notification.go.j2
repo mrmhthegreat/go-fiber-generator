@@ -1,0 +1,276 @@
+package handlers
+
+import (
+	"strconv"
+
+	"github.com/gofiber/fiber/v2"
+
+	dtopkg "{{ config.project.module }}/pkg/dto"
+
+	utilspkg "{{ config.project.module }}/pkg/utils"
+	errorspkg "{{ config.project.module }}/pkg/errors"
+	resppkg "{{ config.project.module }}/pkg/response"
+)
+
+{% if config.notifications.enabled %}
+{% set user_fields = config.notifications.model.fields %}
+{% set base_fields = [
+    {'name': 'id', 'type': 'uint', 'primary_key': true, 'auto_increment': true},
+    {'name': 'user_id', 'type': 'uint', 'required': true, 'index': true},
+    {'name': 'title', 'type': 'string', 'required': true},
+    {'name': 'message', 'type': 'string', 'required': true},
+    {'name': 'type', 'type': 'string', 'required': true},
+    {'name': 'is_read', 'type': 'bool', 'default': false}
+] %}
+{% set user_field_names = user_fields | map(attribute='name') | list %}
+{% set model_fields = user_fields | list %}
+{% for base in base_fields %}
+    {% if base.name not in user_field_names %}
+        {% set _ = model_fields.append(base) %}
+    {% endif %}
+{% endfor %}
+
+{% set is_read_field = model_fields | selectattr('name', 'equalto', 'is_read') | first | default(none) %}
+{% set has_is_read = is_read_field is not none %}
+{% set ctrl = config.notifications.get('controller', {}) %}
+{% set base = ctrl.get('base_path', '/api/v1/notifications') %}
+{% if ctrl.get('endpoints', {}).get('list', {}).get('enabled', true) %}
+
+// GetNotifications returns notifications for the authenticated user.
+// @Summary  List notifications
+// @Tags     Notifications
+// @Produce  json
+// @Param    limit   query  int  false  "Page size"    default(20)
+// @Param    offset  query  int  false  "Page offset"  default(0)
+// @Success  200  {object}  resppkg.NotificationListResponse
+// @Router   {{ base }}{{ ctrl.get('endpoints', {}).get('list', {}).get('path', '/list') }} [{{ ctrl.get('endpoints', {}).get('list', {}).get('method', 'GET') }}]
+func GetNotifications(c *fiber.Ctx) error {
+	// Safe assertion — panics if middleware didn't set user_id
+	userID, ok := c.Locals("user_id").(uint)
+	if !ok || userID == 0 {
+		return errorspkg.SendError(c, fiber.StatusUnauthorized, "unauthorized")
+	}
+
+	limit  := c.QueryInt("limit",  {{ config.notifications.get('repository', {}).get('pagination', {}).get('default_limit', 20) }})
+	offset := c.QueryInt("offset", 0)
+	if limit > {{ config.notifications.get('repository', {}).get('pagination', {}).get('max_limit', 100) }} {
+		limit = {{ config.notifications.get('repository', {}).get('pagination', {}).get('max_limit', 100) }}
+	}
+
+	dbConn := utilspkg.GetDB(c)
+	if dbConn == nil {
+		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
+	}
+	notifRepo := utilspkg.GetNotificationRepository(dbConn)
+	if notifRepo == nil {
+		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
+	}
+
+	notifications, hasMore, err := notifRepo.GetNotificationsByUserID(userID, limit, offset)
+	if err != nil {
+		return errorspkg.SendError(c, fiber.StatusInternalServerError, "failed_to_fetch_notifications")
+	}
+
+	return c.JSON(resppkg.NotificationListResponse{
+		Notifications: resppkg.ConvertToNotificationResponses(notifications),
+		HasMore:       hasMore,
+	})
+}
+{% endif %}
+{% if has_is_read and ctrl.get('endpoints', {}).get('mark_as_read', {}).get('enabled', true) %}
+
+// MarkNotificationRead marks a specific notification as read.
+// @Summary  Mark notification as read
+// @Tags     Notifications
+// @Param    id  path  int  true  "Notification ID"
+// @Success  200  {object}  resppkg.SuccessResponse
+// @Router   {{ base }}{{ ctrl.get('endpoints', {}).get('mark_as_read', {}).get('path', '/:id/read') }} [{{ ctrl.get('endpoints', {}).get('mark_as_read', {}).get('method', 'POST') }}]
+func MarkNotificationRead(c *fiber.Ctx) error {
+	userID, ok := c.Locals("user_id").(uint)
+	if !ok || userID == 0 {
+		return errorspkg.SendError(c, fiber.StatusUnauthorized, "unauthorized")
+	}
+	id, err := strconv.Atoi(c.Params("id"))
+	if err != nil || id <= 0 {
+		return errorspkg.SendError(c, fiber.StatusBadRequest, "invalid_notification_id")
+	}
+
+	dbConn := utilspkg.GetDB(c)
+	if dbConn == nil {
+		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
+	}
+	notifRepo := utilspkg.GetNotificationRepository(dbConn)
+	if notifRepo == nil {
+		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
+	}
+
+	if err := notifRepo.MarkNotificationAsRead(uint(id), userID); err != nil {
+		return errorspkg.SendError(c, fiber.StatusBadRequest, err.Error())
+	}
+	return c.JSON(resppkg.SuccessResponse{Status: "success"})
+}
+{% endif %}
+{% if has_is_read and ctrl.get('endpoints', {}).get('bulk_mark_read', {}).get('enabled', true) %}
+
+// BulkMarkNotificationRead marks multiple notifications as read.
+// @Summary  Bulk mark notifications as read
+// @Tags     Notifications
+// @Accept   json
+// @Param    input  body  dtopkg.BulkMarkReadRequest  true  "IDs of notifications"
+// @Success  200  {object}  resppkg.SuccessResponse
+// @Router   {{ base }}{{ ctrl.get('endpoints', {}).get('bulk_mark_read', {}).get('path', '/bulk-read') }} [{{ ctrl.get('endpoints', {}).get('bulk_mark_read', {}).get('method', 'POST') }}]
+func BulkMarkNotificationRead(c *fiber.Ctx) error {
+	userID, ok := c.Locals("user_id").(uint)
+	if !ok || userID == 0 {
+		return errorspkg.SendError(c, fiber.StatusUnauthorized, "unauthorized")
+	}
+
+	var req dtopkg.BulkMarkReadRequest
+	if err := c.BodyParser(&req); err != nil {
+		return errorspkg.SendError(c, fiber.StatusBadRequest, "invalid_input")
+	}
+
+	dbConn := utilspkg.GetDB(c)
+	if dbConn == nil {
+		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
+	}
+	notifRepo := utilspkg.GetNotificationRepository(dbConn)
+	if notifRepo == nil {
+		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
+	}
+
+	if err := notifRepo.MarkNotificationsAsReadBulk(req.IDs, userID); err != nil {
+		return errorspkg.SendError(c, fiber.StatusInternalServerError, "failed_to_mark_notifications")
+	}
+	return c.JSON(resppkg.SuccessResponse{Status: "success"})
+}
+
+{% endif %}
+{% if has_is_read and ctrl.get('endpoints', {}).get('mark_all_as_read', {}).get('enabled', true) %}
+
+// MarkAllNotificationsRead marks every notification for the user as read.
+// @Summary  Mark all notifications as read
+// @Tags     Notifications
+// @Success  200  {object}  resppkg.SuccessResponse
+// @Router   {{ base }}{{ ctrl.get('endpoints', {}).get('mark_all_as_read', {}).get('path', '/read-all') }} [{{ ctrl.get('endpoints', {}).get('mark_all_as_read', {}).get('method', 'POST') }}]
+func MarkAllNotificationsRead(c *fiber.Ctx) error {
+	userID, ok := c.Locals("user_id").(uint)
+	if !ok || userID == 0 {
+		return errorspkg.SendError(c, fiber.StatusUnauthorized, "unauthorized")
+	}
+
+	dbConn := utilspkg.GetDB(c)
+	if dbConn == nil {
+		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
+	}
+	notifRepo := utilspkg.GetNotificationRepository(dbConn)
+	if notifRepo == nil {
+		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
+	}
+
+	if err := notifRepo.MarkAllNotificationsAsRead(userID); err != nil {
+		return errorspkg.SendError(c, fiber.StatusInternalServerError, "failed_to_mark_all_read")
+	}
+	return c.JSON(resppkg.SuccessResponse{Status: "success"})
+}
+{% endif %}
+{% if has_is_read and ctrl.get('endpoints', {}).get('unread_count', {}).get('enabled', true) %}
+
+// GetUnreadNotificationCount returns the count of unread notifications.
+// @Summary  Get unread notification count
+// @Tags     Notifications
+// @Produce  json
+// @Success  200  {object}  resppkg.CountResponse
+// @Router   {{ base }}{{ ctrl.get('endpoints', {}).get('unread_count', {}).get('path', '/unread-count') }} [{{ ctrl.get('endpoints', {}).get('unread_count', {}).get('method', 'GET') }}]
+func GetUnreadNotificationCount(c *fiber.Ctx) error {
+	userID, ok := c.Locals("user_id").(uint)
+	if !ok || userID == 0 {
+		return errorspkg.SendError(c, fiber.StatusUnauthorized, "unauthorized")
+	}
+
+	dbConn := utilspkg.GetDB(c)
+	if dbConn == nil {
+		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
+	}
+	notifRepo := utilspkg.GetNotificationRepository(dbConn)
+	if notifRepo == nil {
+		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
+	}
+
+	count, err := notifRepo.GetUnreadNotificationCount(userID)
+	if err != nil {
+		return errorspkg.SendError(c, fiber.StatusInternalServerError, "failed_to_get_count")
+	}
+	return c.JSON(resppkg.CountResponse{Count: count})
+}
+{% endif %}
+{% if ctrl.get('endpoints', {}).get('delete', {}).get('enabled', true) %}
+
+// DeleteNotification soft-deletes a notification owned by the user.
+// @Summary  Delete a notification
+// @Tags     Notifications
+// @Param    id  path  int  true  "Notification ID"
+// @Success  200  {object}  resppkg.SuccessResponse
+// @Router   {{ base }}{{ ctrl.get('endpoints', {}).get('delete', {}).get('path', '/:id') }} [{{ ctrl.get('endpoints', {}).get('delete', {}).get('method', 'DELETE') }}]
+func DeleteNotification(c *fiber.Ctx) error {
+	userID, ok := c.Locals("user_id").(uint)
+	if !ok || userID == 0 {
+		return errorspkg.SendError(c, fiber.StatusUnauthorized, "unauthorized")
+	}
+	id, err := strconv.Atoi(c.Params("id"))
+	if err != nil || id <= 0 {
+		return errorspkg.SendError(c, fiber.StatusBadRequest, "invalid_notification_id")
+	}
+
+	dbConn := utilspkg.GetDB(c)
+	if dbConn == nil {
+		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
+	}
+	notifRepo := utilspkg.GetNotificationRepository(dbConn)
+	if notifRepo == nil {
+		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
+	}
+
+	if err := notifRepo.DeleteNotification(uint(id), userID); err != nil {
+		return errorspkg.SendError(c, fiber.StatusBadRequest, err.Error())
+	}
+	return c.JSON(resppkg.SuccessResponse{Status: "success"})
+}
+{% endif %}
+{% if ctrl.get('endpoints', {}).get('bulk_delete', {}).get('enabled', true) %}
+
+// BulkDeleteNotification soft-deletes multiple notifications.
+// @Summary  Bulk delete notifications
+// @Tags     Notifications
+// @Accept   json
+// @Param    input  body  dtopkg.BulkDeleteRequest  true  "IDs of notifications"
+// @Success  200  {object}  resppkg.SuccessResponse
+// @Router   {{ base }}{{ ctrl.get('endpoints', {}).get('bulk_delete', {}).get('path', '/bulk-delete') }} [{{ ctrl.get('endpoints', {}).get('bulk_delete', {}).get('method', 'DELETE') }}]
+func BulkDeleteNotification(c *fiber.Ctx) error {
+	userID, ok := c.Locals("user_id").(uint)
+	if !ok || userID == 0 {
+		return errorspkg.SendError(c, fiber.StatusUnauthorized, "unauthorized")
+	}
+
+	var req dtopkg.BulkDeleteRequest
+	if err := c.BodyParser(&req); err != nil {
+		return errorspkg.SendError(c, fiber.StatusBadRequest, "invalid_input")
+	}
+
+	dbConn := utilspkg.GetDB(c)
+	if dbConn == nil {
+		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
+	}
+	notifRepo := utilspkg.GetNotificationRepository(dbConn)
+	if notifRepo == nil {
+		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
+	}
+
+	if err := notifRepo.DeleteNotificationsBulk(req.IDs, userID); err != nil {
+		return errorspkg.SendError(c, fiber.StatusInternalServerError, "failed_to_delete_notifications")
+	}
+	return c.JSON(resppkg.SuccessResponse{Status: "success"})
+}
+{% endif %}
+
+{% endif %}{# notifications.enabled #}

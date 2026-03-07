@@ -1,0 +1,56 @@
+package dto
+
+import (
+{% if model.has_time_fields or model.timestamps %}
+    "time"
+{% endif %}
+{% if model.has_json_fields %}
+    "gorm.io/datatypes"
+{% endif %}
+{% if model.has_file_uploads %}
+    "mime/multipart"
+{% endif %}
+)
+
+{% for dto in model.dtos %}
+{% if dto.enabled %}
+// {{ dto.name }} represents the request to {{ 'create' if dto.type == 'create' else 'update' }} a {{ model.name | lower }}
+type {{ dto.name }} struct {
+{% for field_name in dto.fields %}
+{% set field = model.fields | selectattr('name', 'equalto', field_name) | first %}
+{% if field %}
+{% set file_type = dto.get('file_fields', {}).get(field_name, 'string') %}
+{% if file_type == 'file' %}
+    // File upload field
+{% if dto.partial and dto.type == 'update' %}
+    {{ field.name }} *multipart.FileHeader `form:"{{ field.json }}" json:"-"{% if field.validate %} validate:"omitempty,{{ field.validate }}"{% endif %}`
+{% else %}
+    {{ field.name }} *multipart.FileHeader `form:"{{ field.json }}" json:"-"{% if field.validate %} validate:"{{ field.validate }}"{% endif %}`
+{% endif %}
+{% else %}
+    // String field (URL or path)
+{% if dto.partial and dto.type == 'update' %}
+{% if field.type.startswith('*') %}
+    {{ field.name }} {{ field.type }} `json:"{{ field.json }},omitempty"{% if field.validate %} validate:"omitempty,{{ field.validate }}"{% endif %}`
+{% elif field.type in ['uint', 'int', 'int64', 'bool'] %}
+    {{ field.name }} *{{ field.type }} `json:"{{ field.json }},omitempty"{% if field.validate %} validate:"omitempty,{{ field.validate }}"{% endif %}`
+{% else %}
+    {{ field.name }} *{{ field.type }} `json:"{{ field.json }},omitempty"{% if field.validate %} validate:"omitempty,{{ field.validate }}"{% endif %}`
+{% endif %}
+{% else %}
+    {{ field.name }} {{ field.type }} `json:"{{ field.json }}"{% if field.validate %} validate:"{{ field.validate }}"{% endif %}`
+{% endif %}
+{% endif %}
+{% endif %}
+{% endfor %}
+{% for custom_field in dto.custom_fields %}
+{% if dto.partial and dto.type == 'update' %}
+    {{ custom_field.name }} *{{ custom_field.type }} `json:"{{ custom_field.json }},omitempty"{% if custom_field.validate %} validate:"omitempty,{{ custom_field.validate }}"{% endif %}`
+{% else %}
+    {{ custom_field.name }} {{ custom_field.type }} `json:"{{ custom_field.json }}"{% if custom_field.validate %} validate:"{{ custom_field.validate }}"{% endif %}`
+{% endif %}
+{% endfor %}
+}
+
+{% endif %}
+{% endfor %}

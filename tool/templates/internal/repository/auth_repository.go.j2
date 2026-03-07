@@ -1,0 +1,291 @@
+package repository
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+
+	"gorm.io/gorm"
+
+	"{{ config.project.module }}/internal/domain"
+)
+
+{% set auth = config.authentication %}
+{% set identifier = auth.identifier %}
+{% set repo_var = auth.get('repo_var', 'authRepo') %}
+{% set repo_name = config.project.repository_name %}
+{% set model = config.project.user_model_name %}
+
+// =============================================================================
+// {{ repo_name }} Interface
+// =============================================================================
+
+// {{ repo_name }} defines all database operations required for authentication
+type {{ repo_name }} interface {
+	// -------------------------------------------------------------------------
+	// User Lookups
+	// -------------------------------------------------------------------------
+
+	// GetByID retrieves a user by their primary key
+	GetByID(id uint) (*domain.{{ model }}, error)
+
+{% for field in identifier.register_fields %}
+{% if field.get('unique', False) and field.get('repository_check') and not field.get('file_upload', False) %}
+	// {{ field.repository_check }} finds a user by their {{ field.field }}
+	{{ field.repository_check }}({{ field.field }} {{ field.type }}) (*domain.{{ model }}, error)
+
+{% endif %}
+{% endfor %}
+{% for method in identifier.login_methods %}
+{% if method.get('enabled', False) and method.get('repository_method') %}
+	// {{ method.repository_method }} finds a user for login by {{ method.field }}
+	{{ method.repository_method }}({{ method.get('json_field', method.field) }} string) (*domain.{{ model }}, error)
+
+{% endif %}
+{% endfor %}
+{% if auth.social_auth.google.enabled and auth.social_auth.google.get('repository_method') %}
+	// {{ auth.social_auth.google.repository_method }} finds a user by their Google OAuth ID
+	{{ auth.social_auth.google.repository_method }}(googleID string) (*domain.{{ model }}, error)
+
+{% endif %}
+{% if auth.social_auth.facebook.enabled and auth.social_auth.facebook.get('repository_method') %}
+	// {{ auth.social_auth.facebook.repository_method }} finds a user by their Facebook OAuth ID
+	{{ auth.social_auth.facebook.repository_method }}(facebookID string) (*domain.{{ model }}, error)
+
+{% endif %}
+
+	// -------------------------------------------------------------------------
+	// User Mutations
+	// -------------------------------------------------------------------------
+
+	// CreateUser persists a new user and returns the created record
+	CreateUser(user *domain.{{ model }}) (*domain.{{ model }}, error)
+
+	// UpdateUser applies a map of field updates to a user record by ID
+	UpdateUser(id uint, updates map[string]interface{}) error
+
+{% if auth.email_password.email_verification.enabled %}
+	// UpdateUserVerification sets the {{ auth.email_password.email_verification.model_field }} flag for a user
+	UpdateUserVerification(identifier string, verified bool) error
+
+{% endif %}
+{% if auth.email_password.forgot_password.enabled or auth.email_password.change_password.enabled %}
+	// UpdateUserPassword replaces the hashed password for a user
+	UpdateUserPassword(identifier string, hashedPassword string) error
+
+{% endif %}
+}
+
+// =============================================================================
+// {{ repo_name }} GORM Implementation
+// =============================================================================
+
+// {{ repo_name | lower | replace('repository', 'Repo') }} is the concrete GORM-backed implementation
+type {{ repo_name | lower | replace('repository', 'Repo') }} struct {
+	db *gorm.DB
+}
+
+// New{{ repo_name }} constructs a {{ repo_name }} backed by the given *gorm.DB.
+// Wire this up once (e.g. in main.go or your DI container) and pass it via
+// context so every handler can call {{ repo_var }}.Method() instead of db.
+func New{{ repo_name }}(db *gorm.DB) {{ repo_name }} {
+	return &{{ repo_name | lower | replace('repository', 'Repo') }}{db: db}
+}
+
+// -------------------------------------------------------------------------
+// GetByID
+// -------------------------------------------------------------------------
+
+// GetByID retrieves a {{ model }} by primary key
+func (r *{{ repo_name | lower | replace('repository', 'Repo') }}) GetByID(id uint) (*domain.{{ model }}, error) {
+	var user domain.{{ model }}
+	if err := r.db.First(&user, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("user not found")
+		}
+		return nil, fmt.Errorf("failed to fetch user by id: %w", err)
+	}
+	return &user, nil
+}
+
+// -------------------------------------------------------------------------
+// Unique-field lookup methods  (generated from identifier.register_fields)
+// -------------------------------------------------------------------------
+
+{% for field in identifier.register_fields %}
+{% if field.get('unique', False) and field.get('repository_check') and not field.get('file_upload', False) %}
+// {{ field.repository_check }} finds a {{ model }} whose {{ field.field }} matches the given value
+func (r *{{ repo_name | lower | replace('repository', 'Repo') }}) {{ field.repository_check }}({{ field.field }} {{ field.type }}) (*domain.{{ model }}, error) {
+	var user domain.{{ model }}
+{% if field.type.startswith('*') %}
+	if {{ field.field }} == nil {
+		return nil, errors.New("{{ field.field }} cannot be nil")
+	}
+	if err := r.db.Where("{{ field.field }} = ?", *{{ field.field }}).First(&user).Error; err != nil {
+{% else %}
+	if err := r.db.Where("{{ field.field }} = ?", {{ field.field }}).First(&user).Error; err != nil {
+{% endif %}
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("user not found")
+		}
+		return nil, fmt.Errorf("failed to fetch user by {{ field.field }}: %w", err)
+	}
+	return &user, nil
+}
+
+{% endif %}
+{% endfor %}
+
+// -------------------------------------------------------------------------
+// Login-method lookup methods  (generated from identifier.login_methods)
+// -------------------------------------------------------------------------
+
+{% for method in identifier.login_methods %}
+{% if method.get('enabled', False) and method.get('repository_method') %}
+{% if method.field == 'email_or_username' %}
+// {{ method.repository_method }} finds a {{ model }} by email OR username — used for the combined login input
+func (r *{{ repo_name | lower | replace('repository', 'Repo') }}) {{ method.repository_method }}({{ method.get('json_field', 'identifier') }} string) (*domain.{{ model }}, error) {
+	var user domain.{{ model }}
+	normalized := strings.ToLower({{ method.get('json_field', 'identifier') }})
+	if err := r.db.
+		Where("LOWER(email) = ? OR LOWER(username) = ?", normalized, normalized).
+		First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("user not found")
+		}
+		return nil, fmt.Errorf("failed to find user: %w", err)
+	}
+	return &user, nil
+}
+{% elif method.field == 'email' %}
+// {{ method.repository_method }} finds a {{ model }} by email address
+func (r *{{ repo_name | lower | replace('repository', 'Repo') }}) {{ method.repository_method }}({{ method.field }} string) (*domain.{{ model }}, error) {
+	var user domain.{{ model }}
+	if err := r.db.Where("LOWER(email) = LOWER(?)", {{ method.field }}).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("user not found")
+		}
+		return nil, fmt.Errorf("failed to find user by email: %w", err)
+	}
+	return &user, nil
+}
+{% elif method.field == 'username' %}
+// {{ method.repository_method }} finds a {{ model }} by username
+func (r *{{ repo_name | lower | replace('repository', 'Repo') }}) {{ method.repository_method }}({{ method.field }} string) (*domain.{{ model }}, error) {
+	var user domain.{{ model }}
+	if err := r.db.Where("LOWER(username) = LOWER(?)", {{ method.field }}).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("user not found")
+		}
+		return nil, fmt.Errorf("failed to find user by username: %w", err)
+	}
+	return &user, nil
+}
+{% else %}
+// {{ method.repository_method }} finds a {{ model }} by {{ method.field }}
+func (r *{{ repo_name | lower | replace('repository', 'Repo') }}) {{ method.repository_method }}({{ method.field }} string) (*domain.{{ model }}, error) {
+	var user domain.{{ model }}
+	if err := r.db.Where("{{ method.field }} = ?", {{ method.field }}).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("user not found")
+		}
+		return nil, fmt.Errorf("failed to find user by {{ method.field }}: %w", err)
+	}
+	return &user, nil
+}
+{% endif %}
+
+{% endif %}
+{% endfor %}
+
+// -------------------------------------------------------------------------
+// Social auth lookups
+// -------------------------------------------------------------------------
+
+{% if auth.social_auth.google.enabled and auth.social_auth.google.get('repository_method') %}
+// {{ auth.social_auth.google.repository_method }} finds a {{ model }} by Google OAuth ID
+func (r *{{ repo_name | lower | replace('repository', 'Repo') }}) {{ auth.social_auth.google.repository_method }}(googleID string) (*domain.{{ model }}, error) {
+	var user domain.{{ model }}
+	if err := r.db.Where("{{ auth.social_auth.google.model_field | lower }} = ?", googleID).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("user not found")
+		}
+		return nil, fmt.Errorf("failed to find user by google id: %w", err)
+	}
+	return &user, nil
+}
+
+{% endif %}
+{% if auth.social_auth.facebook.enabled and auth.social_auth.facebook.get('repository_method') %}
+// {{ auth.social_auth.facebook.repository_method }} finds a {{ model }} by Facebook OAuth ID
+func (r *{{ repo_name | lower | replace('repository', 'Repo') }}) {{ auth.social_auth.facebook.repository_method }}(facebookID string) (*domain.{{ model }}, error) {
+	var user domain.{{ model }}
+	if err := r.db.Where("{{ auth.social_auth.facebook.model_field | lower }} = ?", facebookID).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("user not found")
+		}
+		return nil, fmt.Errorf("failed to find user by facebook id: %w", err)
+	}
+	return &user, nil
+}
+
+{% endif %}
+
+// -------------------------------------------------------------------------
+// Mutations
+// -------------------------------------------------------------------------
+
+// CreateUser inserts a new {{ model }} record and returns it with its generated ID populated
+func (r *{{ repo_name | lower | replace('repository', 'Repo') }}) CreateUser(user *domain.{{ model }}) (*domain.{{ model }}, error) {
+	if err := r.db.Create(user).Error; err != nil {
+		return nil, fmt.Errorf("failed to create user: %w", err)
+	}
+	return user, nil
+}
+
+// UpdateUser applies arbitrary field updates to the {{ model }} with the given ID.
+// Pass only the fields you want to change, e.g. map[string]interface{}{"verified": true}
+func (r *{{ repo_name | lower | replace('repository', 'Repo') }}) UpdateUser(id uint, updates map[string]interface{}) error {
+	result := r.db.Model(&domain.{{ model }}{}).Where("id = ?", id).Updates(updates)
+	if result.Error != nil {
+		return fmt.Errorf("failed to update user: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("user not found")
+	}
+	return nil
+}
+
+{% if auth.email_password.email_verification.enabled %}
+// UpdateUserVerification sets the {{ auth.email_password.email_verification.model_field }} field for the user
+// identified by email address
+func (r *{{ repo_name | lower | replace('repository', 'Repo') }}) UpdateUserVerification(identifier string, verified bool) error {
+	result := r.db.Model(&domain.{{ model }}{}).
+		Where("LOWER(email) = LOWER(?)", identifier).
+		Update("{{ auth.email_password.email_verification.model_field | lower }}", verified)
+	if result.Error != nil {
+		return fmt.Errorf("failed to update verification status: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("user not found")
+	}
+	return nil
+}
+
+{% endif %}
+{% if auth.email_password.forgot_password.enabled or auth.email_password.change_password.enabled %}
+// UpdateUserPassword replaces the stored hashed password for the user identified by email
+func (r *{{ repo_name | lower | replace('repository', 'Repo') }}) UpdateUserPassword(identifier string, hashedPassword string) error {
+	result := r.db.Model(&domain.{{ model }}{}).
+		Where("LOWER(email) = LOWER(?)", identifier).
+		Update("password", hashedPassword)
+	if result.Error != nil {
+		return fmt.Errorf("failed to update password: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("user not found")
+	}
+	return nil
+}
+
+{% endif %}

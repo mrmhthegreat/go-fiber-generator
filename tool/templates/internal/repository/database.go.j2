@@ -1,0 +1,53 @@
+package repository
+
+import "gorm.io/gorm"
+
+// GormDatabase wraps the Gorm DB instance and all model repositories
+type GormDatabase struct {
+	DB *gorm.DB
+
+	// ── Generated model repositories ────────────────────────────────
+	{% for model in config.models | default([]) %}
+	{{ model.name }} {{ model.name }}Repository
+	{% endfor %}
+
+	// ── Feature repositories ─────────────────────────────────────────
+	{% if config.chat.enabled %}
+	Chat ChatRepository
+	{% endif %}
+	{% if config.notifications.enabled %}
+	Notifications NotificationRepository
+	{% endif %}
+	{% if config.imap.enabled %}
+	Emails EmailMessageRepository
+	{% endif %}
+	{% if config.storage.enabled %}
+	Storage StorageRepository
+	{% endif %}
+}
+
+// NewGormDatabase creates a new GormDatabase with all repositories initialized
+func NewGormDatabase(db *gorm.DB) *GormDatabase {
+	gormDB := &GormDatabase{DB: db}
+
+	// ── Generated model repositories ────────────────────────────────
+	{% for model in config.models | default([]) %}
+	gormDB.{{ model.name }} = New{{ model.name }}Repository(db)
+	{% endfor %}
+
+	// ── Feature repositories ─────────────────────────────────────────
+	{% if config.chat.enabled %}
+	gormDB.Chat = NewChatRepository(db)
+	{% endif %}
+	{% if config.notifications.enabled %}
+	gormDB.Notifications = NewNotificationRepository(db)
+	{% endif %}
+	{% if config.imap.enabled %}
+	gormDB.Emails = NewEmailMessageRepository(db)
+	{% endif %}
+	{% if config.storage.enabled %}
+	gormDB.Storage = NewStorageRepository(db)
+	{% endif %}
+
+	return gormDB
+}

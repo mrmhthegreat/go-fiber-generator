@@ -1,0 +1,293 @@
+package main
+
+import (
+    "fmt"
+    "html/template"
+    "log"
+    "strings"
+    "time"
+
+    "github.com/bytedance/sonic"
+    "github.com/gofiber/fiber/v2"
+    "github.com/gofiber/fiber/v2/middleware/compress"
+    "github.com/gofiber/fiber/v2/middleware/cors"
+{% if config.session.enabled %}
+    "github.com/gofiber/fiber/v2/middleware/encryptcookie"
+    "github.com/gofiber/fiber/v2/middleware/session"
+    "github.com/gofiber/storage/redis/v3"
+{% endif %}
+{% if config.i18n.enabled %}
+    "github.com/gofiber/contrib/fiberi18n/v2"
+    "golang.org/x/text/language"
+{% endif %}
+{% if config.template_engine.enabled %}
+    "github.com/gofiber/template/html/v2"
+{% endif %}
+
+    "github.com/spf13/viper"
+
+    "{{ config.project.module }}/config"
+{% if config.features.cron_jobs %}
+    import_cron "{{ config.project.module }}/cron"
+{% endif %}
+    "{{ config.project.module }}/db"
+    _ "{{ config.project.module }}/docs" // Swagger docs
+{% if config.features.chat %}
+    "{{ config.project.module }}/handlers"
+{% endif %}
+    "{{ config.project.module }}/helpers"
+
+	i18npkg "{{ config.project.module }}/pkg/i18n"
+	errorspkg "{{ config.project.module }}/pkg/errors"
+
+    "{{ config.project.module }}/middleware"
+    "{{ config.project.module }}/routes"
+{% if config.storage.enabled %}
+    "{{ config.project.module }}/storage"
+{% endif %}
+)
+
+{% if config.template_engine.enabled %}
+// Template helper functions
+func dict(values ...interface{}) map[string]interface{} {
+    m := make(map[string]interface{})
+    for i := 0; i < len(values); i += 2 {
+        key := values[i].(string)
+        m[key] = values[i+1]
+    }
+    return m
+}
+
+func marshal(v interface{}) template.JS {
+    b, _ := sonic.Marshal(v)
+    return template.JS(b)
+}
+
+func formatTime(t time.Time) string {
+    return t.Format("{{ config.template_engine.time_format | default('02 Jan 15:04') }}")
+}
+{% endif %}
+
+// isAPIRequest checks if the request is an API request
+func isAPIRequest(ctx *fiber.Ctx) bool {
+    return strings.HasPrefix(ctx.Path(), "/api/")
+}
+
+// ErrorHandler is the centralized error handler
+func ErrorHandler(ctx *fiber.Ctx, err error) error {
+    code := fiber.StatusInternalServerError
+    errorKey := "internal_server_error"
+
+    if e, ok := err.(*fiber.Error); ok {
+        code = e.Code
+        if _, exists := helpers.ErrorCodes[e.Message]; exists {
+            errorKey = e.Message
+        }
+    }
+
+    // API requests get JSON errors
+    if isAPIRequest(ctx) {
+        return errorspkg.SendError(ctx, code, errorKey)
+    }
+
+{% if config.template_engine.enabled %}
+    // Web requests get rendered error pages
+    translation := i18npkg.TranslateMap(ctx, config.ErrorTranslations)
+    
+    if ctx.Get("HX-Request") == "true" {
+        ctx.Set("HX-Redirect", fmt.Sprintf("/%d", code))
+        return ctx.SendStatus(code)
+    }
+
+    var templateName string
+    switch code {
+    case fiber.StatusNotFound:
+        templateName = "errors/404"
+    case fiber.StatusUnauthorized:
+        templateName = "errors/401"
+    case fiber.StatusForbidden:
+        templateName = "errors/403"
+    case fiber.StatusServiceUnavailable:
+        templateName = "errors/maintenance"
+    default:
+        templateName = "errors/500"
+    }
+
+    message := "An error occurred"
+    if errCode, exists := helpers.ErrorCodes[errorKey]; exists {
+        message = errCode.Description
+    }
+
+    return ctx.Status(code).Render(templateName, fiber.Map{
+        "trans":   translation,
+        "code":    code,
+        "message": message,
+    })
+{% else %}
+    return ctx.Status(code).JSON(fiber.Map{
+        "error": errorKey,
+        "code":  code,
+    })
+{% endif %}
+}
+
+// Swagger documentation
+// @title {{ config.swagger.title | default('API Documentation') }}
+// @version {{ config.swagger.version | default('1.0') }}
+// @description {{ config.swagger.description | default('API documentation for the application') }}
+// @termsOfService {{ config.swagger.terms_of_service | default('http://example.com/terms/') }}
+// @contact.name {{ config.swagger.contact_name | default('API Support') }}
+// @contact.email {{ config.swagger.contact_email | default('support@example.com') }}
+// @license.name {{ config.swagger.license_name | default('Apache 2.0') }}
+// @license.url {{ config.swagger.license_url | default('http://www.apache.org/licenses/LICENSE-2.0.html') }}
+// @host {{ config.swagger.host | default('localhost:3000') }}
+// @BasePath {{ config.swagger.base_path | default('/') }}
+{% if config.middleware.combined.enabled %}
+// @securityDefinitions.apikey FullAuth
+// @in header
+// @name X-API-Key
+// @description Requires X-API-Key, X-App-Token, Authorization (Bearer), X-Timestamp, and X-Signature headers
+{% endif %}
+{% if config.middleware.jwt.enabled %}
+// @securityDefinitions.apikey PartialAuth
+// @in header
+// @name Authorization
+// @description Requires Authorization Bearer token
+{% endif %}
+{% if config.middleware.api_key.enabled %}
+// @securityDefinitions.apikey MinimalAuth
+// @in header
+// @name X-API-Key
+// @description Requires only X-API-Key header
+{% endif %}
+func main() {
+{% if config.template_engine.enabled %}
+    // Initialize template engine
+    engine := html.New("{{ config.template_engine.template_dir | default('./templates') }}", "{{ config.template_engine.extension | default('.html') }}")
+    engine.Reload({{ config.template_engine.reload | default('true') }})
+    
+    // Add template functions
+    engine.AddFunc("dict", dict)
+    engine.AddFunc("marshal", marshal)
+    engine.AddFunc("formatTime", formatTime)
+    engine.AddFunc("eq", func(a, b interface{}) bool {
+        return fmt.Sprintf("%v", a) == fmt.Sprintf("%v", b)
+    })
+{% endif %}
+
+    // Create Fiber app
+    app := fiber.New(fiber.Config{
+        JSONEncoder:       sonic.Marshal,
+        JSONDecoder:       sonic.Unmarshal,
+{% if config.template_engine.enabled %}
+        Views:             engine,
+{% endif %}
+        BodyLimit:         {{ config.server.body_limit | default('50 * 1024 * 1024') }}, // {{ config.server.body_limit_description | default('50MB') }}
+        PassLocalsToViews: {{ config.server.pass_locals_to_views | default('false') }},
+        ErrorHandler:      ErrorHandler,
+{% if config.server.read_timeout %}
+        ReadTimeout:       {{ config.server.read_timeout }},
+{% endif %}
+{% if config.server.write_timeout %}
+        WriteTimeout:      {{ config.server.write_timeout }},
+{% endif %}
+    })
+
+    // Initialize configuration
+    config.Init()
+{% if config.redis.enabled %}
+    config.InitRedisCache()
+{% endif %}
+{% if config.storage.enabled %}
+    storage.Init()
+{% endif %}
+
+    // Initialize database
+    gormDB := db.NewGormDatabase(config.DB)
+
+{% if config.session.enabled %}
+    // Initialize session storage
+    sessionRedisAddr := viper.GetString("{{ config.redis.session_addr_env }}")
+    if sessionRedisAddr == "" {
+        sessionRedisAddr = "{{ config.redis.host_env }}"
+    }
+    
+    storage := redis.New(redis.Config{
+        Addrs: []string{sessionRedisAddr},
+    })
+    
+    store := session.New(session.Config{
+        Storage:        storage,
+        CookieHTTPOnly: {{ config.session.cookie_http_only | default('true') }},
+        Expiration:     {{ config.session.expiration | default('24 * time.Hour') }},
+        CookieSecure:   {{ config.session.cookie_secure | default('false') }},
+    })
+{% endif %}
+
+
+{% if config.features.rbac %}
+    // Initialize RBAC service
+    var rbacService *rbac.RBACService
+    var err error
+    
+    // RBAC usually requires a cache (Redis)
+    rbacService, err = rbac.NewRBACService(gormDB.DB, config.RedisCache)
+    if err != nil {
+        log.Fatalf("Failed to initialize RBAC service: %v", err)
+    }
+    
+    if err := rbacService.SeedDefaultRolesAndPermissions(); err != nil {
+        log.Printf("Warning: Failed to seed RBAC data: %v", err)
+    }
+    
+    middleware.RBACService = rbacService
+{% endif %}
+
+    // Middleware and Routes are initialized via SetupRoutes
+    routes.SetupRoutes(app{% if config.session.enabled %}, store{% endif %}, gormDB{% if config.features.rbac %}, rbacService{% endif %})
+
+
+{% if config.i18n.enabled %}
+    // i18n middleware
+    app.Use(fiberi18n.New(&fiberi18n.Config{
+        RootPath:        "{{ config.i18n.root_path | default('./locales') }}",
+        AcceptLanguages: []language.Tag{
+{% for lang in config.i18n.languages %}
+            language.{{ lang | capitalize }},
+{% endfor %}
+        },
+        LangHandler: func(ctx *fiber.Ctx, defaultLang string) string {
+            return i18npkg.DetectLanguage(ctx)
+        },
+    }))
+{% endif %}
+
+    // CORS middleware
+    app.Use(cors.New(cors.Config{
+        AllowOrigins:     "{{ config.middleware.cors.allow_origins | default('*') }}",
+        AllowHeaders:     "{{ config.middleware.cors.allow_headers | default('Origin, Content-Type, Accept, Authorization, Accept-Language') }}",
+        AllowMethods:     "{{ config.middleware.cors.allow_methods | default('GET, POST, PUT, DELETE, OPTIONS, PATCH') }}",
+        AllowCredentials: {{ config.middleware.cors.allow_credentials | default('true') }},
+    }))
+
+{% if config.features.cron_jobs %}
+    // Start cron jobs
+    import_cron.Start(gormDB.DB)
+{% endif %}
+
+{% if config.static_files.enabled %}
+    // Static files
+    app.Static("{{ config.static_files.route | default('/static') }}", "{{ config.static_files.directory | default('./static') }}")
+{% endif %}
+
+    // Start server
+    port := viper.GetString("PORT")
+    if port == "" {
+        port = "{{ config.server.default_port | default('3000') }}"
+    }
+    
+    log.Printf("🚀 Server starting on port %s", port)
+    if err := app.Listen(":" + port); err != nil {
+        log.Fatal(err)
+    }
+}

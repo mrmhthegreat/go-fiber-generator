@@ -1,0 +1,969 @@
+package dashboard
+
+import (
+    "errors"
+    "log"
+    "strings"
+{% if handler.endpoints | selectattr('has_file_uploads') | list | length > 0 %}
+    "mime/multipart"
+{% endif %}
+
+    "github.com/bytedance/sonic"
+    "github.com/gofiber/fiber/v2"
+    "gorm.io/gorm"
+
+    "{{ module_path }}/cache"
+    "{{ module_path }}/config"
+	dtopkg "{{ config.project.module }}/pkg/dto"
+
+	i18npkg "{{ config.project.module }}/pkg/i18n"
+	rbacpkg "{{ config.project.module }}/pkg/rbac"
+	utilspkg "{{ config.project.module }}/pkg/utils"
+	storagepkg "{{ config.project.module }}/pkg/storage"
+    "{{ module_path }}/middleware"
+    "{{ module_path }}/models"
+    "{{ module_path }}/repository"
+    resppkg "{{ config.project.module }}/pkg/response"
+)
+
+{# ────────────────────────────────────────────────────────────── #}
+{# Helper: Get repository from contexthelpers                     #}
+{# Usage: {% call getRepo('User') %}...{% endcall %}              #}
+{# ────────────────────────────────────────────────────────────── #}
+{% macro getRepo(repoName) %}
+    {{ repoName | lower }}Repo := utilspkg.Get{{ repoName }}Repository(dbConn)
+    if {{ repoName | lower }}Repo == nil {
+        log.Println("{{ repoName }}Repository not available")
+        return fiber.NewError(fiber.StatusInternalServerError, "db_connection_failed")
+    }
+{% endmacro %}
+
+// {{ handler.model }}Handler handles web requests for {{ handler.model }}
+type {{ handler.model }}Handler struct {
+{% if handler.rbac.enabled %}
+    {{ handler.rbac.service_var }} *middleware.RBACServiceType
+{% endif %}
+}
+
+// New{{ handler.model }}Handler creates a new {{ handler.model }}Handler
+func New{{ handler.model }}Handler(
+{% if handler.rbac.enabled %}
+    {{ handler.rbac.service_var }} *middleware.RBACServiceType,
+{% endif %}
+) *{{ handler.model }}Handler {
+    return &{{ handler.model }}Handler{
+{% if handler.rbac.enabled %}
+        {{ handler.rbac.service_var }}: {{ handler.rbac.service_var }},
+{% endif %}
+    }
+}
+
+// Register registers all web handler routes
+func (h *{{ handler.model }}Handler) Register(router fiber.Router) {
+{% for ep in handler.endpoints %}
+    router.{{ ep.method | title }}("{{ ep.path | replace(handler.base_path, '') }}", h.{{ ep.func_name }})
+{% endfor %}
+{% for ep in handler.getter_endpoints %}
+    router.{{ ep.method | title }}("{{ ep.path | replace(handler.base_path, '') }}", h.{{ ep.func_name }})
+{% endfor %}
+}
+
+// ============================================================================
+// CRUD Endpoints
+// ============================================================================
+
+{% for ep in handler.endpoints %}
+{# ============ CREATE PAGE ============ #}
+{% if ep.type == 'create_page' %}
+// {{ ep.func_name }} renders the create {{ ep.model | lower }} page.
+func (h *{{ ep.model }}Handler) {{ ep.func_name }}(c *fiber.Ctx) error {
+    userID, ok := c.Locals("user_id").(uint)
+    if !ok {
+        return c.Redirect("{{ handler.auth_redirect }}", fiber.StatusSeeOther)
+    }
+
+
+    dbConn := utilspkg.GetDB(c)
+
+{% if ep.context.needs_user %}
+
+{% if ep.context.user_config.use_repo %}
+    userRepo:=utilspkg.Get{{ ep.context.user_config.repo_name }}(dbConn)
+    if userRepo == nil {
+        log.Println("{{ ep.context.user_config.repo_name }}Repository not available")
+        return fiber.NewError(fiber.StatusInternalServerError, "db_connection_failed")
+    }
+    user, err := userRepo.{{ ep.context.user_config.method }}(userID)
+    if err != nil {
+        return fiber.NewError(fiber.StatusInternalServerError, "internal_server_error")
+    }
+{% else %}
+    if err != nil {
+        return fiber.NewError(fiber.StatusInternalServerError, "internal_server_error")
+    }
+{% endif %}
+
+{% endif %}
+
+    // Build render context
+    renderContext := fiber.Map{}
+
+{% if ep.context.needs_csrf %}
+    renderContext["csrfToken"] = c.Locals("csrf").(string)
+{% endif %}
+
+{% if ep.context.needs_user %}
+    renderContext["user"] = user
+{% endif %}
+
+{% if ep.context.needs_perms %}
+    perms := rbacpkg.GetUserPermsForTemplate(c, h.{{ handler.rbac.service_var }})
+    permsJson, _ := sonic.Marshal(perms)
+    renderContext["perms"] = string(permsJson)
+{% endif %}
+
+{% if ep.context.needs_dashbase %}
+    dashBase := rbacpkg.GetDashboardBasePath( user.{{ handler.rbac_model_field }})
+    renderContext["dashBase"] = dashBase
+{% endif %}
+
+{% if ep.context.needs_translations %}
+    # translation := i18npkg.TranslateMap(c, config.{{ ep.context.base_translations }}Translations)
+{% for extra_trans in ep.context.extra_translations %}
+    # translation = i18npkg.MergeMaps(translation, i18npkg.TranslateMap(c, config.{{ extra_trans }}Translations))
+{% endfor %}
+    # transJSON, _ := sonic.Marshal(translation)
+    # renderContext["trans"] = string(transJSON)
+{% endif %}
+
+{% for data in ep.context.custom_data %}
+    // Fetch {{ data.name }}
+    {% if not loop.first %}{% endif %}{{ data.repo | lower }}Repo := utilspkg.Get{{ data.repo }}Repository(dbConn)
+    if {{ data.repo | lower }}Repo == nil {
+        log.Println("{{ data.repo }}Repository not available")
+    } else {
+
+        {{ data.var }}, err := {{ data.repo | lower }}Repo.{{ data.method }}({% for arg in data.args %}{{ arg }}{% if not loop.last %}, {% endif %}
+    
+{% endfor %})
+        if err != nil {
+            log.Printf("Error fetching {{ data.var }}: %v", err)
+        } else {
+{% if data.marshal %}
+            {{ data.var }}Data, _ := sonic.Marshal({{ data.var }})
+            renderContext["{{ data.var }}"] = string({{ data.var }}Data)
+{% else %}
+            renderContext["{{ data.var }}"] = {{ data.var }}
+{% endif %}
+        }
+
+    }
+{% endfor %}
+
+    return c.Render("{{ ep.template }}", renderContext)
+}
+
+{# ============ CREATE ACTION ============ #}
+{% elif ep.type == 'create' %}
+// {{ ep.func_name }} handles the create {{ ep.model | lower }} action.
+func (h *{{ ep.model }}Handler) {{ ep.func_name }}(c *fiber.Ctx) error {
+    userID, ok := c.Locals("user_id").(uint)
+    if !ok {
+        return c.Redirect("{{ handler.auth_redirect }}", fiber.StatusSeeOther)
+    }
+
+
+    // Parse DTO
+    var input dtopkg.{{ ep.dto_name }}
+    if err := c.BodyParser(&input); err != nil {
+{% if ep.return_type == 'json' %}
+        return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid_input"})
+{% else %}
+        return c.Redirect("{{ handler.base_path }}/new?error=invalid_input", fiber.StatusSeeOther)
+{% endif %}
+    }
+
+{% for f in ep.file_uploads %}
+    // Handle file upload: {{ f.field }}
+    var {{ f.field | lower }}URL string
+    if fh, err := c.FormFile("{{ f.form_field }}"); err == nil {
+        // Validate size
+        if fh.Size > int64({{ f.max_size_mb }}*1024*1024) {
+{% if ep.return_type == 'json' %}
+            return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "file_too_large"})
+{% else %}
+            return c.Redirect("{{ handler.base_path }}/new?error=file_too_large", fiber.StatusSeeOther)
+{% endif %}
+        }
+
+{% if f.allowed_types %}
+        // Validate type
+        ct := fh.Header.Get("Content-Type")
+        allowed := false
+{% for at in f.allowed_types %}
+        if strings.HasPrefix(ct, "{{ at }}") { allowed = true }
+{% endfor %}
+        if !allowed {
+{% if ep.return_type == 'json' %}
+            return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid_file_type"})
+{% else %}
+            return c.Redirect("{{ handler.base_path }}/new?error=invalid_file_type", fiber.StatusSeeOther)
+{% endif %}
+        }
+{% endif %}
+
+        // Save file
+        savedPath, err := storagepkg.SaveUploadedFile(fh, "{{ f.storage_path }}")
+        if err != nil {
+{% if ep.return_type == 'json' %}
+            return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "file_upload_failed"})
+{% else %}
+            return c.Redirect("{{ handler.base_path }}/new?error=upload_failed", fiber.StatusSeeOther)
+{% endif %}
+        }
+        {{ f.field | lower }}URL = savedPath
+    }
+{% if f.required %}
+    else {
+{% if ep.return_type == 'json' %}
+        return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "{{ f.field | lower }}_required"})
+{% else %}
+        return c.Redirect("{{ handler.base_path }}/new?error={{ f.field | lower }}_required", fiber.StatusSeeOther)
+{% endif %}
+    }
+{% endif %}
+{% endfor %}
+
+    // Create model
+    {{ ep.model | lower }} := models.{{ ep.model }}{}
+    input.ApplyTo(&{{ ep.model | lower }})
+
+{% if ep.ownership.enabled %}
+    {{ ep.model | lower }}.{{ ep.ownership.go_field }} = userID
+{% endif %}
+
+{% for f in ep.file_uploads %}
+    {{ ep.model | lower }}.{{ f.field }} = {{ f.field | lower }}URL
+{% endfor %}
+
+    // Get database and repository
+    dbConn := utilspkg.GetDB(c)
+    if dbConn == nil {
+        log.Println("Database connection not available")
+{% if ep.return_type == 'json' %}
+        return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "db_connection_failed"})
+{% else %}
+        return c.Redirect("{{ handler.base_path }}/new?error=db_connection_failed", fiber.StatusSeeOther)
+{% endif %}
+    }
+
+    repo := utilspkg.Get{{ ep.model }}Repository(dbConn)
+    if repo == nil {
+        log.Println("{{ ep.model }}Repository not available")
+{% if ep.return_type == 'json' %}
+        return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "db_connection_failed"})
+{% else %}
+        return c.Redirect("{{ handler.base_path }}/new?error=db_connection_failed", fiber.StatusSeeOther)
+{% endif %}
+    }
+
+    if err := repo.Create(&{{ ep.model | lower }}); err != nil {
+{% if ep.return_type == 'json' %}
+        return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "create_failed"})
+{% else %}
+        return c.Redirect("{{ handler.base_path }}/new?error=create_failed", fiber.StatusSeeOther)
+{% endif %}
+    }
+
+{% if ep.return_type == 'redirect' %}
+    return c.Redirect("{{ ep.redirect_on_success }}", fiber.StatusSeeOther)
+{% elif ep.return_type == 'hx_redirect' %}
+{% if ep.context.needs_dashbase %}
+    dbConn := utilspkg.GetDB(c)
+    user, _ := cache.GetUser(userID, dbConn)
+    dashBase := rbacpkg.GetDashboardBasePath( user.{{ handler.rbac_model_field }})
+    redirectPath := strings.Replace("{{ ep.hx_redirect }}", "{dashBase}", dashBase, 1)
+{% else %}
+    redirectPath := "{{ ep.hx_redirect }}"
+{% endif %}
+    c.Set("HX-Redirect", redirectPath)
+    return c.SendStatus(fiber.StatusOK)
+{% elif ep.return_type == 'json' %}
+    return c.Status(fiber.StatusCreated).JSON(fiber.Map{"success": true, "id": {{ ep.model | lower }}.ID})
+{% else %}
+    return c.Render("{{ ep.template }}", fiber.Map{"{{ ep.model | lower }}": {{ ep.model | lower }}})
+{% endif %}
+}
+
+{# ============ EDIT PAGE ============ #}
+{% elif ep.type == 'edit_page' %}
+// {{ ep.func_name }} renders the edit {{ ep.model | lower }} page.
+func (h *{{ ep.model }}Handler) {{ ep.func_name }}(c *fiber.Ctx) error {
+    userID, ok := c.Locals("user_id").(uint)
+    if !ok {
+        return c.Redirect("{{ handler.auth_redirect }}", fiber.StatusSeeOther)
+    }
+
+{% for param in ep.path_params %}
+{% if param.type in ['uint', 'int', 'int64'] %}
+    {{ param.name }}Raw, err := c.ParamsInt("{{ param.name }}")
+    if err != nil || {{ param.name }}Raw <= 0 {
+        return c.Status(fiber.StatusBadRequest).SendString("Invalid {{ param.name }}")
+    }
+    {{ param.name }} := {{ param.type }}({{ param.name }}Raw)
+{% else %}
+    {{ param.name }} := c.Params("{{ param.name }}")
+{% endif %}
+    
+{% endfor %}
+
+
+
+    dbConn := utilspkg.GetDB(c)
+
+{% if ep.context.needs_user %}
+
+{% if ep.context.user_config.use_repo %}
+    userRepo:=utilspkg.Get{{ ep.context.user_config.repo_name }}(dbConn)
+    if userRepo == nil {
+        log.Println("{{ ep.context.user_config.repo_name }}Repository not available")
+        return fiber.NewError(fiber.StatusInternalServerError, "db_connection_failed")
+    }
+    user, err := userRepo.{{ ep.context.user_config.method }}(userID)
+    if err != nil {
+        return fiber.NewError(fiber.StatusInternalServerError, "internal_server_error")
+    }
+{% else %}
+    if err != nil {
+        return fiber.NewError(fiber.StatusInternalServerError, "internal_server_error")
+    }
+{% endif %}
+
+{% endif %}
+{% if ep.ownership.enabled %}
+    // Get repository for ownership check
+    repo := utilspkg.Get{{ ep.model }}Repository(dbConn)
+    if repo == nil {
+        log.Println("{{ ep.model }}Repository not available")
+        return fiber.NewError(fiber.StatusInternalServerError, "db_connection_failed")
+    }
+
+    // Ownership check
+{% if ep.ownership.verify == 'param' and ep.ownership.repo_method %}
+    {# ──── ownership via repo method (e.g. GetByUserAndID) ──── #}
+    {{ ep.model | lower }}, err := repo.{{ ep.ownership.repo_method }}({{ ep.ownership.repo_method_args_str }})
+    if err != nil {
+        return c.Status(fiber.StatusNotFound).SendString("Not found")
+    }
+{% else %}
+    {# ──── ownership via field comparison ──── #}
+    {{ ep.model | lower }}, err := repo.GetByID({{ ep.path_params[0].name }})
+    if err != nil {
+        return c.Status(fiber.StatusNotFound).SendString("Not found")
+    }
+    if {{ ep.model | lower }}.{{ ep.ownership.go_field }} != userID {
+        return c.Status(fiber.StatusForbidden).Render("error", fiber.Map{"message": "Access denied"})
+    }
+{% endif %}
+{% endif %}
+
+    // Build render context
+    renderContext := fiber.Map{}
+
+{% if ep.context.needs_csrf %}
+    renderContext["csrfToken"] = c.Locals("csrf").(string)
+{% endif %}
+
+{% if ep.context.needs_user %}
+    renderContext["user"] = user
+{% endif %}
+
+{% if ep.context.needs_perms %}
+    perms := rbacpkg.GetUserPermsForTemplate(c, h.{{ handler.rbac.service_var }})
+    permsJson, _ := sonic.Marshal(perms)
+    renderContext["perms"] = string(permsJson)
+{% endif %}
+
+{% if ep.context.needs_dashbase %}
+    dashBase := rbacpkg.GetDashboardBasePath( user.{{ handler.rbac_model_field }})
+    renderContext["dashBase"] = dashBase
+{% endif %}
+
+{% for data in ep.context.custom_data %}
+    // Fetch {{ data.name }}
+    {% if not loop.first %}{% endif %}{{ data.repo | lower }}Repo := utilspkg.Get{{ data.repo }}Repository(dbConn)
+    if {{ data.repo | lower }}Repo == nil {
+        log.Println("{{ data.repo }}Repository not available")
+    } else {
+
+        {{ data.var }}, err := {{ data.repo | lower }}Repo.{{ data.method }}({% for arg in data.args %}{{ arg }}{% if not loop.last %}, {% endif %}
+    
+{% endfor %})
+        if err != nil {
+            log.Printf("Error fetching {{ data.var }}: %v", err)
+        } else {
+{% if data.marshal %}
+            {{ data.var }}Data, _ := sonic.Marshal({{ data.var }})
+            renderContext["{{ data.var }}"] = string({{ data.var }}Data)
+{% else %}
+            renderContext["{{ data.var }}"] = {{ data.var }}
+{% endif %}
+        }
+
+    }
+{% endfor %}
+
+    return c.Render("{{ ep.template }}", renderContext)
+}
+
+{# ============ UPDATE ACTION ============ #}
+{% elif ep.type == 'update' %}
+// {{ ep.func_name }} handles the update {{ ep.model | lower }} action.
+func (h *{{ ep.model }}Handler) {{ ep.func_name }}(c *fiber.Ctx) error {
+    userID, ok := c.Locals("user_id").(uint)
+    if !ok {
+        return c.Redirect("{{ handler.auth_redirect }}", fiber.StatusSeeOther)
+    }
+
+{% for param in ep.path_params %}
+{% if param.type in ['uint', 'int', 'int64'] %}
+    {{ param.name }}Raw, err := c.ParamsInt("{{ param.name }}")
+    if err != nil || {{ param.name }}Raw <= 0 {
+        return c.Status(fiber.StatusBadRequest).SendString("Invalid {{ param.name }}")
+    }
+    {{ param.name }} := {{ param.type }}({{ param.name }}Raw)
+{% else %}
+    {{ param.name }} := c.Params("{{ param.name }}")
+{% endif %}
+{% endfor %}
+
+
+
+    // Get database and repository
+    dbConn := utilspkg.GetDB(c)
+    if dbConn == nil {
+        log.Println("Database connection not available")
+        return c.Redirect("{{ handler.base_path }}?error=db_connection_failed", fiber.StatusSeeOther)
+    }
+
+    repo := utilspkg.Get{{ ep.model }}Repository(dbConn)
+    if repo == nil {
+        log.Println("{{ ep.model }}Repository not available")
+        return c.Redirect("{{ handler.base_path }}?error=db_connection_failed", fiber.StatusSeeOther)
+    }
+
+{% if ep.ownership.enabled %}
+    // Fetch existing for ownership check
+{% if ep.ownership.verify == 'param' and ep.ownership.repo_method %}
+    {# ──── ownership via repo method (e.g. GetByUserAndID) ──── #}
+    existing, err := repo.{{ ep.ownership.repo_method }}({{ ep.ownership.repo_method_args_str }})
+    if err != nil {
+        return c.Status(fiber.StatusNotFound).SendString("Not found")
+    }
+{% else %}
+    {# ──── ownership via field comparison ──── #}
+    existing, err := repo.GetByID({{ ep.path_params[0].name }})
+    if err != nil {
+        return c.Status(fiber.StatusNotFound).SendString("Not found")
+    }
+    if existing.{{ ep.ownership.go_field }} != userID {
+        return c.Status(fiber.StatusForbidden).SendString("Access denied")
+    }
+{% endif %}
+{% endif %}
+
+    // Parse DTO
+    var input dtopkg.{{ ep.dto_name }}
+    if err := c.BodyParser(&input); err != nil {
+{% if ep.return_type == 'json' %}
+        return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid_input"})
+{% else %}
+        return c.Redirect("{{ handler.base_path }}/{{ ep.path_params[0].name }}/edit?error=invalid_input", fiber.StatusSeeOther)
+{% endif %}
+    }
+
+{% if ep.track_changes %}
+    // Track changes
+    updates := map[string]interface{}{}
+    changed := false
+
+{% for field in ep.update_fields %}
+{% if field.type == 'file' %}
+    // Handle {{ field.name }} file upload
+    if fh, err := c.FormFile("{{ field.form_field }}"); err == nil {
+        var filePath string
+        if existing.{{ field.name }} != "" && !strings.Contains(existing.{{ field.name }}, "default_") {
+            filePath, err = storagepkg.SaveUpdateFile(fh, "{{ field.storage_path }}", existing.{{ field.name }})
+        } else {
+            filePath, err = storagepkg.SaveUploadedFile(fh, "{{ field.storage_path }}")
+        }
+        if err == nil {
+            updates["{{ field.db_column }}"] = filePath
+            changed = true
+        }
+    }
+{% elif field.is_pointer %}
+    if input.{{ field.name }} != nil && *input.{{ field.name }} != existing.{{ field.name }} {
+        updates["{{ field.db_column }}"] = *input.{{ field.name }}
+        changed = true
+    }
+{% else %}
+    if input.{{ field.name }} != existing.{{ field.name }} {
+        updates["{{ field.db_column }}"] = input.{{ field.name }}
+        changed = true
+    }
+{% endif %}
+    }
+{% endfor %}
+
+    if changed {
+        if err := repo.UpdateFields({{ ep.path_params[0].name }}, updates); err != nil {
+{% if ep.return_type == 'json' %}
+            return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "update_failed"})
+{% else %}
+            return c.Redirect("{{ handler.base_path }}/{{ ep.path_params[0].name }}/edit?error=update_failed", fiber.StatusSeeOther)
+{% endif %}
+        }
+    }
+{% else %}
+{% for f in ep.file_uploads %}
+    // Handle file upload: {{ f.field }}
+    var {{ f.field | lower }}URL string
+    if fh, err := c.FormFile("{{ f.form_field }}"); err == nil {
+        savedPath, err := storagepkg.SaveUploadedFile(fh, "{{ f.storage_path }}")
+        if err == nil {
+            {{ f.field | lower }}URL = savedPath
+        }
+    }
+{% endfor %}
+
+    {{ ep.model | lower }} := models.{{ ep.model }}{}
+    input.ApplyTo(&{{ ep.model | lower }})
+{% for f in ep.file_uploads %}
+    if {{ f.field | lower }}URL != "" {
+        {{ ep.model | lower }}.{{ f.field }} = {{ f.field | lower }}URL
+    }
+{% endfor %}
+
+    if err := repo.Update(&{{ ep.model | lower }}); err != nil {
+{% if ep.return_type == 'json' %}
+        return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "update_failed"})
+{% else %}
+        return c.Redirect("{{ handler.base_path }}/{{ ep.path_params[0].name }}/edit?error=update_failed", fiber.StatusSeeOther)
+{% endif %}
+    }
+{% endif %}
+
+{% if ep.return_type == 'redirect' %}
+    return c.Redirect("{{ ep.redirect_on_success }}", fiber.StatusSeeOther)
+{% elif ep.return_type == 'hx_redirect' %}
+{% if ep.context.needs_dashbase %}
+    dbConn := utilspkg.GetDB(c)
+    user, _ := cache.GetUser(userID, dbConn)
+    dashBase := rbacpkg.GetDashboardBasePath( user.{{ handler.rbac_model_field }})
+    redirectPath := strings.Replace("{{ ep.hx_redirect }}", "{dashBase}", dashBase, 1)
+{% else %}
+    redirectPath := "{{ ep.hx_redirect }}"
+{% endif %}
+    c.Set("HX-Redirect", redirectPath)
+    return c.SendStatus(fiber.StatusOK)
+{% elif ep.return_type == 'json' %}
+    return c.Status(fiber.StatusOK).JSON(fiber.Map{"success": true})
+{% endif %}
+}
+
+{# ============ GET/SHOW ============ #}
+{% elif ep.type == 'get' %}
+// {{ ep.func_name }} renders the {{ ep.model | lower }} detail page.
+func (h *{{ ep.model }}Handler) {{ ep.func_name }}(c *fiber.Ctx) error {
+    userID, ok := c.Locals("user_id").(uint)
+    if !ok {
+        return c.Redirect("{{ handler.auth_redirect }}", fiber.StatusSeeOther)
+    }
+
+{% for param in ep.path_params %}
+{% if param.type in ['uint', 'int', 'int64'] %}
+    {{ param.name }}Raw, err := c.ParamsInt("{{ param.name }}")
+    if err != nil || {{ param.name }}Raw <= 0 {
+        return c.Status(fiber.StatusBadRequest).SendString("Invalid {{ param.name }}")
+    }
+    {{ param.name }} := {{ param.type }}({{ param.name }}Raw)
+{% else %}
+    {{ param.name }} := c.Params("{{ param.name }}")
+{% endif %}
+{% endfor %}
+
+
+
+    dbConn := utilspkg.GetDB(c)
+
+{% if ep.context.needs_user %}
+
+{% if ep.context.user_config.use_repo %}
+    userRepo:=utilspkg.Get{{ ep.context.user_config.repo_name }}(dbConn)
+    if userRepo == nil {
+        log.Println("{{ ep.context.user_config.repo_name }}Repository not available")
+        return fiber.NewError(fiber.StatusInternalServerError, "db_connection_failed")
+    }
+    user, err := userRepo.{{ ep.context.user_config.method }}(userID)
+    if err != nil {
+        return fiber.NewError(fiber.StatusInternalServerError, "internal_server_error")
+    }
+{% else %}
+    if err != nil {
+        return fiber.NewError(fiber.StatusInternalServerError, "internal_server_error")
+    }
+{% endif %}
+
+{% endif %}
+
+    // Build render context
+    renderContext := fiber.Map{}
+
+{% if ep.context.needs_csrf %}
+    renderContext["csrfToken"] = c.Locals("csrf").(string)
+{% endif %}
+
+{% if ep.context.needs_user %}
+    renderContext["user"] = user
+{% endif %}
+
+{% if ep.context.needs_perms %}
+    perms := rbacpkg.GetUserPermsForTemplate(c, h.{{ handler.rbac.service_var }})
+    permsJson, _ := sonic.Marshal(perms)
+    renderContext["perms"] = string(permsJson)
+{% endif %}
+
+{% if ep.context.needs_dashbase %}
+    dashBase := rbacpkg.GetDashboardBasePath( user.{{ handler.rbac_model_field }})
+    renderContext["dashBase"] = dashBase
+{% endif %}
+
+{% for data in ep.context.custom_data %}
+    // Fetch {{ data.name }}
+    {% if not loop.first %}{% endif %}{{ data.repo | lower }}Repo := utilspkg.Get{{ data.repo }}Repository(dbConn)
+    if {{ data.repo | lower }}Repo == nil {
+        log.Println("{{ data.repo }}Repository not available")
+    } else {
+
+
+        {{ data.var }}, err := {{ data.repo | lower }}Repo.{{ data.method }}({% for arg in data.args %}{{ arg }}{% if not loop.last %}, {% endif %}
+    
+{% endfor %})
+        if err != nil {
+            log.Printf("Error fetching {{ data.var }}: %v", err)
+        } else {
+{% if data.marshal %}
+            {{ data.var }}Data, _ := sonic.Marshal({{ data.var }})
+            renderContext["{{ data.var }}"] = string({{ data.var }}Data)
+{% else %}
+            renderContext["{{ data.var }}"] = {{ data.var }}
+{% endif %}
+        }
+    }
+{% endfor %}
+
+    return c.Render("{{ ep.template }}", renderContext)
+}
+
+{# ============ LIST/INDEX ============ #}
+{% elif ep.type == 'list' %}
+// {{ ep.func_name }} renders the {{ ep.model | lower }} list page.
+func (h *{{ ep.model }}Handler) {{ ep.func_name }}(c *fiber.Ctx) error {
+    userID, ok := c.Locals("user_id").(uint)
+    if !ok {
+        return c.Redirect("{{ handler.auth_redirect }}", fiber.StatusSeeOther)
+    }
+
+{% if ep.pagination %}
+    page := c.QueryInt("page", 1)
+    pageSize := c.QueryInt("page_size", 10)
+    if page < 1 { page = 1 }
+    if pageSize < 1 || pageSize > 100 { pageSize = 10 }
+{% endif %}
+
+{% for param in ep.query_params %}
+    {{ param.var_name }} := c.Query("{{ param.name }}", "{{ param.default }}")
+{% endfor %}
+
+
+
+    dbConn := utilspkg.GetDB(c)
+
+{% if ep.context.needs_user %}
+
+{% if ep.context.user_config.use_repo %}
+    userRepo:=utilspkg.Get{{ ep.context.user_config.repo_name }}(dbConn)
+    if userRepo == nil {
+        log.Println("{{ ep.context.user_config.repo_name }}Repository not available")
+        return fiber.NewError(fiber.StatusInternalServerError, "db_connection_failed")
+    }
+    user, err := userRepo.{{ ep.context.user_config.method }}(userID)
+    if err != nil {
+        return fiber.NewError(fiber.StatusInternalServerError, "internal_server_error")
+    }
+{% else %}
+    if err != nil {
+        return fiber.NewError(fiber.StatusInternalServerError, "internal_server_error")
+    }
+{% endif %}
+
+{% endif %}
+
+    // Build render context
+    renderContext := fiber.Map{}
+
+{% if ep.context.needs_csrf %}
+    renderContext["csrfToken"] = c.Locals("csrf").(string)
+{% endif %}
+
+{% if ep.context.needs_user %}
+    renderContext["user"] = user
+{% endif %}
+
+{% if ep.context.needs_perms %}
+    perms := rbacpkg.GetUserPermsForTemplate(c, h.{{ handler.rbac.service_var }})
+    permsJson, _ := sonic.Marshal(perms)
+    renderContext["perms"] = string(permsJson)
+{% endif %}
+
+{% if ep.context.needs_dashbase %}
+    dashBase := rbacpkg.GetDashboardBasePath(user.{{ handler.rbac_model_field }})
+    renderContext["dashBase"] = dashBase
+{% endif %}
+
+{% for data in ep.context.custom_data %}
+    // Fetch {{ data.name }}
+    {% if not loop.first %}{% endif %}{{ data.repo | lower }}Repo := utilspkg.Get{{ data.repo }}Repository(dbConn)
+    if {{ data.repo | lower }}Repo == nil {
+        log.Println("{{ data.repo }}Repository not available")
+    } else {
+
+        {{ data.var }}, err := {{ data.repo | lower }}Repo.{{ data.method }}({% for arg in data.args %}{{ arg }}{% if not loop.last %}, {% endif %}
+    
+{% endfor %})
+        if err != nil {
+            log.Printf("Error fetching {{ data.var }}: %v", err)
+        } else {
+{% if data.marshal %}
+            {{ data.var }}Data, _ := sonic.Marshal({{ data.var }})
+            renderContext["{{ data.var }}"] = string({{ data.var }}Data)
+{% else %}
+            renderContext["{{ data.var }}"] = {{ data.var }}
+{% endif %}
+        }
+
+    }
+{% endfor %}
+
+    return c.Render("{{ ep.template }}", renderContext)
+}
+
+{# ============ DELETE ============ #}
+{% elif ep.type == 'delete' %}
+// {{ ep.func_name }} handles deleting a {{ ep.model | lower }}.
+func (h *{{ ep.model }}Handler) {{ ep.func_name }}(c *fiber.Ctx) error {
+    userID, ok := c.Locals("user_id").(uint)
+    if !ok {
+{% if ep.return_type == 'json' %}
+        return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+{% else %}
+        return c.Redirect("{{ handler.auth_redirect }}", fiber.StatusSeeOther)
+{% endif %}
+    }
+
+{% for param in ep.path_params %}
+{% if param.type in ['uint', 'int', 'int64'] %}
+    {{ param.name }}Raw, err := c.ParamsInt("{{ param.name }}")
+    if err != nil || {{ param.name }}Raw <= 0 {
+        return c.Status(fiber.StatusBadRequest).SendString("Invalid {{ param.name }}")
+    }
+    {{ param.name }} := {{ param.type }}({{ param.name }}Raw)
+{% else %}
+    {{ param.name }} := c.Params("{{ param.name }}")
+{% endif %}
+{% endfor %}
+
+
+
+    // Get database and repository
+    dbConn := utilspkg.GetDB(c)
+    if dbConn == nil {
+        log.Println("Database connection not available")
+{% if ep.return_type == 'json' %}
+        return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "db_connection_failed"})
+{% else %}
+        return c.Status(fiber.StatusInternalServerError).SendString("Database connection failed")
+{% endif %}
+    }
+
+    repo := utilspkg.Get{{ ep.model }}Repository(dbConn)
+    if repo == nil {
+        log.Println("{{ ep.model }}Repository not available")
+{% if ep.return_type == 'json' %}
+        return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "db_connection_failed"})
+{% else %}
+        return c.Status(fiber.StatusInternalServerError).SendString("Database connection failed")
+{% endif %}
+    }
+
+{% if ep.ownership.enabled %}
+    // Ownership check
+{% if ep.ownership.verify == 'param' and ep.ownership.repo_method %}
+    {# ──── ownership via repo method (e.g. GetByUserAndID) ──── #}
+    existing, err := repo.{{ ep.ownership.repo_method }}({{ ep.ownership.repo_method_args_str }})
+    if err != nil {
+{% if ep.return_type == 'json' %}
+        return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "not_found"})
+{% else %}
+        return c.Status(fiber.StatusNotFound).SendString("Not found")
+{% endif %}
+    }
+{% else %}
+    {# ──── ownership via field comparison ──── #}
+    existing, err := repo.GetByID({{ ep.path_params[0].name }})
+    if err != nil {
+{% if ep.return_type == 'json' %}
+        return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "not_found"})
+{% else %}
+        return c.Status(fiber.StatusNotFound).SendString("Not found")
+{% endif %}
+    }
+    if existing.{{ ep.ownership.go_field }} != userID {
+{% if ep.return_type == 'json' %}
+        return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "access_denied"})
+{% else %}
+        return c.Status(fiber.StatusForbidden).SendString("Access denied")
+{% endif %}
+    }
+{% endif %}
+{% endif %}
+
+    if err := repo.Delete({{ ep.path_params[0].name }}); err != nil {
+{% if ep.return_type == 'json' %}
+        return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "delete_failed"})
+{% else %}
+        return c.Redirect("{{ handler.base_path }}?error=delete_failed", fiber.StatusSeeOther)
+{% endif %}
+    }
+
+{% if ep.return_type == 'json' %}
+    return c.Status(fiber.StatusOK).JSON(fiber.Map{"success": true})
+{% else %}
+    return c.Redirect("{{ ep.redirect_on_success }}", fiber.StatusSeeOther)
+{% endif %}
+}
+
+{% endif %}
+    
+{% endfor %}
+
+// ============================================================================
+// Custom Getter Endpoints
+// ============================================================================
+
+{% for ep in handler.getter_endpoints %}
+// {{ ep.func_name }} handles the {{ ep.getter_name }} custom getter.
+func (h *{{ ep.model }}Handler) {{ ep.func_name }}(c *fiber.Ctx) error {
+    userID, ok := c.Locals("user_id").(uint)
+    if !ok {
+        return c.Redirect("{{ handler.auth_redirect }}", fiber.StatusSeeOther)
+    }
+
+{% for param in ep.path_params %}
+{% if param.type in ['uint', 'int', 'int64'] %}
+    {{ param.name }}Raw, err := c.ParamsInt("{{ param.name }}")
+    if err != nil || {{ param.name }}Raw <= 0 {
+        return c.Status(fiber.StatusBadRequest).SendString("Invalid {{ param.name }}")
+    }
+    {{ param.name }} := {{ param.type }}({{ param.name }}Raw)
+{% else %}
+    {{ param.name }} := c.Params("{{ param.name }}")
+{% endif %}
+{% endfor %}
+
+{% if ep.pagination %}
+    page := c.QueryInt("page", 1)
+    pageSize := c.QueryInt("page_size", 10)
+    if page < 1 { page = 1 }
+    if pageSize < 1 || pageSize > 100 { pageSize = 10 }
+{% endif %}
+
+{% for param in ep.query_params %}
+    {{ param.var_name }} := c.Query("{{ param.name }}", "{{ param.default }}")
+{% endfor %}
+
+
+
+    dbConn := utilspkg.GetDB(c)
+
+{% if ep.context.needs_user %}
+
+{% if ep.context.user_config.use_repo %}
+    userRepo:=utilspkg.Get{{ ep.context.user_config.repo_name }}(dbConn)
+    if userRepo == nil {
+        log.Println("{{ ep.context.user_config.repo_name }}Repository not available")
+        return fiber.NewError(fiber.StatusInternalServerError, "db_connection_failed")
+    }
+    user, err := userRepo.{{ ep.context.user_config.method }}(userID)
+    if err != nil {
+        return fiber.NewError(fiber.StatusInternalServerError, "internal_server_error")
+    }
+{% else %}
+    if err != nil {
+        return fiber.NewError(fiber.StatusInternalServerError, "internal_server_error")
+    }
+{% endif %}
+
+{% endif %}
+
+    // Build render context
+    renderContext := fiber.Map{}
+
+{% if ep.context.needs_csrf %}
+    renderContext["csrfToken"] = c.Locals("csrf").(string)
+{% endif %}
+
+{% if ep.context.needs_user %}
+    renderContext["user"] = user
+{% endif %}
+
+{% if ep.context.needs_perms %}
+    perms := rbacpkg.GetUserPermsForTemplate(c, h.{{ handler.rbac.service_var }})
+    permsJson, _ := sonic.Marshal(perms)
+    renderContext["perms"] = string(permsJson)
+{% endif %}
+
+{% if ep.context.needs_dashbase %}
+    dashBase := rbacpkg.GetDashboardBasePath( user.{{ handler.rbac_model_field }})
+    renderContext["dashBase"] = dashBase
+{% endif %}
+
+{% for data in ep.context.custom_data %}
+    // Fetch {{ data.name }}
+    {% if not loop.first %}{% endif %}{{ data.repo | lower }}Repo := utilspkg.Get{{ data.repo }}Repository(dbConn)
+    if {{ data.repo | lower }}Repo == nil {
+        log.Println("{{ data.repo }}Repository not available")
+    } else {
+
+        {{ data.var }}, err := {{ data.repo | lower }}Repo.{{ data.method }}({% for arg in data.args %}{{ arg }}{% if not loop.last %}, {% endif %}
+    
+{% endfor %})
+        if err != nil {
+            log.Printf("Error fetching {{ data.var }}: %v", err)
+        } else {
+{% if data.marshal %}
+            {{ data.var }}Data, _ := sonic.Marshal({{ data.var }})
+            renderContext["{{ data.var }}"] = string({{ data.var }}Data)
+{% else %}
+            renderContext["{{ data.var }}"] = {{ data.var }}
+{% endif %}
+        }
+
+    }
+{% endfor %}
+
+    return c.Render("{{ ep.template }}", renderContext)
+}
+
+{% endfor %}

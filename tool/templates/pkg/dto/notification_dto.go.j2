@@ -1,0 +1,13 @@
+package dto
+
+{% if config.notifications.enabled %}
+// BulkMarkReadRequest represents the payload for marking multiple notifications as read
+type BulkMarkReadRequest struct {
+	IDs []uint `json:"ids" validate:"required,min=1"`
+}
+
+// BulkDeleteRequest represents the payload for deleting multiple notifications
+type BulkDeleteRequest struct {
+	IDs []uint `json:"ids" validate:"required,min=1"`
+}
+{% endif %}

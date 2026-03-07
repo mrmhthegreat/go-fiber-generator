@@ -1,0 +1,380 @@
+package dashboard
+
+
+import (
+	"log"
+	"strconv"
+	"strings"
+
+	"github.com/bytedance/sonic"
+	"github.com/gofiber/fiber/v2"
+
+	"{{ config.project.module }}/db"
+	dtopkg "{{ config.project.module }}/pkg/dto"
+
+	rbacpkg "{{ config.project.module }}/pkg/rbac"
+	utilspkg "{{ config.project.module }}/pkg/utils"
+	"{{ config.project.module }}/internal/domain"
+	project_ws "{{ config.project.module }}/pkg/websocket"
+	resppkg "{{ config.project.module }}/pkg/response"
+)
+
+{% set ep       = config.chat.web_handler %}
+{% set auth_cfg = config.get('authentication', {}) %}
+{% set rbac_cfg = config.get('rbac', {}) %}
+{% set ctx_cfg  = ep.get('context', {}) %}
+{% set user_ctx = ctx_cfg.get('user_config', {
+    'use_repo': True,
+    'repo_name': 'UserRepository',
+    'method': 'GetByID'
+}) %}
+
+{% if config.chat.enabled %}
+{# Define base fields for Conversation #}
+{% set conv_base_fields = [
+    {'name': 'id', 'type': 'uint', 'primary_key': true, 'auto_increment': true},
+    {'name': 'user_id', 'type': 'uint', 'required': true, 'index': true},
+    {'name': 'receiver_id', 'type': '*uint', 'index': true},
+    {'name': 'status', 'type': 'string', 'default': 'open'},
+    {'name': 'conv_type', 'type': 'string', 'default': 'chat'},
+    {'name': 'is_read_only', 'type': 'bool', 'default': false},
+    {'name': 'last_message', 'type': 'string'},
+    {'name': 'priority', 'type': 'string', 'default': 'normal'}
+] %}
+{% set conv_user_fields = config.chat.domain.conversation.fields %}
+{% set conv_user_field_names = conv_user_fields | map(attribute='name') | list %}
+{% set conv_fields = conv_user_fields | list %}
+{% for base in conv_base_fields %}
+    {% if base.name not in conv_user_field_names %}
+        {% set _ = conv_fields.append(base) %}
+    {% endif %}
+{% endfor %}
+
+{# Define base fields for Message #}
+{% set msg_base_fields = [
+    {'name': 'id', 'type': 'uint', 'primary_key': true, 'auto_increment': true},
+    {'name': 'conversation_id', 'type': 'uint', 'required': true, 'index': true},
+    {'name': 'sender_id', 'type': 'uint', 'required': true, 'index': true},
+    {'name': 'sender_type', 'type': 'string', 'default': 'user'},
+    {'name': 'content', 'type': 'string', 'required': true},
+    {'name': 'is_read', 'type': 'bool', 'default': false}
+] %}
+{% set msg_user_fields = config.chat.domain.message.fields %}
+{% set msg_user_field_names = msg_user_fields | map(attribute='name') | list %}
+{% set msg_fields = msg_user_fields | list %}
+{% for base in msg_base_fields %}
+    {% if base.name not in msg_user_field_names %}
+        {% set _ = msg_fields.append(base) %}
+    {% endif %}
+{% endfor %}
+
+{# Resolve Field Names #}
+{% set conv_id_f          = conv_fields | selectattr('primary_key', 'defined') | selectattr('primary_key', 'equalto', true) | first | default({'name': 'id'}) %}
+{% set conv_user_id_f     = conv_fields | selectattr('name', 'equalto', 'user_id') | first | default({'name': 'user_id'}) %}
+{% set conv_receiver_id_f = conv_fields | selectattr('name', 'equalto', 'receiver_id') | first | default({'name': 'receiver_id'}) %}
+{% set conv_type_f        = conv_fields | selectattr('name', 'equalto', 'conv_type') | first | default({'name': 'conv_type'}) %}
+
+{% set msg_conv_id_f      = msg_fields | selectattr('name', 'equalto', 'conversation_id') | first | default({'name': 'conversation_id'}) %}
+
+{% if ep.enabled %}
+// GetChatPage renders the admin chat interface.
+func GetChatPage(c *fiber.Ctx) error {
+	userID, ok := c.Locals("user_id").(uint)
+	if !ok || userID == 0 {
+		return c.Redirect("/login", fiber.StatusSeeOther)
+	}
+
+
+
+	dbConn := utilspkg.GetDB(c)
+	if dbConn == nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "db_connection_failed")
+	}
+
+{% if ctx_cfg.get('needs_user', false) %}
+{% if user_ctx.use_repo %}
+	userRepo := utilspkg.Get{{ user_ctx.repo_name }}(dbConn)
+	if userRepo == nil {
+		log.Println("{{ user_ctx.repo_name }} not available")
+		return fiber.NewError(fiber.StatusInternalServerError, "db_connection_failed")
+	}
+	user, err := userRepo.{{ user_ctx.method }}(userID)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "internal_server_error")
+	}
+{% else %}
+	return fiber.NewError(fiber.StatusInternalServerError, "internal_server_error")
+{% endif %}
+{% endif %}
+
+	renderContext := fiber.Map{}
+
+{% if ctx_cfg.get('needs_csrf', false) %}
+	renderContext["csrfToken"] = c.Locals("csrf").(string)
+{% endif %}
+
+{% if ctx_cfg.get('needs_user', false) %}
+	renderContext["user"] = user
+{% endif %}
+
+{% if ctx_cfg.get('needs_perms', false) %}
+	perms := rbacpkg.GetUserPermsForTemplate(c, "{{ rbac_cfg.get('service_name', 'RBACService') }}")
+	permsJSON, _ := sonic.Marshal(perms)
+	renderContext["perms"] = string(permsJSON)
+{% endif %}
+
+{% if ctx_cfg.get('needs_dashbase', false) and rbac_cfg.get('enabled', false) %}
+	dashBase := rbacpkg.GetDashboardBasePath(user.{{ rbac_cfg.get('model_field', 'Role') }})
+	renderContext["dashBase"] = dashBase
+{% endif %}
+
+{% for data in ctx_cfg.get('custom_data', []) %}
+	// Fetch {{ data.name }}
+	{{ data.repo | lower }}Repo := utilspkg.Get{{ data.repo }}Repository(dbConn)
+	if {{ data.repo | lower }}Repo == nil {
+		log.Println("{{ data.repo }}Repository not available")
+	} else {
+		{{ data.var }}, err := {{ data.repo | lower }}Repo.{{ data.method }}({{ data.args | join(', ') }})
+		if err != nil {
+			log.Printf("Error fetching {{ data.var }}: %v", err)
+		} else {
+{% if data.get('marshal') %}
+			{{ data.var }}Data, _ := sonic.Marshal({{ data.var }})
+			renderContext["{{ data.var }}"] = string({{ data.var }}Data)
+{% else %}
+			renderContext["{{ data.var }}"] = {{ data.var }}
+{% endif %}
+		}
+	}
+{% endfor %}
+
+	return c.Render("{{ ep.get('template', 'admin/chat/index') }}", renderContext)
+}
+
+{% if ctrl.get('endpoints', {}).get('list_conversations', {}).get('enabled', false) %}
+// GetConversations returns paginated conversations for the admin view.
+func GetConversations(c *fiber.Ctx) error {
+	dbConn := utilspkg.GetDB(c)
+	if dbConn == nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "server_error"})
+	}
+
+	options := db.ListConversationOptions{
+		Search:    strings.TrimSpace(c.Query("search")),
+		Status:    strings.TrimSpace(c.Query("status")),
+		ConvType:  strings.TrimSpace(c.Query("type", "chat")),
+		SortBy:    strings.TrimSpace(c.Query("sort_by", "updated_at")),
+		SortOrder: strings.TrimSpace(c.Query("sort_order", "desc")),
+		Offset:    c.QueryInt("offset", 0),
+		Limit:     c.QueryInt("limit", 20),
+	}
+
+	chatRepo := utilspkg.GetChatRepository(dbConn)
+	if chatRepo == nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "server_error"})
+	}
+
+	conversations, hasMore, total, err := chatRepo.GetAdminConversations(options)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "fetch_failed"})
+	}
+
+	chatResponses := resppkg.ConvertToChatResponses(conversations)
+	for i := range chatResponses {
+		chatResponses[i].User.IsOnline = project_ws.IsUserOnline(chatResponses[i].{{ conv_user_id_f.name | title | replace('_', '') }})
+	}
+
+	return c.JSON(fiber.Map{
+		"conversations": chatResponses,
+		"has_more":      hasMore,
+		"total":         total,
+	})
+}
+{% endif %}
+
+{% if ctrl.get('endpoints', {}).get('list_messages', {}).get('enabled', false) %}
+// GetMessages returns messages for a specific conversation (admin view).
+func GetMessages(c *fiber.Ctx) error {
+	dbConn := utilspkg.GetDB(c)
+	if dbConn == nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "server_error"})
+	}
+
+	id, err := strconv.ParseUint(c.Params("id"), 10, 32)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid_conversation_id"})
+	}
+
+	options := db.ListMessageOptions{
+		ConversationID: uint(id),
+		SortBy:         strings.TrimSpace(c.Query("sort_by", "created_at")),
+		SortOrder:      strings.TrimSpace(c.Query("sort_order", "asc")),
+		Offset:         c.QueryInt("offset", 0),
+		Limit:          c.QueryInt("limit", 50),
+	}
+
+	chatRepo := utilspkg.GetChatRepository(dbConn)
+	if chatRepo == nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "server_error"})
+	}
+
+	messages, hasMore, total, err := chatRepo.ListMessages(options)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "fetch_failed"})
+	}
+
+	return c.JSON(fiber.Map{
+		"messages": resppkg.ConvertToMessageResponses(messages),
+		"has_more": hasMore,
+		"total":    total,
+	})
+}
+{% endif %}
+
+{% if ctrl.get('endpoints', {}).get('send_message', {}).get('enabled', false) %}
+// SendMessage lets an admin send a message into a conversation.
+func SendMessage(c *fiber.Ctx) error {
+	dbConn := utilspkg.GetDB(c)
+	if dbConn == nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "server_error"})
+	}
+
+	convID, err := strconv.ParseUint(c.Params("id"), 10, 32)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid_conversation_id"})
+	}
+
+	var req dtopkg.SendMessageRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid_request"})
+	}
+	if strings.TrimSpace(req.Content) == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "content_cannot_be_empty"})
+	}
+
+	adminID, _ := c.Locals("user_id").(uint)
+
+	chatRepo := utilspkg.GetChatRepository(dbConn)
+	if chatRepo == nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "server_error"})
+	}
+
+	msg := &domain.Message{
+		{{ msg_conv_id_f.name | title | replace('_', '') }}: uint(convID),
+		SenderID:       adminID,
+		SenderType:     "admin",
+		Content:        req.Content,
+	}
+
+	created, err := chatRepo.CreateMessage(msg)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "send_failed"})
+	}
+
+{% if config.get('notifications', {}).get('enabled', false) %}
+	// Notify target user via WebSocket / push.
+	conv, convErr := chatRepo.GetConversationByIDSimple(uint(convID))
+	if convErr == nil && conv != nil {
+		project_ws.NotifyUser(*created)
+	}
+{% endif %}
+
+	return c.JSON(resppkg.ConvertToMessageResponse(created))
+}
+{% endif %}
+
+{% if ctrl.get('endpoints', {}).get('mark_as_read', {}).get('enabled', false) %}
+// MarkConversationRead lets an admin mark all messages in a conversation as read.
+func MarkConversationRead(c *fiber.Ctx) error {
+	dbConn := utilspkg.GetDB(c)
+	if dbConn == nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "server_error"})
+	}
+
+	convID, err := strconv.ParseUint(c.Params("id"), 10, 32)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid_conversation_id"})
+	}
+
+	chatRepo := utilspkg.GetChatRepository(dbConn)
+	if chatRepo == nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "server_error"})
+	}
+
+	if err := chatRepo.MarkMessagesAsRead(uint(convID), "admin"); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "server_error"})
+	}
+
+	return c.JSON(fiber.Map{"success": true})
+}
+{% endif %}
+
+{% if ctrl.get('endpoints', {}).get('close_conversation', {}).get('enabled', false) %}
+// CloseConversation sets a conversation status to "closed".
+func CloseConversation(c *fiber.Ctx) error {
+	dbConn := utilspkg.GetDB(c)
+	if dbConn == nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "server_error"})
+	}
+
+	convID, err := strconv.ParseUint(c.Params("id"), 10, 32)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid_conversation_id"})
+	}
+
+	chatRepo := utilspkg.GetChatRepository(dbConn)
+	if chatRepo == nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "server_error"})
+	}
+
+	conv, err := chatRepo.GetConversationByIDSimple(uint(convID))
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "conversation_not_found"})
+	}
+
+	conv.Status = "closed"
+	if err := dbConn.DB.Save(conv).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "server_error"})
+	}
+
+	// Notify user that conversation was closed.
+	project_ws.NotifyTargetUserAction(conv.{{ conv_user_id_f.name | title | replace('_', '') }}, uint(convID), "conversation_closed")
+
+	return c.JSON(fiber.Map{"success": true})
+}
+{% endif %}
+
+{% if ctrl.get('endpoints', {}).get('search_user', {}).get('enabled', false) %}
+// SearchUsers searches users by email or name (for starting new chats).
+func SearchUsers(c *fiber.Ctx) error {
+	query := strings.TrimSpace(c.Query("q"))
+	if query == "" {
+		return c.JSON(fiber.Map{"users": []interface{}{}})
+	}
+
+	dbConn := utilspkg.GetDB(c)
+	if dbConn == nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "server_error"})
+	}
+
+	var users []domain.{{ config.project.user_model_name }}
+	searchTerm := "%" + query + "%"
+	dbConn.DB.Where("email LIKE ? OR fullname LIKE ?", searchTerm, searchTerm).
+		Limit(10).
+		Find(&users)
+
+	results := make([]fiber.Map, 0, len(users))
+	for _, u := range users {
+		results = append(results, fiber.Map{
+			"id":    u.ID,
+			"name":  u.Fullname,
+			"email": u.Email,
+		})
+	}
+
+	return c.JSON(fiber.Map{"users": results})
+}
+{% endif %}
+{% endif %}{# ep.enabled #}
+{% endif %}{# config.chat.enabled #}
+

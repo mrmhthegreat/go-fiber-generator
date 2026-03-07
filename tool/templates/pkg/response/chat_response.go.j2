@@ -1,0 +1,139 @@
+package response
+
+import (
+	"{{ config.project.module }}/internal/domain"
+)
+
+{% if config.chat.enabled %}
+{# Define base fields for Conversation #}
+{% set conv_base_fields = [
+    {'name': 'id', 'type': 'uint'},
+    {'name': 'user_id', 'type': 'uint'},
+    {'name': 'receiver_id', 'type': '*uint'},
+    {'name': 'status', 'type': 'string'},
+    {'name': 'conv_type', 'type': 'string'},
+    {'name': 'is_read_only', 'type': 'bool'},
+    {'name': 'last_message', 'type': 'string'},
+    {'name': 'priority', 'type': 'string'}
+] %}
+{% set conv_user_fields = config.chat.domain.conversation.fields %}
+{% set conv_user_field_names = conv_user_fields | map(attribute='name') | list %}
+{% set conv_fields = conv_user_fields | list %}
+{% for base in conv_base_fields %}
+    {% if base.name not in conv_user_field_names %}
+        {% set _ = conv_fields.append(base) %}
+    {% endif %}
+{% endfor %}
+
+{# Define base fields for Message #}
+{% set msg_base_fields = [
+    {'name': 'id', 'type': 'uint'},
+    {'name': 'conversation_id', 'type': 'uint'},
+    {'name': 'sender_id', 'type': 'uint'},
+    {'name': 'sender_type', 'type': 'string'},
+    {'name': 'content', 'type': 'string'},
+    {'name': 'is_read', 'type': 'bool'}
+] %}
+{% set msg_user_fields = config.chat.domain.message.fields %}
+{% set msg_user_field_names = msg_user_fields | map(attribute='name') | list %}
+{% set msg_fields = msg_user_fields | list %}
+{% for base in msg_base_fields %}
+    {% if base.name not in msg_user_field_names %}
+        {% set _ = msg_fields.append(base) %}
+    {% endif %}
+{% endfor %}
+
+// ConversationResponse represents a chat conversation in API responses
+type ConversationResponse struct {
+{% for field in conv_fields %}
+	{{ field.name | title | replace('_', '') }} {{ field.type }} `json:"{{ field.get('json_tag', field.name) }}"`
+{% endfor %}
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+
+	// Relations
+	User     *UserResponse `json:"user,omitempty"`
+	Receiver *UserResponse `json:"receiver,omitempty"`
+}
+
+// MessageResponse represents a single chat message in API responses
+type MessageResponse struct {
+{% for field in msg_fields %}
+	{{ field.name | title | replace('_', '') }} {{ field.type }} `json:"{{ field.get('json_tag', field.name) }}"`
+{% endfor %}
+	CreatedAt string `json:"created_at"`
+}
+
+// UserResponse is a minimal user representation for chat
+type UserResponse struct {
+	ID       uint   `json:"id"`
+	Fullname string `json:"fullname"`
+	Email    string `json:"email"`
+	Avatar   string `json:"avatar,omitempty"`
+	IsOnline bool   `json:"is_online"`
+}
+
+// ConvertToChatResponse converts a Conversation model to a response struct
+func ConvertToChatResponse(m *domain.Conversation) ConversationResponse {
+	if m == nil {
+		return ConversationResponse{}
+	}
+	resp := ConversationResponse{
+{% for field in conv_fields %}
+		{{ field.name | title | replace('_', '') }}: m.{{ field.name | title | replace('_', '') }},
+{% endfor %}
+		CreatedAt: m.CreatedAt.Format("2006-01-02 15:04:05"),
+		UpdatedAt: m.UpdatedAt.Format("2006-01-02 15:04:05"),
+	}
+
+	if m.User != nil {
+		resp.User = &UserResponse{
+			ID:       m.User.ID,
+			Fullname: m.User.Fullname,
+			Email:    m.User.Email,
+		}
+	}
+
+	if m.Receiver != nil {
+		resp.Receiver = &UserResponse{
+			ID:       m.Receiver.ID,
+			Fullname: m.Receiver.Fullname,
+			Email:    m.Receiver.Email,
+		}
+	}
+
+	return resp
+}
+
+// ConvertToChatResponses converts multiple Conversation models
+func ConvertToChatResponses(ms []domain.Conversation) []ConversationResponse {
+	resps := make([]ConversationResponse, len(ms))
+	for i := range ms {
+		resps[i] = ConvertToChatResponse(&ms[i])
+	}
+	return resps
+}
+
+// ConvertToMessageResponse converts a Message model to a response struct
+func ConvertToMessageResponse(m *domain.Message) MessageResponse {
+	if m == nil {
+		return MessageResponse{}
+	}
+	return MessageResponse{
+{% for field in msg_fields %}
+		{{ field.name | title | replace('_', '') }}: m.{{ field.name | title | replace('_', '') }},
+{% endfor %}
+		CreatedAt: m.CreatedAt.Format("2006-01-02 15:04:05"),
+	}
+}
+
+// ConvertToMessageResponses converts multiple Message models
+func ConvertToMessageResponses(ms []domain.Message) []MessageResponse {
+	resps := make([]MessageResponse, len(ms))
+	for i := range ms {
+		resps[i] = ConvertToMessageResponse(&ms[i])
+	}
+	return resps
+}
+
+{% endif %}

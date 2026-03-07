@@ -1,0 +1,17 @@
+package dto
+
+{% if config.fcm.enabled %}
+// SendFCMRequest represents the payload for sending FCM notifications
+type SendFCMRequest struct {
+	Type   string   `json:"type" validate:"required,oneof=single multiple topic"` // single, multiple, topic
+	Tokens []string `json:"tokens"`
+	Topic  string   `json:"topic"`
+	Title  string   `json:"title" validate:"required"`
+	Body   string   `json:"body" validate:"required"`
+}
+
+// SubscribeTopicRequest represents the payload for subscribing to a topic
+type SubscribeTopicRequest struct {
+	Token string `json:"token" validate:"required"`
+}
+{% endif %}

@@ -1,0 +1,355 @@
+project:
+  module: github.com/username/my_api
+
+# ============================================
+# SESSIONS
+# ============================================
+session:
+  enabled: true
+  secret_key_env: CHANGE_THIS_SESSION_SECRET
+  cookies_secret_env: CHANGE_THIS_COOKIES_SECRET
+  cookie_http_only: true
+  cookie_secure: false # set to true in production
+  expiration: "24 * time.Hour"
+  store_context_key: "session"
+
+middleware:
+  # ============================================
+  # CORE SYSTEM MIDDLEWARE
+  # ============================================
+  
+  # Maintenance mode configuration
+  maintenance:
+    enabled: true
+    mode_key_env: MAINTENANCE_MODE
+    exclude_paths:
+      - /under-maintenance
+      - /static/
+      - /health
+    redirect_path: /under-maintenance
+    api_error_code: "service_unavailable_maintenance"
+  
+  # Database injection
+  database:
+    enabled: true
+    context_key: "db"
+  
+  # ============================================
+  # GLOBAL MIDDLEWARE
+  # ============================================
+  
+  cors:
+    enabled: true
+    allow_origins: "*"
+    allow_headers: "Origin, Content-Type, Accept, Authorization"
+    allow_methods: "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+    allow_credentials: true
+
+  compression:
+    enabled: true
+    level: best_speed  # best_speed, best_compression, default_compression
+
+
+  logging:
+    enabled: true
+    log_body: false
+
+  csrf:
+    enabled: true
+    header: X-CSRFToken        # Header name for API requests
+    form_field: csrf_token     # Form field name for HTML forms
+    cookie_name: csrf_
+    same_site: Lax
+    expiration: "1 * time.Hour"
+    context_key: csrf
+
+  # Global rate limiting
+  rate_limit:
+    enabled: true
+
+  # ============================================
+  # FEATURE TOGGLES
+  # ============================================
+  
+  # RBAC - Only enable if you have RBAC service
+  rbac:
+    enabled: true
+  
+  # Dashboard - Only enable if you have:
+  #   - User model with: IsSuperuser, IsAdmin, Role fields
+  #   - helpers.GetDashboardBasePath() function
+  dashboard:
+    enabled: true
+
+  # Web authentication
+  web_auth:
+    enabled: true
+    # Email verification - Only enable if you have:
+    #   - User model with: Email, Verified fields
+    email_verification_enabled: false
+    # Session keys
+    session_keys:
+      authenticated: "authenticated"
+      user_id: "user_id"
+    
+    # Redirect paths
+    redirects:
+      login: "/login"
+      verify_email: "/auth/verify"
+      server_error: "/server-error"
+    
+    # Paths excluded from verification check
+    verify_exclude_paths:
+      - /auth/verify
+      - /auth/logout
+      - /auth/resend-verification
+
+
+  # ============================================
+  # CONTEXT KEYS (Customize to match your naming)
+  # ============================================
+  
+  locals:
+    user_id: "user_id"
+    email: "email"
+    session: "session"
+    verified: "verified"
+    app_id: "app_id"
+    is_admin: "is_admin"
+    role: "role"
+
+  # ============================================
+  # MIDDLEWARE DEFINITIONS
+  # ============================================
+  
+  definitions:
+  
+    # ======================================
+    # SESSION AUTHENTICATION
+    # ======================================
+    
+    - name: web_session
+      type: session_auth
+      session_key: authenticated
+      redirect_on_fail: /login
+      description: "Session-based auth for web routes"
+
+    # ======================================
+    # JWT AUTHENTICATION
+    # Claims go inside each JWT definition!
+    # ======================================
+    
+    # Simple JWT with one claim
+    - name: simple_jwt
+      type: jwt
+      header_name: Authorization
+      scheme: Bearer
+      secret_key_env: JWT_SECRET
+      algorithm: HS256
+      claims:
+        - name: user_id
+          type: uint
+          required: true
+      description: "Simple JWT with user_id"
+
+    # JWT with multiple typed claims
+    - name: user_auth
+      type: jwt
+      header_name: Authorization
+      scheme: Bearer
+      secret_key_env: JWT_SECRET
+      algorithm: HS256
+      claims:  # ← Claims go HERE, inside this JWT definition
+        - name: user_id
+          type: uint
+          required: true
+        
+        - name: email
+          type: string
+          required: true
+        
+        - name: role
+          type: string
+          required: false  # Optional claim
+      description: "Full user JWT with typed claims"
+
+    # High security JWT with HS512
+    - name: secure_api
+      type: jwt
+      header_name: X-Auth-Token
+      scheme: Token
+      secret_key_env: JWT_SECRET_SECURE
+      algorithm: HS512
+      claims:
+        - name: user_id
+          type: uint
+          required: true
+        
+        - name: tier
+          type: string
+          required: true
+        
+        - name: is_premium
+          type: bool
+          required: false
+      description: "High security API with HS512"
+
+    # Complex claims with different types
+    - name: advanced_jwt
+      type: jwt
+      header_name: Authorization
+      scheme: Bearer
+      secret_key_env: JWT_SECRET
+      algorithm: HS256
+      claims:
+        - name: user_id
+          type: uint
+          required: true
+          context_key: "current_user_id"  # Custom context key
+        
+        - name: email
+          type: string
+          required: true
+        
+        - name: balance
+          type: float64
+          required: false
+        
+        - name: is_admin
+          type: bool
+          required: false
+        
+        - name: roles
+          # No type = stores as-is (array, object, etc.)
+          required: false
+        
+        - name: metadata
+          # Can be any JSON structure
+          required: false
+      description: "Advanced JWT with many claim types"
+
+    # Flexible JWT - extracts ALL claims
+    - name: flexible_jwt
+      type: jwt
+      header_name: Authorization
+      scheme: Bearer
+      secret_key_env: JWT_SECRET
+      # No claims specified = extracts all claims from token
+      description: "Flexible JWT that extracts all claims"
+
+    # ======================================
+    # API KEY AUTHENTICATION
+    # ======================================
+    
+    - name: api_key
+      type: api_key
+      header: X-API-Key
+      secret_key_env: API_KEY
+      description: "API key authentication"
+
+    - name: partner_key
+      type: api_key
+      header: X-Partner-Key
+      secret_key_env: PARTNER_API_KEY
+      description: "Partner API key"
+
+    # ======================================
+    # RATE LIMITING
+    # ======================================
+    
+    - name: ip_rate_limit
+      type: rate_limit
+      max_requests: 100
+      window: 1m
+      key_generator: ip
+      description: "IP-based rate limiting"
+
+    - name: user_rate_limit
+      type: rate_limit
+      max_requests: 60
+      window: 1m
+      key_generator: user_id
+      description: "User-based rate limiting"
+
+    - name: api_key_rate_limit
+      type: rate_limit
+      max_requests: 1000
+      window: 1h
+      key_generator: api_key
+      description: "High limit for API keys"
+
+    # ======================================
+    # HEADER VALIDATION
+    # ======================================
+    
+    - name: mobile_headers
+      type: header_check
+      description: "Validate mobile app headers"
+      required_headers:
+        - name: X-App-Version
+        - name: X-Platform
+        - name: X-Device-ID
+
+    - name: api_version
+      type: header_check
+      description: "Validate API version"
+      required_headers:
+        - name: X-API-Version
+          value: "v2"
+
+    # ======================================
+    # COMBINED AUTHENTICATION
+    # ======================================
+    
+    - name: secure_endpoint
+      type: combined
+      description: "API key + JWT"
+      components:
+        - type: api_key
+          header: X-API-Key
+          secret_key_env: API_KEY
+        
+        - type: jwt
+          header: Authorization
+          scheme: Bearer
+          secret_key_env: JWT_SECRET
+          claims_required: [user_id]  # Legacy format works in components
+
+    - name: multi_factor
+      type: combined
+      description: "Multi-factor authentication"
+      components:
+        - type: api_key
+          header: X-API-Key
+          secret_key_env: API_KEY
+        
+        - type: signature
+          header: X-Request-Signature
+          algorithm: hmac_sha256
+          secret_key_env: SIGN_SECRET
+          timestamp_header: X-Timestamp
+          timestamp_window: 5m
+          signature_fields: [X-Timestamp, X-API-Key]
+        
+        - type: jwt
+          header: Authorization
+          scheme: Bearer
+          secret_key_env: JWT_SECRET
+          algorithm: HS512     # ← Now supported!
+          claims:              # ← New format with types
+            - name: user_id
+              type: uint       # ← Optional but recommended
+              required: true
+            - name: email
+              type: string
+              required: true
+  # ============================================
+  # CUSTOM MIDDLEWARE (Optional)
+  # ============================================
+  
+  custom:
+    - name: request_id
+      type: custom
+      handler: middleware.RequestIDMiddleware
+      description: "Adds unique request ID"
+

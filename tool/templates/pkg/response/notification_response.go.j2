@@ -1,0 +1,63 @@
+package response
+
+import (
+	"{{ config.project.module }}/internal/domain"
+)
+
+{% if config.notifications.enabled %}
+{% set user_fields = config.notifications.model.fields %}
+{% set base_fields = [
+    {'name': 'id', 'type': 'uint'},
+    {'name': 'user_id', 'type': 'uint'},
+    {'name': 'title', 'type': 'string'},
+    {'name': 'message', 'type': 'string'},
+    {'name': 'type', 'type': 'string'},
+    {'name': 'is_read', 'type': 'bool'}
+] %}
+{% set user_field_names = user_fields | map(attribute='name') | list %}
+{% set final_fields = user_fields | list %}
+{% for base in base_fields %}
+    {% if base.name not in user_field_names %}
+        {% set _ = final_fields.append(base) %}
+    {% endif %}
+{% endfor %}
+
+// NotificationResponse represents a notification in API responses
+type NotificationResponse struct {
+{% for field in final_fields %}
+	{{ field.name | title | replace('_', '') }} {{ field.type }} `json:"{{ field.get('json_tag', field.name) }}"`
+{% endfor %}
+	CreatedAt string `json:"created_at"`
+}
+
+// NotificationListResponse represents a paginated list of notifications
+type NotificationListResponse struct {
+	Notifications []NotificationResponse `json:"notifications"`
+	HasMore       bool                   `json:"has_more"`
+}
+
+// ConvertToNotificationResponse converts a Notification model to a response struct
+func ConvertToNotificationResponse(m *domain.Notification) NotificationResponse {
+	if m == nil {
+		return NotificationResponse{}
+	}
+	return NotificationResponse{
+{% for field in final_fields %}
+		{{ field.name | title | replace('_', '') }}: m.{{ field.name | title | replace('_', '') }},
+{% endfor %}
+		CreatedAt: m.CreatedAt.Format("2006-01-02 15:04:05"),
+	}
+}
+
+// ConvertToNotificationResponses converts multiple Notification models
+func ConvertToNotificationResponses(ms []domain.Notification) []NotificationResponse {
+	resps := make([]NotificationResponse, len(ms))
+	for i := range ms {
+		resps[i] = ConvertToNotificationResponse(&ms[i])
+	}
+	return resps
+}
+
+{% endif %}
+
+

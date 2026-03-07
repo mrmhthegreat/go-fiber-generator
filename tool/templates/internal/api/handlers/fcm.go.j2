@@ -1,0 +1,252 @@
+package handlers
+
+import (
+    "log"
+
+    "github.com/bytedance/sonic"
+    "github.com/gofiber/fiber/v2"
+
+    "{{ config.project.module }}/config"
+    "{{ config.project.module }}/handlers"
+	dtopkg "{{ config.project.module }}/pkg/dto"
+	rbacpkg "{{ config.project.module }}/pkg/rbac"
+	utilspkg "{{ config.project.module }}/pkg/utils"
+	fcmpkg "{{ config.project.module }}/pkg/fcm"
+    "{{ config.project.module }}/internal/domain"
+)
+{% set fcm = config.fcm %}
+
+// ─────────────────────────────────────────────────────────
+//  FCMHandler — shared handler used by both:
+//    • Web routes  (/dashboard/notifications/...)
+//    • API routes  (/api/fcm/...)
+//  The same methods respond appropriately based on context.
+// ─────────────────────────────────────────────────────────
+
+// FCMHandler holds all FCM-related route handlers
+type FCMHandler struct{}
+
+// New creates a new FCMHandler
+func New() *FCMHandler {
+    return &FCMHandler{}
+}
+
+// ─── Web-only: page render ────────────────────────────────
+
+{% if fcm.web_handler.enabled and fcm.web_handler.GetNotificationPage.enabled %}
+// GetNotificationPage renders the admin notification management page (web)
+func (h *FCMHandler) GetNotificationPage(c *fiber.Ctx) error {
+    userID, ok := c.Locals("user_id").(uint)
+    if !ok {
+        return c.Redirect("/login")
+    }
+
+    dbConn := utilspkg.GetDB(c)
+
+    {% set ep = fcm.web_handler %}
+    {% if ep.context.needs_user and ep.context.user_config.use_repo %}
+    userRepo := utilspkg.Get{{ ep.context.user_config.repo_name }}(dbConn)
+    if userRepo == nil {
+        return fiber.NewError(fiber.StatusInternalServerError, "db_connection_failed")
+    }
+    user, err := userRepo.{{ ep.context.user_config.method }}(userID)
+    if err != nil {
+        return fiber.NewError(fiber.StatusInternalServerError, "internal_server_error")
+    }
+    {% endif %}
+
+    renderContext := fiber.Map{}
+
+    {% if ep.context.needs_csrf %}
+    renderContext["csrfToken"] = c.Locals("csrf").(string)
+    {% endif %}
+    {% if ep.context.needs_user %}
+    renderContext["user"] = user
+    {% endif %}
+    {% if ep.context.needs_dashbase %}
+    renderContext["dashBase"] = rbacpkg.GetDashboardBasePath(user.{{ config.rbac.model_field }})
+    {% endif %}
+
+    // Load users with FCM tokens
+    userRepo2 := utilspkg.Get{{ ep.context.user_config.repo_name }}(dbConn)
+    if userRepo2 != nil {
+        users, _ := userRepo2.{{ ep.context.user_config.get_all_method }}()
+        userList := make([]map[string]interface{}, len(users))
+        for i, u := range users {
+            userList[i] = map[string]interface{}{
+                "id":       u.ID,
+                "fullname": u.Fullname,
+                "email":    u.Email,
+                "token":    u.Token,
+            }
+        }
+        usersJSON, _ := sonic.Marshal(userList)
+        renderContext["users"] = string(usersJSON)
+    }
+
+    return c.Render("{{ ep.template | default('admin/notifications') }}", renderContext)
+}
+{% endif %}
+
+// ─── Shared: works for both web AJAX and API ──────────────
+
+{% if fcm.controller.SendFCM.enabled or fcm.web_handler.SendFCM.enabled %}
+{% if fcm.controller.SendFCM.enabled %}
+// SendNotification sends a push notification via FCM
+// @Summary Send FCM notification
+// @Description Send push notification to single device, multiple devices, or a topic
+// @Tags {{ fcm.controller.tag | default('FCM') }}
+// @Accept json
+// @Produce json
+// @Param Authorization header string true "Bearer token"
+// @Param input body dtopkg.SendFCMRequest true "Notification payload"
+// @Success 200 {object} map[string]bool
+// @Failure 400 {object} map[string]string
+// @Router {{ fcm.controller.base_path | default('/api/fcm') }}{{ fcm.controller.SendFCM.path | default('/send') }} [post]
+{% endif %}
+func (h *FCMHandler) SendNotification(c *fiber.Ctx) error {
+    var req dtopkg.SendFCMRequest
+    if err := c.BodyParser(&req); err != nil {
+        return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid_request"})
+    }
+
+    if req.Title == "" || req.Body == "" {
+        return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "missing_content"})
+    }
+
+    // Capture DB + userRepo before goroutine (c is unsafe inside goroutine)
+    dbConn := utilspkg.GetDB(c)
+    {% set ep = fcm.web_handler %}
+    userRepo := utilspkg.Get{{ ep.context.user_config.repo_name }}(dbConn)
+
+    go func() {
+        switch req.Type {
+        case "single":
+            if len(req.Tokens) > 0 {
+                {% if fcm.save_to_database %}
+                u, _ := userRepo.{{ ep.context.user_config.get_user_by_token_method }}(req.Tokens[0])
+                var uid uint
+                if u != nil { uid = u.ID }
+                handlers.GlobalNotify(domain.Notification{
+                    UserID:  uid,
+                    Title:   req.Title,
+                    Message: req.Body,
+                }, &req.Tokens[0])
+                {% else %}
+                if err := fcmpkg.SendToDevice(config.FCM, req.Tokens[0], req.Title, req.Body); err != nil {
+                    log.Printf("FCM send error: %v", err)
+                }
+                {% endif %}
+            }
+        case "multiple":
+            for _, token := range req.Tokens {
+                {% if fcm.save_to_database %}
+                u, _ := userRepo.{{ ep.context.user_config.get_user_by_token_method }}(token)
+                var uid uint
+                if u != nil { uid = u.ID }
+                handlers.GlobalNotify(domain.Notification{
+                    UserID:  uid,
+                    Title:   req.Title,
+                    Message: req.Body,
+                }, &token)
+                {% else %}
+                if err := fcmpkg.SendToDevice(config.FCM, token, req.Title, req.Body); err != nil {
+                    log.Printf("FCM send error [%s]: %v", token, err)
+                }
+                {% endif %}
+            }
+        case "topic":
+            if req.Topic != "" {
+                _ = fcmpkg.SendToTopic(config.FCM, req.Topic, req.Title, req.Body)
+                {% if fcm.save_to_database %}
+                handlers.GlobalNotify(domain.Notification{
+                    UserID:  0,
+                    Title:   "[Topic: " + req.Topic + "] " + req.Title,
+                    Message: req.Body,
+                }, nil)
+                {% endif %}
+            }
+        }
+    }()
+
+    return c.JSON(fiber.Map{"success": true})
+}
+{% endif %}
+
+{% if fcm.controller.SubscribeToTopic.enabled or fcm.web_handler.SubscribeToTopic.enabled %}
+{% if fcm.controller.SubscribeToTopic.enabled %}
+// SubscribeToTopic subscribes a device token to a FCM topic
+// @Summary Subscribe to FCM topic
+// @Tags {{ fcm.controller.tag | default('FCM') }}
+// @Accept json
+// @Produce json
+// @Param Authorization header string true "Bearer token"
+// @Param input body dtopkg.SubscribeTopicRequest true "Subscribe request"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Router {{ fcm.controller.base_path | default('/api/fcm') }}{{ fcm.controller.SubscribeToTopic.path | default('/subscribe') }} [post]
+{% endif %}
+func (h *FCMHandler) SubscribeToTopic(c *fiber.Ctx) error {
+    var req dtopkg.SubscribeTopicRequest
+    if err := c.BodyParser(&req); err != nil {
+        return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid_request"})
+    }
+
+    if req.Token == "" {
+        return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "token_required"})
+    }
+
+    topic := req.Topic
+    if topic == "" {
+        topic = "{{ fcm.admin_topic | default('admin_notifications') }}"
+    }
+
+    if err := fcmpkg.SubscribeToTopic(config.FCM, []string{req.Token}, topic); err != nil {
+        log.Printf("FCM subscribe error: %v", err)
+        return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "subscription_failed"})
+    }
+
+    return c.JSON(fiber.Map{
+        "message": "subscribed_successfully",
+        "topic":   topic,
+    })
+}
+{% endif %}
+
+{% if fcm.web_handler.enabled or fcm.controller.enabled %}
+// GetUsersWithTokens returns all users that have FCM tokens registered
+// @Summary Get users with FCM tokens
+// @Tags {{ fcm.controller.tag | default('FCM') }}
+// @Produce json
+// @Param Authorization header string true "Bearer token"
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]string
+// @Router {{ fcm.controller.base_path | default('/api/fcm') }}/users [get]
+func (h *FCMHandler) GetUsersWithTokens(c *fiber.Ctx) error {
+    dbConn := utilspkg.GetDB(c)
+    {% set ep = fcm.web_handler %}
+    userRepo := utilspkg.Get{{ ep.context.user_config.repo_name }}(dbConn)
+    if userRepo == nil {
+        return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "db_connection_failed"})
+    }
+
+    users, err := userRepo.{{ ep.context.user_config.get_all_method }}()
+    if err != nil {
+        return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "fetch_failed"})
+    }
+
+    result := make([]fiber.Map, 0, len(users))
+    for _, u := range users {
+        if u.Token != "" {
+            result = append(result, fiber.Map{
+                "id":       u.ID,
+                "fullname": u.Fullname,
+                "email":    u.Email,
+                "token":    u.Token,
+            })
+        }
+    }
+
+    return c.JSON(fiber.Map{"users": result, "count": len(result)})
+}
+{% endif %}

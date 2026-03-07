@@ -1,0 +1,1741 @@
+# This demonstrates the new features for dynamic create/update and responses
+project:
+  module: github.com/username/my_api
+  user_model_name: User  # Name of the user model struct
+
+models:
+  # ==========================================
+  # USER MODEL - Enhanced with DTOs and Responses
+  # ==========================================
+  - name: User
+    table_name: users
+    soft_delete:
+      enabled: true
+      include_hard_delete: true
+      include_restore: true
+    timestamps: true
+
+    file_upload_defaults:
+      storage_path: uploads/posts
+      max_size_mb: 5
+      allowed_types: [image/jpeg, image/png, image/webp]
+      required: false
+    
+    # Repository features
+    pagination: true
+    filters: [id, email, username, role, verified, is_active, search]
+    sort_by: [created_at, updated_at, fullname, email, username, post_count]
+    search_fields: [fullname, email, username, bio]
+    default_sort_field: created_at
+    default_sort_order: desc
+    
+    fields:
+      - name: ID
+        type: uint
+        gorm: "primaryKey;autoIncrement"
+        json: "id"
+      
+      - name: Username
+        type: string
+        gorm: "unique;not null;index"
+        json: "username"
+        validate: "required,min=3,max=50,alphanum"
+      
+      - name: Email
+        type: string
+        gorm: "unique;not null;index"
+        json: "email"
+        validate: "required,email"
+      
+      - name: Password
+        type: string
+        gorm: "not null"
+        json: "-"
+      
+      - name: Fullname
+        type: string
+        gorm: "not null"
+        json: "fullname"
+        validate: "required,min=2,max=100"
+      
+      - name: Bio
+        type: "*string"
+        gorm: "type:text;null"
+        json: "bio"
+      
+      - name: Avatar
+        type: string
+        gorm: "default:'https://api.dicebear.com/7.x/avataaars/svg'"
+        json: "avatar"
+      
+      - name: Role
+        type: string
+        gorm: "type:varchar(20);default:'user'"
+        json: "role"
+        validate: "oneof=user author editor admin"
+      
+      - name: Verified
+        type: bool
+        gorm: "default:false"
+        json: "verified"
+      
+      - name: IsActive
+        type: bool
+        gorm: "default:true"
+        json: "is_active"
+      
+      - name: PostCount
+        type: int
+        gorm: "default:0"
+        json: "post_count"
+      
+      - name: FollowerCount
+        type: int
+        gorm: "default:0"
+        json: "follower_count"
+    
+    relations:
+      - name: Posts
+        type: has_many
+        model: Post
+        foreign_key: AuthorID
+    
+     # ==========================================
+    # Multiple DTOs - Define as many as you need!
+    # ==========================================
+
+    # ==========================================
+    # DTO Configuration - Specify fields for create/update
+    # ==========================================
+    create_dto:
+      enabled: true
+      fields:
+        - Username
+        - Email
+        - Password
+        - Fullname
+        - Bio        # Optional fields are automatically made pointers
+        - Avatar
+        - Role
+      custom_fields: []  # Add fields not in model if needed
+    
+    update_dto:
+      enabled: true
+      partial: true  # All fields optional (wrapped in pointers)
+      fields:
+        - Username
+        - Email
+        - Fullname
+        - Bio
+        - Avatar
+        - Role
+        - IsActive
+        - Verified
+      custom_fields: []
+    dtos:
+      # 1. Registration DTO - User signs up
+      - name: RegisterUserRequest
+        type: create
+        enabled: true
+        fields:
+          - Username
+          - Email
+          - Password
+          - Fullname
+        custom_fields:
+          - name: ConfirmPassword
+            type: string
+            json: confirm_password
+            validate: "required,eqfield=Password"
+        file_fields: {}
+      
+      # 2. Create by Admin DTO - Admin creates user with avatar upload
+      - name: CreateUserByAdminRequest
+        type: create
+        enabled: true
+        fields:
+          - Username
+          - Email
+          - Password
+          - Fullname
+          - Avatar
+          - Bio
+        file_fields:
+          Avatar: file  # This field becomes *multipart.FileHeader
+      
+      # 3. Update Profile DTO - User updates their profile (string URL)
+      - name: UpdateProfileRequest
+        type: update
+        partial: true
+        enabled: true
+        fields:
+          - Fullname
+          - Avatar  # String URL (uploaded to frontend, stored in S3/CDN)
+          - Bio
+        file_fields:
+          Avatar: string  # String URL, not file upload
+      
+      # 4. Update Avatar DTO - Upload new avatar file
+      - name: UpdateAvatarRequest
+        type: update
+        partial: false  # Not partial - avatar is required
+        enabled: true
+        fields:
+          - Avatar
+        file_fields:
+          Avatar: file  # File upload to backend
+      
+      # 5. Admin Update DTO - Admin updates user
+      - name: AdminUpdateUserRequest
+        type: update
+        partial: true
+        enabled: true
+        fields:
+          - Username
+          - Email
+          - Fullname
+          - Bio
+        custom_fields:
+          - name: Role
+            type: string
+            json: role
+            validate: "omitempty,oneof=user admin moderator"
+          - name: IsActive
+            type: bool
+            json: is_active
+
+    
+    # ==========================================
+    # Response Configuration
+    # ==========================================
+    list_response:
+      enabled: true
+      fields:
+        - name: ID
+          type: uint
+          json_name: id
+          from_field: ID
+        - name: Username
+          type: string
+          json_name: username
+          from_field: Username
+        - name: Fullname
+          type: string
+          json_name: fullname
+          from_field: Fullname
+        - name: Avatar
+          type: string
+          json_name: avatar
+          from_field: Avatar
+        - name: Role
+          type: string
+          json_name: role
+          from_field: Role
+        - name: PostCount
+          type: int
+          json_name: post_count
+          from_field: PostCount
+        - name: FollowerCount
+          type: int
+          json_name: follower_count
+          from_field: FollowerCount
+        - name: CreatedAt
+          type: time.Time
+          json_name: created_at
+          from_field: CreatedAt
+      include_relations: []
+    
+    detail_response:
+      enabled: true
+      fields:
+        - name: ID
+          type: uint
+          json_name: id
+          from_field: ID
+        - name: Username
+          type: string
+          json_name: username
+          from_field: Username
+        - name: Email
+          type: string
+          json_name: email
+          from_field: Email
+        - name: Fullname
+          type: string
+          json_name: fullname
+          from_field: Fullname
+        - name: Bio
+          type: "*string"
+          json_name: bio
+          from_field: Bio
+          omitempty: true
+        - name: Avatar
+          type: string
+          json_name: avatar
+          from_field: Avatar
+        - name: Role
+          type: string
+          json_name: role
+          from_field: Role
+        - name: Verified
+          type: bool
+          json_name: verified
+          from_field: Verified
+        - name: IsActive
+          type: bool
+          json_name: is_active
+          from_field: IsActive
+        - name: PostCount
+          type: int
+          json_name: post_count
+          from_field: PostCount
+        - name: FollowerCount
+          type: int
+          json_name: follower_count
+          from_field: FollowerCount
+        - name: CreatedAt
+          type: time.Time
+          json_name: created_at
+          from_field: CreatedAt
+        - name: UpdatedAt
+          type: time.Time
+          json_name: updated_at
+          from_field: UpdatedAt
+      include_relations:
+        - name: Posts
+          response_type: nested_list
+          response_struct: PostListItem
+          json_name: posts
+    
+    # ==========================================
+    # Controller Configuration
+    # ==========================================
+    controller:
+      enabled: true
+      base_path: /api/users
+      middleware: [auth]
+      tag: Users
+      crud_settings:
+        create:
+          enabled: true
+          method: POST
+          dto: CreateUserByAdminRequest   # which DTO to use
+          response: detail                # detail | list | success | CustomStructName
+          ownership:
+            enabled: false
+          validation:
+            use_validator: true
+        get:
+          enabled: true
+          response: detail
+          ownership:
+            enabled: false
+        update:
+          enabled: true
+          method: PATCH
+          dto: AdminUpdateUserRequest
+          response: detail
+          ownership:
+            enabled: false
+          validation:
+            use_validator: true
+        delete:
+          enabled: true
+          hard_delete: false
+          ownership:
+            enabled: false
+        batch_delete:
+          enabled: true
+          ownership_check: false
+          hard_delete: false
+
+    # Custom getter controller settings — add 'controller:' block inside each getter
+    custom_getters:
+      - name: GetByEmail
+        fields: [email]
+        field_types: [string]
+        unique: true
+        response_type: detail  # Uses detail_response
+        preloads:
+          - name: Posts
+            select_fields: [id, title, slug, status, published_at]
+            order_by: "published_at DESC"
+            limit: 10
+      
+      - name: GetByUsername
+        fields: [username]
+        field_types: [string]
+        unique: true
+        response_type: detail
+      
+      - name: GetActiveAuthors
+        fields: []
+        field_types: []
+        unique: false
+        pagination: true
+        response_type: list  # Uses list_response
+        filters: [role, verified, search]
+        sort_by: [post_count, follower_count, created_at]
+        default_sort_field: post_count
+        default_sort_order: desc
+        controller:
+          enabled: true
+          path: /api/users/authors
+          method: GET
+          middleware: []
+          description: "Get active authors with pagination"
+          query_params:
+            - name: role
+              type: string
+              default: "author"
+            - name: verified
+              type: bool
+
+  # ==========================================
+  # POST MODEL - With nested responses
+  # ==========================================
+  - name: Post
+    table_name: posts
+    soft_delete: true
+    timestamps: true
+    
+    pagination: true
+    filters: [id, author_id, category_id, status, featured, search]
+    sort_by: [created_at, updated_at, published_at, view_count, like_count]
+    search_fields: [title, excerpt, content]
+    
+    fields:
+      - name: ID
+        type: uint
+        gorm: "primaryKey;autoIncrement"
+        json: "id"
+      
+      - name: Title
+        type: string
+        gorm: "not null;index"
+        json: "title"
+        validate: "required,min=5,max=200"
+      
+      - name: Slug
+        type: string
+        gorm: "unique;not null;index"
+        json: "slug"
+        validate: "required,slug"
+      
+      - name: Excerpt
+        type: "*string"
+        gorm: "type:text;null"
+        json: "excerpt"
+      
+      - name: Content
+        type: string
+        gorm: "type:text;not null"
+        json: "content"
+        validate: "required"
+      
+      - name: FeaturedImage
+        type: "*string"
+        gorm: "null"
+        json: "featured_image"
+      
+      - name: AuthorID
+        type: uint
+        gorm: "not null;index"
+        json: "author_id"
+      
+      - name: CategoryID
+        type: "*uint"
+        gorm: "null;index"
+        json: "category_id"
+      
+      - name: Status
+        type: string
+        gorm: "type:varchar(20);default:'draft'"
+        json: "status"
+        validate: "oneof=draft published archived"
+      
+      - name: Featured
+        type: bool
+        gorm: "default:false;index"
+        json: "featured"
+      
+      - name: PublishedAt
+        type: "*time.Time"
+        gorm: "index"
+        json: "published_at"
+      
+      - name: ViewCount
+        type: int
+        gorm: "default:0"
+        json: "view_count"
+      
+      - name: LikeCount
+        type: int
+        gorm: "default:0"
+        json: "like_count"
+      
+      - name: CommentCount
+        type: int
+        gorm: "default:0"
+        json: "comment_count"
+    
+    relations:
+      - name: Author
+        type: belongs_to
+        model: User
+        foreign_key: AuthorID
+      
+      - name: Category
+        type: belongs_to
+        model: Category
+        foreign_key: CategoryID
+      
+      - name: Comments
+        type: has_many
+        model: Comment
+        foreign_key: PostID
+      
+      - name: Tags
+        type: many_to_many
+        model: Tag
+        join_table: post_tags
+    
+    dtos:
+      # 1. Quick Draft DTO - Just title and content
+      - name: CreateDraftRequest
+        type: create
+        fields:
+          - Title
+          - Content
+        file_fields: {}
+      
+      # 2. Full Post DTO - With image upload
+      - name: CreatePostRequest
+        type: create
+        fields:
+          - Title
+          - Content
+          - FeaturedImage
+          - Status
+        file_fields:
+          FeaturedImage: file  # Upload image file
+      
+      # 3. Post with URL DTO - Image already uploaded to CDN
+      - name: CreatePostWithURLRequest
+        type: create
+        fields:
+          - Title
+          - Content
+          - FeaturedImage  # Image URL from frontend
+          - Status
+        file_fields:
+          FeaturedImage: string  # String URL
+      
+      # 4. Update Content Only
+      - name: UpdateContentRequest
+        type: update
+        partial: true
+        fields:
+          - Title
+          - Content
+      
+      # 5. Update Featured Image (file upload)
+      - name: UpdateFeaturedImageRequest
+        type: update
+        partial: false
+        fields:
+          - FeaturedImage
+        file_fields:
+          FeaturedImage: file
+      
+      # 6. Publish Post
+      - name: PublishPostRequest
+        type: update
+        partial: true
+        fields:
+          - Status
+        custom_fields:
+          - name: PublishAt
+            type: "*time.Time"
+            json: publish_at
+            validate: "omitempty"
+
+    # List response - minimal info
+    list_response:
+      enabled: true
+      fields:
+        - name: ID
+          type: uint
+          json_name: id
+          from_field: ID
+        - name: Title
+          type: string
+          json_name: title
+          from_field: Title
+        - name: Slug
+          type: string
+          json_name: slug
+          from_field: Slug
+        - name: Excerpt
+          type: "*string"
+          json_name: excerpt
+          from_field: Excerpt
+          omitempty: true
+        - name: FeaturedImage
+          type: "*string"
+          json_name: featured_image
+          from_field: FeaturedImage
+          omitempty: true
+        - name: Status
+          type: string
+          json_name: status
+          from_field: Status
+        - name: Featured
+          type: bool
+          json_name: featured
+          from_field: Featured
+        - name: ViewCount
+          type: int
+          json_name: view_count
+          from_field: ViewCount
+        - name: LikeCount
+          type: int
+          json_name: like_count
+          from_field: LikeCount
+        - name: PublishedAt
+          type: "*time.Time"
+          json_name: published_at
+          from_field: PublishedAt
+          omitempty: true
+        - name: CreatedAt
+          type: time.Time
+          json_name: created_at
+          from_field: CreatedAt
+      include_relations:
+        - name: Author
+          response_type: nested_detail
+          response_struct: UserListItem
+          json_name: author
+          foreign_key: AuthorID
+        - name: Category
+          response_type: nested_detail
+          response_struct: CategoryListItem
+          json_name: category
+          foreign_key: CategoryID
+    
+    # Detail response - full info with relations
+    detail_response:
+      enabled: true
+      fields:
+        - name: ID
+          type: uint
+          json_name: id
+          from_field: ID
+        - name: Title
+          type: string
+          json_name: title
+          from_field: Title
+        - name: Slug
+          type: string
+          json_name: slug
+          from_field: Slug
+        - name: Excerpt
+          type: "*string"
+          json_name: excerpt
+          from_field: Excerpt
+          omitempty: true
+        - name: Content
+          type: string
+          json_name: content
+          from_field: Content
+        - name: FeaturedImage
+          type: "*string"
+          json_name: featured_image
+          from_field: FeaturedImage
+          omitempty: true
+        - name: Status
+          type: string
+          json_name: status
+          from_field: Status
+        - name: Featured
+          type: bool
+          json_name: featured
+          from_field: Featured
+        - name: ViewCount
+          type: int
+          json_name: view_count
+          from_field: ViewCount
+        - name: LikeCount
+          type: int
+          json_name: like_count
+          from_field: LikeCount
+        - name: CommentCount
+          type: int
+          json_name: comment_count
+          from_field: CommentCount
+        - name: PublishedAt
+          type: "*time.Time"
+          json_name: published_at
+          from_field: PublishedAt
+          omitempty: true
+        - name: CreatedAt
+          type: time.Time
+          json_name: created_at
+          from_field: CreatedAt
+        - name: UpdatedAt
+          type: time.Time
+          json_name: updated_at
+          from_field: UpdatedAt
+      include_relations:
+        - name: Author
+          response_type: nested_detail
+          response_struct: UserListItem
+          json_name: author
+          foreign_key: AuthorID
+        - name: Category
+          response_type: nested_detail
+          response_struct: CategoryListItem
+          json_name: category
+          foreign_key: CategoryID
+        - name: Comments
+          response_type: nested_list
+          response_struct: CommentListItem
+          json_name: comments
+        - name: Tags
+          response_type: nested_list
+          response_struct: TagListItem
+          json_name: tags
+    
+    custom_getters:
+      - name: GetBySlug
+        fields: [slug]
+        field_types: [string]
+        unique: true
+        response_type: detail
+        preloads:
+          - name: Author
+            select_fields: [id, username, fullname, avatar]
+            nested_relations:
+              - name: Posts
+                select_fields: [id, title, slug]
+                order_by: "created_at DESC"
+                limit: 5
+          - name: Category
+            select_fields: [id, name, slug]
+          - name: Tags
+            select_fields: [id, name, slug]
+            order_by: "name ASC"
+        controller:
+          enabled: true
+          path: /api/posts/:slug
+          method: GET
+          middleware: []
+          description: "Get post by slug with author, category and tags"
+
+      - name: GetBySlugWithComments
+        fields: [slug]
+        field_types: [string]
+        unique: true
+        response_type: detail
+        preloads:
+          - name: Author
+            select_fields: [id, username, fullname, avatar]
+          - name: Comments
+            order_by: "created_at DESC"
+            limit: 20
+        controller:
+          enabled: false   # disabled — use GetBySlug instead
+
+      - name: GetFewFieldPosts
+        fields: []
+        field_types: []
+        unique: false
+        pagination: true
+        response_type: list
+        filters: [author_id, category_id, featured, search]
+        sort_by: [published_at, view_count, like_count]
+        default_sort_field: published_at
+        default_sort_order: desc
+        select_fields:
+          - Title
+          - Slug
+        controller:
+          enabled: false   # internal use only
+
+      - name: GetPublishedPosts
+        fields: []
+        field_types: []
+        unique: false
+        pagination: true
+        response_type: list
+        filters: [author_id, category_id, featured, search]
+        sort_by: [published_at, view_count, like_count]
+        default_sort_field: published_at
+        default_sort_order: desc
+        select_fields:
+          - ID
+          - Title
+        preloads:
+          - name: Author
+            select_fields: [id, username, fullname, avatar]
+          - name: Category
+            select_fields: [id, name, slug, color]
+            order_by: "name ASC"
+        controller:
+          enabled: true
+          path: /api/posts/published
+          method: GET
+          middleware: []
+          description: "Get published posts with pagination and filters"
+          query_params:
+            - name: status
+              type: enum
+              values: ["draft", "published", "archived"]
+              default: "published"
+            - name: featured
+              type: bool
+            - name: created_from
+              type: date
+              format: "2006-01-02"
+            - name: created_to
+              type: date
+              format: "2006-01-02"
+
+      - name: GetPostsByAuthor
+        fields: [author_id]
+        field_types: [uint]
+        unique: false
+        pagination: true
+        response_type: list
+        filters: [status, category_id]
+        sort_by: [published_at, view_count]
+        default_sort_field: published_at
+        default_sort_order: desc
+        controller:
+          enabled: true
+          rate_limit:
+            enabled: false
+            name: post_rate_limit
+          path: /api/users/:author_id/posts
+          method: GET
+          middleware: []
+          description: "Get posts by a specific author"
+          ownership:
+            enabled: false
+      - name: GetUserPosts
+        fields: [AuthorID]
+        unique: false
+        pagination: true
+        
+        # API Controller
+        controller:
+          enabled: true
+          path: /api/users/:user_id/posts
+          response: list
+        
+        # Web Handler
+        web_handler:
+          enabled: true
+          handler_type: page
+          path: /dashboard/users/:user_id/posts
+          template: user_posts.html
+          
+          permissions: [post.view.user]
+          
+          path_params:
+            - name: user_id
+              type: uint
+          
+          query_params:
+            - name: status
+              type: string
+              default: "published"
+          
+          context:
+            needs_user: true
+            needs_csrf: true
+            needs_perms: true
+            needs_dashbase: true
+            user_config:                      # ✅ Feature 2
+              use_repo: true
+              repo_name: userRepo
+              method: GetByID
+            custom_data:
+              - name: author
+                var: author
+                repo: User
+                method: GetByID
+                args: [user_id]
+                marshal: false
+              - name: posts
+                var: posts
+                repo: Post
+                method: GetUserPosts
+                args: [user_id, opts]
+                marshal: true
+      
+      - name: GetFeaturedPosts
+        fields: [Featured]
+        unique: false
+        pagination: true
+        
+        web_handler:
+          enabled: true
+          handler_type: page
+          path: /dashboard/posts/featured
+          template: featured_posts.html
+          
+          permissions: [post.list]
+          middleware: [auth, csrf]
+          rate_limit:
+            enabled: false
+            name: post_rate_limit
+          context:
+            needs_user: true
+            needs_csrf: true
+            needs_perms: true
+            needs_dashbase: true
+            user_config:                      # ✅ Feature 2
+              use_repo: true
+              repo_name: userRepo
+              method: GetByID
+            custom_data:
+              - name: posts
+                var: posts
+                repo: Post
+                method: GetFeaturedPosts
+                args: [opts]
+                marshal: true
+    # ==========================================
+    # Controller Configuration
+    # ==========================================
+    controller:
+      enabled: true
+      base_path: /api/posts
+      middleware: [auth]
+      rate_limit:
+        enabled: false
+        name: post_rate_limit
+        
+      tag: Posts
+      crud_settings:
+
+        create:
+          enabled: true
+          method: POST
+          dto: CreatePostRequest
+          response:
+            struct: PostDetailResponse
+            converter: ToPostDetailResponse
+          ownership:
+            enabled: true
+            verify: field          # fetch first, compare field → simple
+            field: author_id       # model.AuthorID must equal userID
+          auto_fields:
+            - name: author_id
+              source: context      # set from JWT user_id
+          validation:
+            use_validator: true
+
+        get:
+          enabled: true
+          # Which repo method to call and what to pass it
+          repo_method: GetByID
+          middleware: [auths]
+
+          params:
+            - name: id
+              type: uint
+              source: path         # from :id URL segment
+          response:
+            struct: PostDetailResponse
+            converter: ToPostDetailResponse
+          ownership:
+            enabled: false         # public endpoint — no ownership check
+
+        update:
+          enabled: true
+          method: PATCH
+          dto: UpdateContentRequest
+          rate_limit:
+            enabled: false
+            name: post_rate_limit
+          # Ownership via a dedicated repo method that takes both user_id and post_id.
+          # The method returns ErrRecordNotFound if the post doesn't belong to the user —
+          # no extra field comparison needed (verify: param).
+          repo_method: GetByUserAndID   # repo.GetByUserAndID(userID, id)
+          params:
+            - name: user_id
+              type: uint
+              source: claim        # from JWT Locals("user_id")
+            - name: id
+              type: uint
+              source: path         # from :id URL segment
+          response:
+            struct: PostDetailResponse
+            converter: ToPostDetailResponse
+          ownership:
+            enabled: true
+            verify: param          # repo already enforces ownership via GetByUserAndID
+          validation:
+            use_validator: true
+
+        delete:
+          enabled: true
+          hard_delete: false
+          repo_method: GetByUserAndID   # same ownership-aware fetch
+          params:
+            - name: user_id
+              type: uint
+              source: claim
+            - name: id
+              type: uint
+              source: path
+          ownership:
+            enabled: true
+            verify: param          # repo enforces it
+
+        batch_delete:
+          enabled: false
+    web_handler:
+      enabled: true
+      base_path: /dashboard/posts
+      middleware: [auth, csrf]
+      package_name: handlers
+      auth_redirect: /login
+      template_base: views/posts
+      rate_limit:
+        enabled: false
+        name: post_rate_limit
+      # RBAC configuration
+      rbac:
+        enabled: true
+        service_var: rbacService
+      
+      crud_settings:
+        # CREATE PAGE - Show create form
+        create_page:
+          enabled: true
+          handler_type: page
+          method: GET
+          path: /new
+          template: create.html
+          rate_limit:
+            enabled: false
+            name: post_rate_limit
+          middleware: [auth, csrf]
+          permissions: [post.create]
+          
+          context:
+            needs_user: true
+            needs_csrf: true
+            needs_perms: true
+            needs_dashbase: true
+            needs_translations: true
+            base_translations: PostBase
+            extra_translations: [CommonTranslations]
+            user_config:                      # ✅ Feature 2
+              use_repo: true
+              repo_name: userRepo
+              method: GetByID
+            custom_data:
+              - name: categories
+                var: categories
+                repo: Category
+                method: GetAll
+                args: []
+                marshal: true
+              - name: tags
+                var: tags
+                repo: Tag
+                method: GetAll
+                args: []
+                marshal: true
+        
+        # CREATE ACTION - Handle form submission
+        create:
+          enabled: true
+          handler_type: action
+          method: POST
+          path: ""
+          dto: CreatePostRequest
+          
+          return_type: redirect
+          redirect_on_success: /dashboard/posts
+          
+          permissions: [post.create]
+          
+          # File uploads auto-detected from DTO
+          # Or override here if needed
+          file_uploads:
+            - field: FeaturedImage
+              form_field: featured_image
+              storage_path: uploads/posts
+              max_size_mb: 5
+              allowed_types: [image/jpeg, image/png, image/webp]
+              required: false
+          ownership:
+            enabled: true
+            field: AuthorID
+            auto_fill: user_id
+        
+        # EDIT PAGE - Show edit form
+        edit_page:
+          enabled: true
+          handler_type: page
+          method: GET
+          path: /:id/edit
+          template: edit.html
+          
+          permissions: [post.edit]
+          
+          path_params:
+            - name: id
+              type: uint
+          
+          context:
+            needs_user: true
+            needs_csrf: true
+            needs_perms: true
+            needs_dashbase: true
+            needs_translations: true
+            base_translations: PostBase
+            user_config:                      # ✅ Feature 2
+              use_repo: true
+              repo_name: userRepo
+              method: GetByID
+            custom_data:
+              - name: post
+                var: post
+                repo: Post
+                method: GetByID
+                args: [id]
+                marshal: false
+              - name: categories
+                var: categories
+                repo: Category
+                method: GetAll
+                args: []
+                marshal: true
+              - name: tags
+                var: tags
+                repo: Tag
+                method: GetAll
+                args: []
+                marshal: true
+          
+          ownership:
+            enabled: true
+            field: AuthorID
+            verify: field
+        
+        # UPDATE ACTION - Handle form submission
+        update:
+          enabled: true
+          handler_type: action
+          method: POST
+          path: /:id
+          dto: UpdatePostRequest
+          
+          return_type: hx_redirect
+          hx_redirect: "{dashBase}/posts/:id"
+          
+          permissions: [post.edit]
+          track_changes: true  # Enable update diff tracking
+          
+          path_params:
+            - name: id
+              type: uint
+          
+          ownership:
+            enabled: true
+            verify: param
+            repo_method: GetByUserAndID
+        
+        # GET - Show single post
+        get:
+          enabled: true
+          handler_type: page
+          method: GET
+          path: /:id
+          template: show.html
+          
+          permissions: [post.view]
+          
+          path_params:
+            - name: id
+              type: uint
+          
+          context:
+            needs_user: true
+            needs_csrf: true
+            needs_perms: true
+            needs_dashbase: true
+            user_config:                      # ✅ Feature 2
+              use_repo: true
+              repo_name: userRepo
+              method: GetByID
+            custom_data:
+              - name: post
+                var: post
+                repo: Post
+                method: GetByID
+                args: [id]
+                marshal: false
+              - name: comments
+                var: comments
+                repo: Comment
+                method: GetByPostID
+                args: [id]
+                marshal: true
+                rbac_perm: comment.view
+        
+        # LIST - Show all posts
+        list:
+          enabled: true
+          handler_type: page
+          method: GET
+          path: ""
+          template: index.html
+          
+          permissions: [post.list]
+          pagination: true
+          
+          query_params:
+            - name: search
+              type: string
+              default: ""
+            - name: status
+              type: string
+              default: "published"
+            - name: category_id
+              type: uint
+              default: 0
+          
+          context:
+            needs_user: true
+            needs_csrf: true
+            needs_perms: true
+            needs_dashbase: true
+            needs_translations: true
+            user_config:                      # ✅ Feature 2
+              use_repo: true
+              repo_name: userRepo
+              method: GetByID
+            base_translations: PostBase
+            custom_data:
+              - name: posts
+                var: posts
+                repo: Post
+                method: List
+                args: [opts]
+                marshal: true
+              - name: categories
+                var: categories
+                repo: Category
+                method: GetAll
+                args: []
+                marshal: true
+        
+        # DELETE
+        delete:
+          enabled: true
+          handler_type: action
+          method: DELETE
+          path: /:id
+          
+          return_type: json
+          
+          permissions: [post.delete]
+          
+          path_params:
+            - name: id
+              type: uint
+          
+          ownership:
+            enabled: true
+            field: AuthorID
+            verify: field
+   
+    batch_operations:
+      - name: BulkUpdateStatus
+        update_fields: [status, updated_at]
+      
+      - name: BulkFeature
+        update_fields: [featured, updated_at]
+
+  # ==========================================
+  # CATEGORY MODEL - Minimal example
+  # ==========================================
+  - name: Category
+    table_name: categories
+    soft_delete: true
+    timestamps: true
+    
+    pagination: true
+    filters: [id, parent_id, is_active]
+    sort_by: [name, order]
+    
+    fields:
+      - name: ID
+        type: uint
+        gorm: "primaryKey;autoIncrement"
+        json: "id"
+      
+      - name: Name
+        type: string
+        gorm: "unique;not null"
+        json: "name"
+        validate: "required,min=2,max=100"
+      
+      - name: Slug
+        type: string
+        gorm: "unique;not null"
+        json: "slug"
+      
+      - name: Color
+        type: string
+        gorm: "default:'#6366f1'"
+        json: "color"
+      
+      - name: Order
+        type: int
+        gorm: "default:0"
+        json: "order"
+      
+      - name: IsActive
+        type: bool
+        gorm: "default:true"
+        json: "is_active"
+      
+      - name: PostCount
+        type: int
+        gorm: "default:0"
+        json: "post_count"
+    
+    create_dto:
+      enabled: true
+      fields: [Name, Slug, Color, Order, IsActive]
+    
+    update_dto:
+      enabled: true
+      partial: true
+      fields: [Name, Slug, Color, Order, IsActive]
+    
+    list_response:
+      enabled: true
+      fields:
+        - name: ID
+          type: uint
+          json_name: id
+          from_field: ID
+        - name: Name
+          type: string
+          json_name: name
+          from_field: Name
+        - name: Slug
+          type: string
+          json_name: slug
+          from_field: Slug
+        - name: Color
+          type: string
+          json_name: color
+          from_field: Color
+        - name: PostCount
+          type: int
+          json_name: post_count
+          from_field: PostCount
+    
+    detail_response:
+      enabled: true
+      fields:
+        - name: ID
+          type: uint
+          json_name: id
+          from_field: ID
+        - name: Name
+          type: string
+          json_name: name
+          from_field: Name
+        - name: Slug
+          type: string
+          json_name: slug
+          from_field: Slug
+        - name: Color
+          type: string
+          json_name: color
+          from_field: Color
+        - name: Order
+          type: int
+          json_name: order
+          from_field: Order
+        - name: IsActive
+          type: bool
+          json_name: is_active
+          from_field: IsActive
+        - name: PostCount
+          type: int
+          json_name: post_count
+          from_field: PostCount
+        - name: CreatedAt
+          type: time.Time
+          json_name: created_at
+          from_field: CreatedAt
+        - name: UpdatedAt
+          type: time.Time
+          json_name: updated_at
+          from_field: UpdatedAt
+
+  # ==========================================
+  # TAG MODEL - Simple example
+  # ==========================================
+  - name: Tag
+    table_name: tags
+    timestamps: true
+    
+    fields:
+      - name: ID
+        type: uint
+        gorm: "primaryKey;autoIncrement"
+        json: "id"
+      
+      - name: Name
+        type: string
+        gorm: "unique;not null"
+        json: "name"
+      
+      - name: Slug
+        type: string
+        gorm: "unique;not null"
+        json: "slug"
+    
+    relations:
+      - name: Posts
+        type: many_to_many
+        model: Post
+        join_table: post_tags
+    
+    create_dto:
+      enabled: true
+      fields: [Name, Slug]
+    
+    update_dto:
+      enabled: true
+      partial: true
+      fields: [Name, Slug]
+    
+    list_response:
+      enabled: true
+      fields:
+        - name: ID
+          type: uint
+          json_name: id
+          from_field: ID
+        - name: Name
+          type: string
+          json_name: name
+          from_field: Name
+        - name: Slug
+          type: string
+          json_name: slug
+          from_field: Slug
+
+  # ==========================================
+  # COMMENT MODEL
+  # ==========================================
+  - name: Comment
+    table_name: comments
+    soft_delete: true
+    timestamps: true
+    
+    pagination: true
+    filters: [post_id, user_id, status, parent_id]
+    sort_by: [created_at, like_count]
+    
+    fields:
+      - name: ID
+        type: uint
+        gorm: "primaryKey;autoIncrement"
+        json: "id"
+      
+      - name: PostID
+        type: uint
+        gorm: "not null;index"
+        json: "post_id"
+      
+      - name: UserID
+        type: uint
+        gorm: "not null;index"
+        json: "user_id"
+      
+      - name: ParentID
+        type: "*uint"
+        gorm: "null;index"
+        json: "parent_id"
+      
+      - name: Content
+        type: string
+        gorm: "type:text;not null"
+        json: "content"
+        validate: "required,min=1"
+      
+      - name: Status
+        type: string
+        gorm: "type:varchar(20);default:'pending'"
+        json: "status"
+        validate: "oneof=pending approved rejected spam"
+      
+      - name: LikeCount
+        type: int
+        gorm: "default:0"
+        json: "like_count"
+    
+    relations:
+      - name: Post
+        type: belongs_to
+        model: Post
+        foreign_key: PostID
+      
+      - name: User
+        type: belongs_to
+        model: User
+        foreign_key: UserID
+      
+      - name: Parent
+        type: belongs_to
+        model: Comment
+        foreign_key: ParentID
+      
+      - name: Replies
+        type: has_many
+        model: Comment
+        foreign_key: ParentID
+    
+    create_dto:
+      enabled: true
+      fields: [PostID, ParentID, Content]
+    
+    update_dto:
+      enabled: true
+      partial: true
+      fields: [Content, Status]
+    
+    list_response:
+      enabled: true
+      fields:
+        - name: ID
+          type: uint
+          json_name: id
+          from_field: ID
+        - name: Content
+          type: string
+          json_name: content
+          from_field: Content
+        - name: Status
+          type: string
+          json_name: status
+          from_field: Status
+        - name: LikeCount
+          type: int
+          json_name: like_count
+          from_field: LikeCount
+        - name: CreatedAt
+          type: time.Time
+          json_name: created_at
+          from_field: CreatedAt
+      include_relations:
+        - name: User
+          response_type: nested_detail
+          response_struct: UserListItem
+          json_name: user
+          foreign_key: UserID
+    
+    detail_response:
+      enabled: true
+      fields:
+        - name: ID
+          type: uint
+          json_name: id
+          from_field: ID
+        - name: PostID
+          type: uint
+          json_name: post_id
+          from_field: PostID
+        - name: Content
+          type: string
+          json_name: content
+          from_field: Content
+        - name: Status
+          type: string
+          json_name: status
+          from_field: Status
+        - name: LikeCount
+          type: int
+          json_name: like_count
+          from_field: LikeCount
+        - name: CreatedAt
+          type: time.Time
+          json_name: created_at
+          from_field: CreatedAt
+        - name: UpdatedAt
+          type: time.Time
+          json_name: updated_at
+          from_field: UpdatedAt
+      include_relations:
+        - name: User
+          response_type: nested_detail
+          response_struct: UserListItem
+          json_name: user
+          foreign_key: UserID
+        - name: Replies
+          response_type: nested_list
+          response_struct: CommentListItem
+          json_name: replies
+
+   # ==========================================
+ 
+  # ==========================================
+  # MEDIA MODEL - File upload heavy model
+  # ==========================================
+  - name: Media
+    table_name: media
+    timestamps: true
+    
+    fields:
+      - name: ID
+        type: uint
+        gorm: "primaryKey"
+        json: "id"
+      
+      - name: Filename
+        type: string
+        gorm: "not null"
+        json: "filename"
+      
+      - name: FilePath
+        type: string
+        gorm: "not null"
+        json: "file_path"
+      
+      - name: MimeType
+        type: string
+        gorm: "not null"
+        json: "mime_type"
+      
+      - name: Size
+        type: int64
+        gorm: "not null"
+        json: "size"
+      
+      - name: AltText
+        type: "*string"
+        json: "alt_text"
+      
+      - name: UserID
+        type: uint
+        gorm: "not null"
+        json: "user_id"
+    
+    dtos:
+      # Upload media file
+      - name: UploadMediaRequest
+        type: create
+        fields:
+          - Filename  # Will be file upload
+          - AltText
+        file_fields:
+          Filename: file  # This is the actual file
+        custom_fields:
+          - name: File
+            type: "*multipart.FileHeader"
+            json: "-"  # Use form:"file" in actual struct
+      
+      # Update metadata (no file)
+      - name: UpdateMediaMetadataRequest
+        type: update
+        partial: true
+        fields:
+          - AltText
+          - FilePath  # Could update the path
+        file_fields:
+          FilePath: string  # String, not file
+
+
+  # PRODUCT MODEL - Images array example
+  # ==========================================
+  - name: Product
+    table_name: products
+    timestamps: true
+    
+    fields:
+      - name: ID
+        type: uint
+        gorm: "primaryKey"
+        json: "id"
+      
+      - name: Name
+        type: string
+        gorm: "not null"
+        json: "name"
+        validate: "required"
+      
+      - name: Description
+        type: string
+        gorm: "type:text"
+        json: "description"
+      
+      - name: MainImage
+        type: string
+        json: "main_image"
+      
+      - name: Price
+        type: float64
+        gorm: "not null"
+        json: "price"
+        validate: "required,gt=0"
+    
+    dtos:
+      # Create with main image file
+      - name: CreateProductRequest
+        type: create
+        fields:
+          - Name
+          - Description
+          - MainImage
+          - Price
+        file_fields:
+          MainImage: file
+      
+      # Create with image URL
+      - name: CreateProductWithURLRequest
+        type: create
+        fields:
+          - Name
+          - Description
+          - MainImage
+          - Price
+        file_fields:
+          MainImage: string
+      
+      # Update main image only
+      - name: UpdateProductImageRequest
+        type: update
+        partial: false
+        fields:
+          - MainImage
+        file_fields:
+          MainImage: file
+      
+      # Complex update with multiple images
+      - name: UpdateProductImagesRequest
+        type: update
+        partial: true
+        fields:
+          - MainImage
+        file_fields:
+          MainImage: file
+        custom_fields:
+          # For handling JSON array of images
+          - name: AdditionalImages
+            type: "[]UpdateProductImageInput"
+            json: additional_images

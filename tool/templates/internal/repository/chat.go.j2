@@ -1,0 +1,330 @@
+package repository
+
+import (
+	"fmt"
+
+	"gorm.io/gorm"
+
+	"{{ config.project.module }}/internal/domain"
+)
+
+{% if config.chat.enabled %}
+{# Define base fields for Conversation #}
+{% set conv_base_fields = [
+    {'name': 'id', 'type': 'uint', 'primary_key': true, 'auto_increment': true},
+    {'name': 'user_id', 'type': 'uint', 'required': true, 'index': true},
+    {'name': 'receiver_id', 'type': '*uint', 'index': true},
+    {'name': 'status', 'type': 'string', 'default': 'open'},
+    {'name': 'conv_type', 'type': 'string', 'default': 'chat'},
+    {'name': 'is_read_only', 'type': 'bool', 'default': false},
+    {'name': 'last_message', 'type': 'string'},
+    {'name': 'priority', 'type': 'string', 'default': 'normal'}
+] %}
+{% set conv_user_fields = config.chat.domain.conversation.fields %}
+{% set conv_user_field_names = conv_user_fields | map(attribute='name') | list %}
+{% set conv_fields = conv_user_fields | list %}
+{% for base in conv_base_fields %}
+    {% if base.name not in conv_user_field_names %}
+        {% set _ = conv_fields.append(base) %}
+    {% endif %}
+{% endfor %}
+
+{# Define base fields for Message #}
+{% set msg_base_fields = [
+    {'name': 'id', 'type': 'uint', 'primary_key': true, 'auto_increment': true},
+    {'name': 'conversation_id', 'type': 'uint', 'required': true, 'index': true},
+    {'name': 'sender_id', 'type': 'uint', 'required': true, 'index': true},
+    {'name': 'sender_type', 'type': 'string', 'default': 'user'},
+    {'name': 'content', 'type': 'string', 'required': true},
+    {'name': 'is_read', 'type': 'bool', 'default': false}
+] %}
+{% set msg_user_fields = config.chat.domain.message.fields %}
+{% set msg_user_field_names = msg_user_fields | map(attribute='name') | list %}
+{% set msg_fields = msg_user_fields | list %}
+{% for base in msg_base_fields %}
+    {% if base.name not in msg_user_field_names %}
+        {% set _ = msg_fields.append(base) %}
+    {% endif %}
+{% endfor %}
+
+{# Resolve Field Names #}
+{% set conv_id_f          = conv_fields | selectattr('primary_key', 'defined') | selectattr('primary_key', 'equalto', true) | first | default({'name': 'id'}) %}
+{% set conv_user_id_f     = conv_fields | selectattr('name', 'equalto', 'user_id') | first | default({'name': 'user_id'}) %}
+{% set conv_receiver_id_f = conv_fields | selectattr('name', 'equalto', 'receiver_id') | first | default({'name': 'receiver_id'}) %}
+{% set conv_status_f      = conv_fields | selectattr('name', 'equalto', 'status') | first | default({'name': 'status'}) %}
+{% set conv_type_f        = conv_fields | selectattr('name', 'equalto', 'conv_type') | first | default({'name': 'conv_type'}) %}
+{% set conv_last_msg_f    = conv_fields | selectattr('name', 'equalto', 'last_message') | first | default({'name': 'last_message'}) %}
+
+{% set msg_id_f           = msg_fields | selectattr('primary_key', 'defined') | selectattr('primary_key', 'equalto', true) | first | default({'name': 'id'}) %}
+{% set msg_conv_id_f      = msg_fields | selectattr('name', 'equalto', 'conversation_id') | first | default({'name': 'conversation_id'}) %}
+{% set msg_sender_type_f  = msg_fields | selectattr('name', 'equalto', 'sender_type') | first | default({'name': 'sender_type'}) %}
+{% set msg_is_read_f      = msg_fields | selectattr('name', 'equalto', 'is_read') | first | default({'name': 'is_read'}) %}
+{% set msg_content_f      = msg_fields | selectattr('name', 'equalto', 'content') | first | default({'name': 'content'}) %}
+
+// ChatRepository defines the interface for chat-related database operations.
+type ChatRepository interface {
+	GetUserConversations(opts ListConversationOptions) ([]domain.Conversation, bool, int64, error)
+	GetAdminConversations(opts ListConversationOptions) ([]domain.Conversation, bool, int64, error)
+	GetConversationByIDSimple(id uint) (*domain.Conversation, error)
+	ListMessages(opts ListMessageOptions) ([]domain.Message, bool, int64, error)
+	CreateMessage(msg *domain.Message) (*domain.Message, error)
+	MarkMessagesAsRead(convID uint, targetType string) error
+	GetConversationBetweenUsers(userID1, userID2 uint) (*domain.Conversation, error)
+	CreateConversation(conv *domain.Conversation) (*domain.Conversation, error)
+{% if config.chat.repository.get('custom_methods') %}
+{% for method in config.chat.repository.custom_methods %}
+	// {{ method.description }}
+	{{ method.name }}(userID uint) error
+{% endfor %}
+{% endif %}
+}
+
+type chatRepository struct {
+	db *gorm.DB
+}
+
+// NewChatRepository creates a new ChatRepository backed by the given *gorm.DB.
+func NewChatRepository(db *gorm.DB) ChatRepository {
+	return &chatRepository{db: db}
+}
+
+// ListConversationOptions carries filtering and pagination for conversation queries.
+type ListConversationOptions struct {
+	UserID    uint
+	Search    string
+	Status    string
+	ConvType  string
+	HasUnread *bool
+	SortBy    string
+	SortOrder string
+	Offset    int
+	Limit     int
+}
+
+// ListMessageOptions carries filtering and pagination for message queries.
+type ListMessageOptions struct {
+	ConversationID uint
+	SenderType     string
+	IsRead         *bool
+	SortBy         string
+	SortOrder      string
+	Offset         int
+	Limit          int
+}
+
+// GetUserConversations retrieves conversations the user participates in.
+func (r *chatRepository) GetUserConversations(opts ListConversationOptions) ([]domain.Conversation, bool, int64, error) {
+	var conversations []domain.Conversation
+	var total int64
+
+	query := r.db.Model(&domain.Conversation{}).
+		Where("{{ conv_user_id_f.name }} = ? OR {{ conv_receiver_id_f.name }} = ?", opts.UserID, opts.UserID)
+
+	if opts.Status != "" {
+		query = query.Where("{{ conv_status_f.name }} = ?", opts.Status)
+	}
+	if opts.ConvType != "" {
+		query = query.Where("{{ conv_type_f.name }} = ?", opts.ConvType)
+	}
+	if opts.HasUnread != nil {
+		if *opts.HasUnread {
+			query = query.Where(
+				r.db.Where("{{ conv_id_f.name }} IN (SELECT {{ msg_conv_id_f.name }} FROM messages WHERE {{ msg_is_read_f.name }} = false AND {{ msg_sender_type_f.name }} != 'user')"),
+			)
+		}
+	}
+	if opts.Search != "" {
+{% if config.chat.repository.search_fields.conversation %}
+		searchParts := ""
+		searchArgs  := []interface{}{}
+{% for field in config.chat.repository.search_fields.conversation %}
+		if searchParts != "" {
+			searchParts += " OR "
+		}
+		searchParts += "{{ field }} LIKE ?"
+		searchArgs   = append(searchArgs, "%"+opts.Search+"%")
+{% endfor %}
+		query = query.Where(searchParts, searchArgs...)
+{% else %}
+		query = query.Where("{{ conv_last_msg_f.name }} LIKE ?", "%"+opts.Search+"%")
+{% endif %}
+	}
+
+	query.Count(&total)
+
+	sortBy    := opts.SortBy;    if sortBy    == "" { sortBy    = "{{ config.chat.repository.default_sort.conversation.field | default('updated_at') }}" }
+	sortOrder := opts.SortOrder; if sortOrder == "" { sortOrder = "{{ config.chat.repository.default_sort.conversation.order | default('desc') }}" }
+
+	query = query.
+		Order(fmt.Sprintf("%s %s", sortBy, sortOrder)).
+		Limit(opts.Limit + 1).
+		Offset(opts.Offset)
+
+{% for relation in config.chat.domain.conversation.get('relations', []) %}
+{% if relation.get('preload', false) %}
+	query = query.Preload("{{ relation.name }}")
+{% endif %}
+{% endfor %}
+
+	if err := query.Find(&conversations).Error; err != nil {
+		return nil, false, 0, err
+	}
+
+	hasMore := len(conversations) > opts.Limit
+	if hasMore {
+		conversations = conversations[:opts.Limit]
+	}
+	return conversations, hasMore, total, nil
+}
+
+// GetAdminConversations retrieves all conversations for an admin view.
+func (r *chatRepository) GetAdminConversations(opts ListConversationOptions) ([]domain.Conversation, bool, int64, error) {
+	var conversations []domain.Conversation
+	var total int64
+
+	query := r.db.Model(&domain.Conversation{})
+
+	if opts.Status != "" {
+		query = query.Where("{{ conv_status_f.name }} = ?", opts.Status)
+	}
+	if opts.ConvType != "" {
+		query = query.Where("{{ conv_type_f.name }} = ?", opts.ConvType)
+	}
+	if opts.Search != "" {
+		query = query.
+			Joins("JOIN users ON users.id = conversations.{{ conv_user_id_f.name }}").
+			Where("users.email LIKE ? OR users.fullname LIKE ?", "%"+opts.Search+"%", "%"+opts.Search+"%")
+	}
+
+	query.Count(&total)
+
+	sortBy    := opts.SortBy;    if sortBy    == "" { sortBy    = "updated_at" }
+	sortOrder := opts.SortOrder; if sortOrder == "" { sortOrder = "desc" }
+
+	query = query.
+		Order(fmt.Sprintf("%s %s", sortBy, sortOrder)).
+		Limit(opts.Limit + 1).
+		Offset(opts.Offset)
+
+{% for relation in config.chat.domain.conversation.get('relations', []) %}
+{% if relation.get('preload', false) %}
+	query = query.Preload("{{ relation.name }}")
+{% endif %}
+{% endfor %}
+
+	if err := query.Find(&conversations).Error; err != nil {
+		return nil, false, 0, err
+	}
+
+	hasMore := len(conversations) > opts.Limit
+	if hasMore {
+		conversations = conversations[:opts.Limit]
+	}
+	return conversations, hasMore, total, nil
+}
+
+// GetConversationByIDSimple retrieves a single conversation by primary key.
+func (r *chatRepository) GetConversationByIDSimple(id uint) (*domain.Conversation, error) {
+	var conv domain.Conversation
+	if err := r.db.First(&conv, "{{ conv_id_f.name }} = ?", id).Error; err != nil {
+		return nil, err
+	}
+	return &conv, nil
+}
+
+// ListMessages retrieves messages for a conversation with filtering and pagination.
+func (r *chatRepository) ListMessages(opts ListMessageOptions) ([]domain.Message, bool, int64, error) {
+	var messages []domain.Message
+	var total int64
+
+	query := r.db.Model(&domain.Message{}).Where("{{ msg_conv_id_f.name }} = ?", opts.ConversationID)
+
+	if opts.SenderType != "" {
+		query = query.Where("{{ msg_sender_type_f.name }} = ?", opts.SenderType)
+	}
+	if opts.IsRead != nil {
+		query = query.Where("{{ msg_is_read_f.name }} = ?", *opts.IsRead)
+	}
+
+	query.Count(&total)
+
+	sortBy    := opts.SortBy;    if sortBy    == "" { sortBy    = "{{ config.chat.repository.default_sort.message.field | default('created_at') }}" }
+	sortOrder := opts.SortOrder; if sortOrder == "" { sortOrder = "{{ config.chat.repository.default_sort.message.order | default('asc') }}" }
+
+	if err := query.
+		Order(fmt.Sprintf("%s %s", sortBy, sortOrder)).
+		Limit(opts.Limit + 1).
+		Offset(opts.Offset).
+		Find(&messages).Error; err != nil {
+		return nil, false, 0, err
+	}
+
+	hasMore := len(messages) > opts.Limit
+	if hasMore {
+		messages = messages[:opts.Limit]
+	}
+	return messages, hasMore, total, nil
+}
+
+// CreateMessage persists a message and bumps the conversation's updated_at timestamp.
+func (r *chatRepository) CreateMessage(msg *domain.Message) (*domain.Message, error) {
+	if err := r.db.Create(msg).Error; err != nil {
+		return nil, err
+	}
+	r.db.Model(&domain.Conversation{}).
+		Where("{{ conv_id_f.name }} = ?", msg.{{ msg_conv_id_f.name | title | replace('_', '') }}).
+		Updates(map[string]interface{}{
+			"{{ conv_last_msg_f.name }}": msg.{{ msg_content_f.name | title | replace('_', '') }},
+			"updated_at":   msg.CreatedAt,
+		})
+	return msg, nil
+}
+
+// MarkMessagesAsRead marks unread messages in a conversation as read from the
+// opposing sender's perspective (e.g., if targetType="user", marks admin messages).
+func (r *chatRepository) MarkMessagesAsRead(convID uint, targetType string) error {
+	senderType := "user"
+	if targetType == "user" {
+		senderType = "admin"
+	}
+	return r.db.Model(&domain.Message{}).
+		Where("{{ msg_conv_id_f.name }} = ? AND {{ msg_sender_type_f.name }} = ? AND {{ msg_is_read_f.name }} = ?", convID, senderType, false).
+		Update("{{ msg_is_read_f.name }}", true).Error
+}
+
+// GetConversationBetweenUsers finds a direct conversation between two users.
+func (r *chatRepository) GetConversationBetweenUsers(userID1, userID2 uint) (*domain.Conversation, error) {
+	var conv domain.Conversation
+	err := r.db.
+		Where(
+			"({{ conv_user_id_f.name }} = ? AND {{ conv_receiver_id_f.name }} = ?) OR ({{ conv_user_id_f.name }} = ? AND {{ conv_receiver_id_f.name }} = ?)",
+			userID1, userID2, userID2, userID1,
+		).
+		First(&conv).Error
+	if err != nil {
+		return nil, err
+	}
+	return &conv, nil
+}
+
+// CreateConversation persists a new conversation.
+func (r *chatRepository) CreateConversation(conv *domain.Conversation) (*domain.Conversation, error) {
+	if err := r.db.Create(conv).Error; err != nil {
+		return nil, err
+	}
+	return conv, nil
+}
+
+{% if config.chat.repository.get('custom_methods') %}
+// ── Custom repository methods ────────────────────────────────────────────────
+{% for method in config.chat.repository.custom_methods %}
+
+// {{ method.name }} — {{ method.description }}
+func (r *chatRepository) {{ method.name }}(userID uint) error {
+	// TODO: implement {{ method.name }}
+	return nil
+}
+{% endfor %}
+{% endif %}
+
+{% endif %}{# chat.enabled #}

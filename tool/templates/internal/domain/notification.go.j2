@@ -1,0 +1,92 @@
+package domain
+
+import (
+	"time"
+
+	"gorm.io/gorm"
+)
+
+{% if config.notifications.enabled %}
+{# ────────────────────────────────────────────────────────────── #}
+{# Helper Macros for Dynamic Field Generation                     #}
+{# ────────────────────────────────────────────────────────────── #}
+
+{# Generate GORM tags for a field #}
+{% macro gorm_tags(field) -%}
+{%- set tags = [] -%}
+{%- if field.get('primary_key') -%}
+  {%- set _ = tags.append('primaryKey') -%}
+{%- endif -%}
+{%- if field.get('auto_increment') -%}
+  {%- set _ = tags.append('autoIncrement') -%}
+{%- endif -%}
+{%- if field.get('required') and not field.type.startswith('*') -%}
+  {%- set _ = tags.append('not null') -%}
+{%- endif -%}
+{%- if field.get('index') -%}
+  {%- set _ = tags.append('index') -%}
+{%- endif -%}
+{%- if field.get('unique') -%}
+  {%- set _ = tags.append('unique') -%}
+{%- endif -%}
+{%- if field.get('gorm_type') -%}
+  {%- set _ = tags.append('type:' + field.gorm_type) -%}
+{%- endif -%}
+{%- if field.get('default') is not none -%}
+  {%- set _ = tags.append("default:'" + field.default|string + "'") -%}
+{%- endif -%}
+{{ tags|join(';') }}
+{%- endmacro %}
+
+{# Generate JSON tag for a field #}
+{% macro json_tag(field) -%}
+{%- set tag = field.get('json_tag', field.name) -%}
+{%- if field.type.startswith('*') or not field.get('required') -%}
+{{ tag }},omitempty
+{%- else -%}
+{{ tag }}
+{%- endif -%}
+{%- endmacro %}
+
+{# Define base fields that should exist in a notification #}
+{% set base_fields = [
+    {'name': 'id', 'type': 'uint', 'primary_key': true, 'auto_increment': true},
+    {'name': 'user_id', 'type': 'uint', 'required': true, 'index': true},
+    {'name': 'title', 'type': 'string', 'required': true},
+    {'name': 'message', 'type': 'string', 'required': true},
+    {'name': 'type', 'type': 'string', 'required': true},
+    {'name': 'is_read', 'type': 'bool', 'default': false}
+] %}
+
+{# Merge user fields with base fields (user fields take precedence) #}
+{% set user_field_names = config.notifications.model.fields | map(attribute='name') | list %}
+{% set final_fields = config.notifications.model.fields | list %}
+{% for base in base_fields %}
+    {% if base.name not in user_field_names %}
+        {% set _ = final_fields.append(base) %}
+    {% endif %}
+{% endfor %}
+
+{# ────────────────────────────────────────────────────────────── #}
+{# Notification Model - Dynamically Generated                     #}
+{# ────────────────────────────────────────────────────────────── #}
+// Notification represents a user notification
+type Notification struct {
+{% for field in final_fields %}
+	{{ field.name | title | replace('_', '') }} {{ field.type }} `gorm:"{{ gorm_tags(field) }}" json:"{{ json_tag(field) }}"`
+{% endfor %}
+
+{% if config.notifications.model.get('timestamps', true) %}
+	CreatedAt time.Time      `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
+{% endif %}
+{% if config.notifications.model.get('soft_delete', true) %}
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
+{% endif %}
+
+	// Relations
+{% for relation in config.notifications.model.get('relations', []) %}
+	{{ relation.name }} {% if relation.get('has_many') %}[]{% else %}*{% endif %}{{ relation.model }} `gorm:"foreignKey:{{ relation.foreign_key }}" json:"{{ relation.name | lower }},omitempty"`
+{% endfor %}
+}
+{% endif %}

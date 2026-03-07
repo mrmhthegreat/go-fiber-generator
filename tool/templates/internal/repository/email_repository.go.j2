@@ -1,0 +1,119 @@
+package repository
+
+import (
+    "fmt"
+    "time"
+
+    "gorm.io/gorm"
+
+    "{{ config.project.module }}/internal/domain"
+)
+
+{% if config.imap.enabled %}
+
+// EmailMessageRepository defines the interface for email-related database operations.
+type EmailMessageRepository interface {
+    GetInbox(userID uint, offset, limit int, sortOrder string) ([]domain.EmailMessage, int64, error)
+    {%if config.imap.fetch_sent %}
+    GetSent(userID uint, offset, limit int, sortOrder string) ([]domain.EmailMessage, int64, error)
+    {%endif%}
+    GetByID(id uint) (*domain.EmailMessage, error)
+    Create(email *domain.EmailMessage) error
+    Update(email *domain.EmailMessage) error
+    MarkAsRead(id uint) error
+    FetchInbound(db *gorm.DB) error // Keeping helper signature for now or refactoring?
+}
+
+type emailMessageRepository struct {
+    db *gorm.DB
+}
+
+// NewEmailMessageRepository creates a new EmailMessageRepository backed by the given *gorm.DB.
+func NewEmailMessageRepository(db *gorm.DB) EmailMessageRepository {
+    return &emailMessageRepository{db: db}
+}
+
+// GetInbox retrieves inbound emails for a user
+func (r *emailMessageRepository) GetInbox(userID uint, offset, limit int, sortOrder string) ([]domain.EmailMessage, int64, error) {
+    var emails []domain.EmailMessage
+    var total int64
+
+    query := r.db.Model(&domain.EmailMessage{}).Where("direction = ?", "inbound")
+    // If you want to filter by user_id for inbox, you might need to add logic here if emails are user-specific
+    // For now assuming all inbound visible or filtered by logic in handler?
+    // Handler had: userID, ok := c.Locals("user_id").(uint) but didn't seem to use it for filtering inbound except maybe permissions?
+    // Original handler: query = dbConn.DB.Where("direction = ?", direction)
+    // It did NOT filter by user_id for inbound. Maybe shared inbox?
+    // I will keep it as per original handler logic for now.
+
+    query.Count(&total)
+
+    if sortOrder == "" {
+        sortOrder = "desc"
+    }
+
+    err := query.Order(fmt.Sprintf("created_at %s", sortOrder)).
+        Offset(offset).
+        Limit(limit).
+        Find(&emails).Error
+
+    return emails, total, err
+}
+
+// GetSent retrieves outbound emails
+{%if config.imap.fetch_sent %}
+func (r *emailMessageRepository) GetSent(userID uint, offset, limit int, sortOrder string) ([]domain.EmailMessage, int64, error) {
+    var emails []domain.EmailMessage
+    var total int64
+
+    query := r.db.Model(&domain.EmailMessage{}).
+        Where("direction = ?", "outbound").
+        Where("user_id = ?", userID)
+
+    query.Count(&total)
+
+    if sortOrder == "" {
+        sortOrder = "desc"
+    }
+
+    err := query.Order(fmt.Sprintf("created_at %s", sortOrder)).
+        Offset(offset).
+        Limit(limit).
+        Find(&emails).Error
+
+    return emails, total, err
+}
+{%endif%}
+
+// GetByID retrieves an email by ID
+func (r *emailMessageRepository) GetByID(id uint) (*domain.EmailMessage, error) {
+    var email domain.EmailMessage
+    if err := r.db.First(&email, id).Error; err != nil {
+        return nil, err
+    }
+    return &email, nil
+}
+
+// Create persists a new email
+func (r *emailMessageRepository) Create(email *domain.EmailMessage) error {
+    return r.db.Create(email).Error
+}
+
+// Update updates an existing email
+func (r *emailMessageRepository) Update(email *domain.EmailMessage) error {
+    return r.db.Save(email).Error
+}
+
+// MarkAsRead marks a specific email as read
+func (r *emailMessageRepository) MarkAsRead(id uint) error {
+    return r.db.Model(&domain.EmailMessage{}).Where("id = ?", id).Update("status", "read").Error
+}
+
+// FetchInbound is a placeholder if we want to move logic here
+func (r *emailMessageRepository) FetchInbound(db *gorm.DB) error {
+    // This logic is currently in emailpkg.FetchInboundEmails
+    // We can keep it there or call it from here
+    return nil 
+}
+
+{% endif %}

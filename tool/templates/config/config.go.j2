@@ -1,0 +1,183 @@
+package config
+
+import (
+	"log"
+	"os"
+	"gopkg.in/yaml.v3"
+)
+
+// Config holds the application configuration
+type Config struct {
+	Server   ServerConfig   `yaml:"server"`
+	{% if config.session.enabled %}
+	Session  SessionConfig  `yaml:"session"`
+	{% endif %}
+	{% if config.redis.enabled %}
+	Redis    RedisConfig    `yaml:"redis"`
+	{% endif %}
+	{% if config.fcm.enabled %}
+	FCM      FCMConfig      `yaml:"fcm"`
+	{% endif %}
+	{% if config.storage.enabled %}
+	Storage  StorageConfig  `yaml:"storage"`
+	{% endif %}
+	{% if config.authentication.social_auth.google.enabled %}
+	GoogleOAuth GoogleOAuthConfig `yaml:"google_oauth"`
+	{% endif %}
+	{% if config.authentication.social_auth.facebook.enabled %}
+	FacebookOAuth FacebookOAuthConfig `yaml:"facebook_oauth"`
+	{% endif %}
+	
+}
+
+// ServerConfig holds server configuration
+type ServerConfig struct {
+	{% if config.features.maintenance_mode.enabled %}
+	MaintenanceMode bool   `yaml:"maintenance_mode"`
+	MaintenanceEndTime string `yaml:"maintenance_end_time,omitempty"`
+	{% endif %}
+}
+
+
+
+
+
+{% if config.session.enabled %}
+// SessionConfig holds session configuration
+type SessionConfig struct {
+	SecretKey      string `yaml:"{{ config.session.secret_key_env }}"`
+	CookiesSecret  string `yaml:"{{ config.session.cookies_secret_env }}"`
+}
+{% endif %}
+
+{% if config.redis.enabled %}
+// RedisConfig holds Redis configuration
+type RedisConfig struct {
+	Host     string `yaml:"{{ config.redis.host_env }}"`
+	Password string `yaml:"{{ config.redis.password_env }}"`
+	DB       int    `yaml:"{{ config.redis.db_env }}"`
+	SessionAddr string `yaml:"{{ config.redis.session_addr_env }}"`
+}
+{% endif %}
+
+{% if config.email.enabled %}
+
+// SMTPConfig holds SMTP configuration
+type SMTPConfig struct {
+	Host      string `yaml:"{{ config.email.smtp_host_env }}"`
+	Port      int    `yaml:"{{ config.email.smtp_port_env }}"`
+	User      string `yaml:"{{ config.email.smtp_user_env }}"`
+	Password  string `yaml:"{{ config.email.smtp_password_env }}"`
+}
+
+{% if config.imap.enabled %}
+// IMAPConfig holds IMAP configuration for fetching emails
+type IMAPConfig struct {
+	Host              string `yaml:"{{ config.imap.host_env }}"`
+	Port              int    `yaml:"{{ config.imap.port_env }}"`
+	User              string `yaml:"{{ config.imap.user_env }}"`
+	Password          string `yaml:"{{ config.imap.password_env }}"`
+}
+{% endif %}
+{% endif %}
+
+{% if config.fcm.enabled or config.get('notifications', {}).get('push', {}).get('enabled', False) %}
+// FCMConfig holds Firebase Cloud Messaging configuration
+type FCMConfig struct {
+	FilePath          string `yaml:"{{ config.fcm.credentials_path_env }}"`
+	ProjectID         string `yaml:"{{ config.fcm.project_id_env }}"`
+	AdminTopic        string `yaml:"{{ config.fcm.admin_topic_env }}"`        // optional topic for admins
+}
+{% endif %}
+
+{% if config.storage.enabled %}
+// StorageConfig holds storage configuration
+type StorageConfig struct {
+    Provider string             `yaml:"provider"` // local, s3, supabase
+    {% if config.storage.local %}
+	Local    LocalStorageConfig `yaml:"local"`
+    {% elif config.storage.s3 %}
+    S3       S3StorageConfig    `yaml:"s3"`
+    {% elif config.storage.supabase %}
+    Supabase SupabaseConfig     `yaml:"supabase"`
+    {% endif %}
+}
+
+// LocalStorageConfig holds local storage configuration
+{% if config.storage.local %}
+type LocalStorageConfig struct {
+    UploadPath string `yaml:"{{ config.storage.local.upload_path_env }}"`
+    BaseURL    string `yaml:"{{ config.storage.local.base_url_env }}"`
+}
+{% endif %}
+
+// S3StorageConfig holds S3 storage configuration
+{% if config.storage.s3 %}
+type S3StorageConfig struct {
+    Endpoint        string `yaml:"{{ config.storage.s3.endpoint_env }}"`
+    AccessKeyID     string `yaml:"{{ config.storage.s3.access_key_id_env }}"`
+    SecretAccessKey string `yaml:"{{ config.storage.s3.secret_access_key_env }}"`
+    UseSSL          bool   `yaml:"{{ config.storage.s3.use_ssl_env }}"`
+    Region          string `yaml:"{{ config.storage.s3.region_env }}"`
+    Bucket          string `yaml:"{{ config.storage.s3.bucket_env }}"`
+}
+{% endif %}
+
+// SupabaseConfig holds Supabase storage configuration
+{% if config.storage.supabase %}
+type SupabaseConfig struct {
+    URL    string `yaml:"{{ config.storage.supabase.url_env }}"`
+    Token  string `yaml:"{{ config.storage.supabase.token_env }}"`
+    Bucket string `yaml:"{{ config.storage.supabase.bucket_env }}"`
+}
+{% endif %}
+{% endif %}
+
+{% if config.authentication.social_auth.google.enabled %}
+// GoogleOAuthConfig holds Google OAuth configuration
+type GoogleOAuthConfig struct {
+	ClientID     string `yaml:"{{ config.authentication.social_auth.google.client_id_env }}"`
+	ClientSecret string `yaml:"{{ config.authentication.social_auth.google.client_secret_env }}"`
+	RedirectURL  string `yaml:"{{ config.authentication.social_auth.google.redirect_url_env }}"`
+}
+{% endif %}
+
+{% if config.authentication.social_auth.facebook.enabled %}
+// FacebookOAuthConfig holds Facebook OAuth configuration
+type FacebookOAuthConfig struct {
+	AppID       string `yaml:"{{ config.authentication.social_auth.facebook.app_id_env }}"`
+	AppSecret   string `yaml:"{{ config.authentication.social_auth.facebook.app_secret_env }}"`
+	RedirectURL string `yaml:"{{ config.authentication.social_auth.facebook.redirect_url_env }}"`
+}
+{% endif %}
+
+
+
+
+var AppConfig *Config
+
+// LoadConfig loads configuration from YAML file
+func LoadConfig(path string) (*Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	var config Config
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return nil, err
+	}
+
+	AppConfig = &config
+	log.Println("✅ Configuration loaded successfully from", path)
+	return &config, nil
+}
+
+// MustLoadConfig loads configuration or panics
+func MustLoadConfig(path string) *Config {
+	config, err := LoadConfig(path)
+	if err != nil {
+		log.Fatalf("Failed to load configuration: %v", err)
+	}
+	return config
+}

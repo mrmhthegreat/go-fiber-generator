@@ -1,0 +1,29 @@
+package domain
+
+import (
+    "time"
+
+    "gorm.io/gorm"
+)
+
+{% if config.imap.enabled %}
+// EmailMessage represents an email sent or received by the system.
+type EmailMessage struct {
+    ID          uint           `gorm:"primaryKey;autoIncrement" json:"id"`
+    MessageID   string         `gorm:"size:255;index" json:"message_id"`
+    From        string         `gorm:"size:255;not null;index" json:"from"`
+    To          string         `gorm:"size:255;not null;index" json:"to"`
+    Subject     string         `gorm:"size:255" json:"subject"`
+    Body        string         `gorm:"type:text" json:"body"`
+    Direction   string         `gorm:"size:20;index" json:"direction"` // "inbound" or "outbound"
+    Status      string         `gorm:"size:20;default:'unread';index" json:"status"` // "unread", "read", "sent", "failed"
+    IsHTML      bool           `gorm:"default:true" json:"is_html"`
+    IsStarred   bool           `gorm:"default:false;index" json:"is_starred"`
+    IsImportant bool           `gorm:"default:false;index" json:"is_important"`
+    UserID      *uint          `json:"user_id" gorm:"null;index"`
+    User        User           `gorm:"foreignKey:UserID;references:ID" json:"user,omitempty"`
+    CreatedAt   time.Time      `json:"created_at"`
+    UpdatedAt   time.Time      `json:"updated_at"`
+    DeletedAt   gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
+}
+{% endif %}

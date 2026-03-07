@@ -1,0 +1,36 @@
+package handlers
+
+import (
+    "github.com/gofiber/fiber/v2"
+
+)
+
+// SetLanguage handles language switching via cookie and redirects back
+func SetLanguage(c *fiber.Ctx) error {
+    lang := c.Query("lang", "{{ config.i18n.default | default('en') }}")
+    
+    validLanguages := []string{
+        {% for lang in config.i18n.languages | default(['en', 'fr']) %}"{{ lang }}", {% endfor %}
+    }
+    
+    isValid := false
+    for _, v := range validLanguages {
+        if v == lang {
+            isValid = true
+            break
+        }
+    }
+
+    if !isValid {
+        lang = "{{ config.i18n.default | default('en') }}"
+    }
+
+    c.Cookie(&fiber.Cookie{
+        Name:   "lang",
+        Value:  lang,
+        MaxAge: 30 * 24 * 60 * 60,
+    })
+
+    redirectURL := c.Get("Referer", "/")
+    return c.Redirect(redirectURL, fiber.StatusSeeOther)
+}
