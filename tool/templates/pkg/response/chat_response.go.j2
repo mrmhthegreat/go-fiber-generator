@@ -16,7 +16,7 @@ import (
     {'name': 'last_message', 'type': 'string'},
     {'name': 'priority', 'type': 'string'}
 ] %}
-{% set conv_user_fields = config.chat.domain.conversation.fields %}
+{% set conv_user_fields = config.chat.models.conversation.fields %}
 {% set conv_user_field_names = conv_user_fields | map(attribute='name') | list %}
 {% set conv_fields = conv_user_fields | list %}
 {% for base in conv_base_fields %}
@@ -34,7 +34,7 @@ import (
     {'name': 'content', 'type': 'string'},
     {'name': 'is_read', 'type': 'bool'}
 ] %}
-{% set msg_user_fields = config.chat.domain.message.fields %}
+{% set msg_user_fields = config.chat.models.message.fields %}
 {% set msg_user_field_names = msg_user_fields | map(attribute='name') | list %}
 {% set msg_fields = msg_user_fields | list %}
 {% for base in msg_base_fields %}

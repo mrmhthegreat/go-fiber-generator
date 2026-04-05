@@ -31,7 +31,7 @@ import (
 {# Usage: {% call getRepo('User') %}...{% endcall %}              #}
 {# ────────────────────────────────────────────────────────────── #}
 {% macro getRepo(repoName) %}
-    {{ repoName | lower }}Repo := utilspkg.Get{{ repoName }}Repository(dbConn)
+    {{ repoName | lower }}Repo := dbConn.{{ repoName }}
     if {{ repoName | lower }}Repo == nil {
         log.Println("{{ repoName }}Repository not available")
         return fiber.NewError(fiber.StatusInternalServerError, "db_connection_failed")
@@ -41,31 +41,21 @@ import (
 // {{ handler.model }}Handler handles web requests for {{ handler.model }}
 type {{ handler.model }}Handler struct {
 {% if handler.rbac.enabled %}
-    {{ handler.rbac.service_var }} *middleware.RBACServiceType
+    RBACService *rbacpkg.RBACService
 {% endif %}
 }
 
 // New{{ handler.model }}Handler creates a new {{ handler.model }}Handler
 func New{{ handler.model }}Handler(
 {% if handler.rbac.enabled %}
-    {{ handler.rbac.service_var }} *middleware.RBACServiceType,
+    rbacService *rbacpkg.RBACService,
 {% endif %}
 ) *{{ handler.model }}Handler {
     return &{{ handler.model }}Handler{
 {% if handler.rbac.enabled %}
-        {{ handler.rbac.service_var }}: {{ handler.rbac.service_var }},
+        RBACService: rbacService,
 {% endif %}
     }
-}
-
-// Register registers all web handler routes
-func (h *{{ handler.model }}Handler) Register(router fiber.Router) {
-{% for ep in handler.endpoints %}
-    router.{{ ep.method | title }}("{{ ep.path | replace(handler.base_path, '') }}", h.{{ ep.func_name }})
-{% endfor %}
-{% for ep in handler.getter_endpoints %}
-    router.{{ ep.method | title }}("{{ ep.path | replace(handler.base_path, '') }}", h.{{ ep.func_name }})
-{% endfor %}
 }
 
 // ============================================================================
@@ -88,7 +78,7 @@ func (h *{{ ep.model }}Handler) {{ ep.func_name }}(c *fiber.Ctx) error {
 {% if ep.context.needs_user %}
 
 {% if ep.context.user_config.use_repo %}
-    userRepo:=utilspkg.Get{{ ep.context.user_config.repo_name }}(dbConn)
+    userRepo := dbConn.{{ config.project.user_model_name }}
     if userRepo == nil {
         log.Println("{{ ep.context.user_config.repo_name }}Repository not available")
         return fiber.NewError(fiber.StatusInternalServerError, "db_connection_failed")
@@ -117,13 +107,13 @@ func (h *{{ ep.model }}Handler) {{ ep.func_name }}(c *fiber.Ctx) error {
 {% endif %}
 
 {% if ep.context.needs_perms %}
-    perms := rbacpkg.GetUserPermsForTemplate(c, h.{{ handler.rbac.service_var }})
+    perms := rbacpkg.GetUserPermsForTemplate(c, h.RBACService)
     permsJson, _ := sonic.Marshal(perms)
     renderContext["perms"] = string(permsJson)
 {% endif %}
 
 {% if ep.context.needs_dashbase %}
-    dashBase := rbacpkg.GetDashboardBasePath( user.{{ handler.rbac_model_field }})
+    dashBase := rbacpkg.GetDashboardBasePath( user.Role)
     renderContext["dashBase"] = dashBase
 {% endif %}
 
@@ -138,7 +128,7 @@ func (h *{{ ep.model }}Handler) {{ ep.func_name }}(c *fiber.Ctx) error {
 
 {% for data in ep.context.custom_data %}
     // Fetch {{ data.name }}
-    {% if not loop.first %}{% endif %}{{ data.repo | lower }}Repo := utilspkg.Get{{ data.repo }}Repository(dbConn)
+    {% if not loop.first %}{% endif %}{{ data.repo | lower }}Repo := dbConn.{{ data.model_name | default(data.repo | replace('Repository', '')) }}
     if {{ data.repo | lower }}Repo == nil {
         log.Println("{{ data.repo }}Repository not available")
     } else {
@@ -257,7 +247,7 @@ func (h *{{ ep.model }}Handler) {{ ep.func_name }}(c *fiber.Ctx) error {
 {% endif %}
     }
 
-    repo := utilspkg.Get{{ ep.model }}Repository(dbConn)
+    repo := dbConn.{{ ep.model }}
     if repo == nil {
         log.Println("{{ ep.model }}Repository not available")
 {% if ep.return_type == 'json' %}
@@ -281,7 +271,7 @@ func (h *{{ ep.model }}Handler) {{ ep.func_name }}(c *fiber.Ctx) error {
 {% if ep.context.needs_dashbase %}
     dbConn := utilspkg.GetDB(c)
     user, _ := cache.GetUser(userID, dbConn)
-    dashBase := rbacpkg.GetDashboardBasePath( user.{{ handler.rbac_model_field }})
+    dashBase := rbacpkg.GetDashboardBasePath( user.Role)
     redirectPath := strings.Replace("{{ ep.hx_redirect }}", "{dashBase}", dashBase, 1)
 {% else %}
     redirectPath := "{{ ep.hx_redirect }}"
@@ -324,7 +314,7 @@ func (h *{{ ep.model }}Handler) {{ ep.func_name }}(c *fiber.Ctx) error {
 {% if ep.context.needs_user %}
 
 {% if ep.context.user_config.use_repo %}
-    userRepo:=utilspkg.Get{{ ep.context.user_config.repo_name }}(dbConn)
+    userRepo := dbConn.{{ config.project.user_model_name }}
     if userRepo == nil {
         log.Println("{{ ep.context.user_config.repo_name }}Repository not available")
         return fiber.NewError(fiber.StatusInternalServerError, "db_connection_failed")
@@ -342,7 +332,7 @@ func (h *{{ ep.model }}Handler) {{ ep.func_name }}(c *fiber.Ctx) error {
 {% endif %}
 {% if ep.ownership.enabled %}
     // Get repository for ownership check
-    repo := utilspkg.Get{{ ep.model }}Repository(dbConn)
+    repo := dbConn.{{ ep.model }}
     if repo == nil {
         log.Println("{{ ep.model }}Repository not available")
         return fiber.NewError(fiber.StatusInternalServerError, "db_connection_failed")
@@ -379,19 +369,19 @@ func (h *{{ ep.model }}Handler) {{ ep.func_name }}(c *fiber.Ctx) error {
 {% endif %}
 
 {% if ep.context.needs_perms %}
-    perms := rbacpkg.GetUserPermsForTemplate(c, h.{{ handler.rbac.service_var }})
+    perms := rbacpkg.GetUserPermsForTemplate(c, h.RBACService)
     permsJson, _ := sonic.Marshal(perms)
     renderContext["perms"] = string(permsJson)
 {% endif %}
 
 {% if ep.context.needs_dashbase %}
-    dashBase := rbacpkg.GetDashboardBasePath( user.{{ handler.rbac_model_field }})
+    dashBase := rbacpkg.GetDashboardBasePath( user.Role)
     renderContext["dashBase"] = dashBase
 {% endif %}
 
 {% for data in ep.context.custom_data %}
     // Fetch {{ data.name }}
-    {% if not loop.first %}{% endif %}{{ data.repo | lower }}Repo := utilspkg.Get{{ data.repo }}Repository(dbConn)
+    {% if not loop.first %}{% endif %}{{ data.repo | lower }}Repo := dbConn.{{ data.model_name | default(data.repo | replace('Repository', '')) }}
     if {{ data.repo | lower }}Repo == nil {
         log.Println("{{ data.repo }}Repository not available")
     } else {
@@ -446,7 +436,7 @@ func (h *{{ ep.model }}Handler) {{ ep.func_name }}(c *fiber.Ctx) error {
         return c.Redirect("{{ handler.base_path }}?error=db_connection_failed", fiber.StatusSeeOther)
     }
 
-    repo := utilspkg.Get{{ ep.model }}Repository(dbConn)
+    repo := dbConn.{{ ep.model }}
     if repo == nil {
         log.Println("{{ ep.model }}Repository not available")
         return c.Redirect("{{ handler.base_path }}?error=db_connection_failed", fiber.StatusSeeOther)
@@ -560,7 +550,7 @@ func (h *{{ ep.model }}Handler) {{ ep.func_name }}(c *fiber.Ctx) error {
 {% if ep.context.needs_dashbase %}
     dbConn := utilspkg.GetDB(c)
     user, _ := cache.GetUser(userID, dbConn)
-    dashBase := rbacpkg.GetDashboardBasePath( user.{{ handler.rbac_model_field }})
+    dashBase := rbacpkg.GetDashboardBasePath( user.Role)
     redirectPath := strings.Replace("{{ ep.hx_redirect }}", "{dashBase}", dashBase, 1)
 {% else %}
     redirectPath := "{{ ep.hx_redirect }}"
@@ -600,7 +590,7 @@ func (h *{{ ep.model }}Handler) {{ ep.func_name }}(c *fiber.Ctx) error {
 {% if ep.context.needs_user %}
 
 {% if ep.context.user_config.use_repo %}
-    userRepo:=utilspkg.Get{{ ep.context.user_config.repo_name }}(dbConn)
+    userRepo := dbConn.{{ config.project.user_model_name }}
     if userRepo == nil {
         log.Println("{{ ep.context.user_config.repo_name }}Repository not available")
         return fiber.NewError(fiber.StatusInternalServerError, "db_connection_failed")
@@ -629,19 +619,19 @@ func (h *{{ ep.model }}Handler) {{ ep.func_name }}(c *fiber.Ctx) error {
 {% endif %}
 
 {% if ep.context.needs_perms %}
-    perms := rbacpkg.GetUserPermsForTemplate(c, h.{{ handler.rbac.service_var }})
+    perms := rbacpkg.GetUserPermsForTemplate(c, h.RBACService)
     permsJson, _ := sonic.Marshal(perms)
     renderContext["perms"] = string(permsJson)
 {% endif %}
 
 {% if ep.context.needs_dashbase %}
-    dashBase := rbacpkg.GetDashboardBasePath( user.{{ handler.rbac_model_field }})
+    dashBase := rbacpkg.GetDashboardBasePath( user.Role)
     renderContext["dashBase"] = dashBase
 {% endif %}
 
 {% for data in ep.context.custom_data %}
     // Fetch {{ data.name }}
-    {% if not loop.first %}{% endif %}{{ data.repo | lower }}Repo := utilspkg.Get{{ data.repo }}Repository(dbConn)
+    {% if not loop.first %}{% endif %}{{ data.repo | lower }}Repo := dbConn.{{ data.model_name | default(data.repo | replace('Repository', '')) }}
     if {{ data.repo | lower }}Repo == nil {
         log.Println("{{ data.repo }}Repository not available")
     } else {
@@ -693,7 +683,7 @@ func (h *{{ ep.model }}Handler) {{ ep.func_name }}(c *fiber.Ctx) error {
 {% if ep.context.needs_user %}
 
 {% if ep.context.user_config.use_repo %}
-    userRepo:=utilspkg.Get{{ ep.context.user_config.repo_name }}(dbConn)
+    userRepo := dbConn.{{ config.project.user_model_name }}
     if userRepo == nil {
         log.Println("{{ ep.context.user_config.repo_name }}Repository not available")
         return fiber.NewError(fiber.StatusInternalServerError, "db_connection_failed")
@@ -722,19 +712,19 @@ func (h *{{ ep.model }}Handler) {{ ep.func_name }}(c *fiber.Ctx) error {
 {% endif %}
 
 {% if ep.context.needs_perms %}
-    perms := rbacpkg.GetUserPermsForTemplate(c, h.{{ handler.rbac.service_var }})
+    perms := rbacpkg.GetUserPermsForTemplate(c, h.RBACService)
     permsJson, _ := sonic.Marshal(perms)
     renderContext["perms"] = string(permsJson)
 {% endif %}
 
 {% if ep.context.needs_dashbase %}
-    dashBase := rbacpkg.GetDashboardBasePath(user.{{ handler.rbac_model_field }})
+    dashBase := rbacpkg.GetDashboardBasePath(user.Role)
     renderContext["dashBase"] = dashBase
 {% endif %}
 
 {% for data in ep.context.custom_data %}
     // Fetch {{ data.name }}
-    {% if not loop.first %}{% endif %}{{ data.repo | lower }}Repo := utilspkg.Get{{ data.repo }}Repository(dbConn)
+    {% if not loop.first %}{% endif %}{{ data.repo | lower }}Repo := dbConn.{{ data.model_name | default(data.repo | replace('Repository', '')) }}
     if {{ data.repo | lower }}Repo == nil {
         log.Println("{{ data.repo }}Repository not available")
     } else {
@@ -797,7 +787,7 @@ func (h *{{ ep.model }}Handler) {{ ep.func_name }}(c *fiber.Ctx) error {
 {% endif %}
     }
 
-    repo := utilspkg.Get{{ ep.model }}Repository(dbConn)
+    repo := dbConn.{{ ep.model }}
     if repo == nil {
         log.Println("{{ ep.model }}Repository not available")
 {% if ep.return_type == 'json' %}
@@ -900,7 +890,7 @@ func (h *{{ ep.model }}Handler) {{ ep.func_name }}(c *fiber.Ctx) error {
 {% if ep.context.needs_user %}
 
 {% if ep.context.user_config.use_repo %}
-    userRepo:=utilspkg.Get{{ ep.context.user_config.repo_name }}(dbConn)
+    userRepo := dbConn.{{ config.project.user_model_name }}
     if userRepo == nil {
         log.Println("{{ ep.context.user_config.repo_name }}Repository not available")
         return fiber.NewError(fiber.StatusInternalServerError, "db_connection_failed")
@@ -929,19 +919,19 @@ func (h *{{ ep.model }}Handler) {{ ep.func_name }}(c *fiber.Ctx) error {
 {% endif %}
 
 {% if ep.context.needs_perms %}
-    perms := rbacpkg.GetUserPermsForTemplate(c, h.{{ handler.rbac.service_var }})
+    perms := rbacpkg.GetUserPermsForTemplate(c, h.RBACService)
     permsJson, _ := sonic.Marshal(perms)
     renderContext["perms"] = string(permsJson)
 {% endif %}
 
 {% if ep.context.needs_dashbase %}
-    dashBase := rbacpkg.GetDashboardBasePath( user.{{ handler.rbac_model_field }})
+    dashBase := rbacpkg.GetDashboardBasePath( user.Role)
     renderContext["dashBase"] = dashBase
 {% endif %}
 
 {% for data in ep.context.custom_data %}
     // Fetch {{ data.name }}
-    {% if not loop.first %}{% endif %}{{ data.repo | lower }}Repo := utilspkg.Get{{ data.repo }}Repository(dbConn)
+    {% if not loop.first %}{% endif %}{{ data.repo | lower }}Repo := dbConn.{{ data.model_name | default(data.repo | replace('Repository', '')) }}
     if {{ data.repo | lower }}Repo == nil {
         log.Println("{{ data.repo }}Repository not available")
     } else {

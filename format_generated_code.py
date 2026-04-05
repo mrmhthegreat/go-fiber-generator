@@ -178,16 +178,8 @@ def fix_spacing(lines):
     
     return result
 
-
-def main():
-    """Main function."""
-    if len(sys.argv) < 2:
-        print("Usage: python3 format_go_final.py <directory>")
-        print("\nExample:")
-        print("  python3 format_go_final.py ./generated")
-        sys.exit(1)
-    
-    directory = Path(sys.argv[1])
+def codeFormat(directory: str):
+    directory = Path(directory)
     
     if not directory.exists():
         print(f"❌ Directory not found: {directory}")
@@ -200,7 +192,6 @@ def main():
         sys.exit(1)
     
     print(f"\n🔧 Formatting {len(go_files)} Go files...\n")
-    
     results = []
     total_original_size = 0
     total_final_size = 0
@@ -233,6 +224,15 @@ def main():
     print("=" * 70)
     print("\n✅ All files formatted!\n")
 
+def main():
+    """Main function."""
+    if len(sys.argv) < 2:
+        print("Usage: python3 format_go_final.py <directory>")
+        print("\nExample:")
+        print("  python3 format_go_final.py ./generated")
+        sys.exit(1)
+    
+    codeFormat(sys.argv[1])
 
 if __name__ == '__main__':
     main()

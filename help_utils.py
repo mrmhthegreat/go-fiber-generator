@@ -3,16 +3,27 @@ import os
 import sys
 import argparse
 import yaml
+import re
 from jinja2 import Environment, FileSystemLoader
 
 
-def _make_env(template_dir: str) -> Environment:
-    env = Environment(loader=FileSystemLoader(template_dir), keep_trailing_newline=True,)
+def _make_env(template_dir: str, is_web: bool = False) -> Environment:
+    kwargs = {}
+    if is_web:
+        kwargs = {
+            'block_start_string': '[%',
+            'block_end_string': '%]',
+            'variable_start_string': '[[',
+            'variable_end_string': ']]',
+            'comment_start_string': '[#',
+            'comment_end_string': '#]',
+        }
+    env = Environment(loader=FileSystemLoader(template_dir), keep_trailing_newline=True, **kwargs)
     env.filters['snake_case'] = lambda s: s.lower().replace(' ', '_')
     env.filters['camel_case'] = lambda s: ''.join(w.capitalize() for w in s.split('_'))
     env.filters['title']      = lambda s: s.title()
     env.filters['lower']      = lambda s: s.lower()
-    env.filters['replace']    = lambda s, old, new: s.replace(old, new)
+    env.filters['regex_replace'] = lambda s, pattern, repl: re.sub(pattern, repl, s)
     return env
 
 
@@ -27,10 +38,13 @@ def render_all(context: dict, templates: list[tuple[str, str]]):
             continue
         tmpl_dir  = os.path.dirname(t_path)
         tmpl_name = os.path.basename(t_path)
-        if tmpl_dir not in _env_cache:
-            _env_cache[tmpl_dir] = _make_env(tmpl_dir)
+        is_web = t_path.endswith('.html.j2') or t_path.endswith('.js.j2')
+        env_key = f"{tmpl_dir}_{is_web}"
+        
+        if env_key not in _env_cache:
+            _env_cache[env_key] = _make_env(tmpl_dir, is_web)
         try:
-            rendered = _env_cache[tmpl_dir].get_template(tmpl_name).render(**ctx)
+            rendered = _env_cache[env_key].get_template(tmpl_name).render(**ctx)
             os.makedirs(os.path.dirname(o_path), exist_ok=True)
             with open(o_path, 'w') as f:
                 f.write(rendered)

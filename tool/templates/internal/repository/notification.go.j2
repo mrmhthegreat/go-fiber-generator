@@ -35,7 +35,7 @@ import (
 // NotificationRepository defines the interface for notification database operations.
 type NotificationRepository interface {
 	CreateNotification(notif *domain.Notification) error
-	GetNotificationsByUserID(userID uint, limit, offset int) ([]domain.Notification, bool, error)
+GetNotificationsByUserID(userID uint, limit, offset int, fields ...string) ([]domain.Notification, bool, error)
 {% if has_is_read %}
 	MarkNotificationAsRead(id uint, userID uint) error
 	MarkNotificationsAsReadBulk(ids []uint, userID uint) error
@@ -70,11 +70,14 @@ func (r *notificationRepository) CreateNotification(notif *domain.Notification) 
 }
 
 // GetNotificationsByUserID retrieves paginated notifications for a user, newest first.
-func (r *notificationRepository) GetNotificationsByUserID(userID uint, limit, offset int) ([]domain.Notification, bool, error) {
+func (r *notificationRepository) GetNotificationsByUserID(userID uint, limit, offset int, fields ...string) ([]domain.Notification, bool, error) {
 	var notifications []domain.Notification
 
-	err := r.db.
-		Where("{{ user_id_field.name }} = ?", userID).
+	query := r.db.Where("{{ user_id_field.name }} = ?", userID)
+	if len(fields) > 0 {
+		query = query.Select(fields)
+	}
+	err := query.
 		Order("created_at desc").
 		Limit(limit + 1).
 		Offset(offset).
@@ -82,7 +85,6 @@ func (r *notificationRepository) GetNotificationsByUserID(userID uint, limit, of
 	if err != nil {
 		return nil, false, fmt.Errorf("GetNotificationsByUserID: %w", err)
 	}
-
 	hasMore := len(notifications) > limit
 	if hasMore {
 		notifications = notifications[:limit]

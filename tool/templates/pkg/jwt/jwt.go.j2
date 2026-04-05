@@ -1,77 +1,134 @@
-package helpers
+package jwt
 
 import (
-"time"
+	"errors"
+	"time"
 
-"github.com/golang-jwt/jwt/v5"
-
-"{{ config.project.module }}/config"
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/spf13/viper"
 )
 
-// GenerateJWT generates a JWT token for a user with dynamic configuration
-func GenerateJWT(userID uint, fullname string, email string, verified bool) (string, error) {
-{% set expiry_hours = config.authentication.jwt.expiry_hours | default(24) %}
-{% set algorithm = config.authentication.jwt.algorithm | default('HS256') %}
-claims := jwt.MapClaims{
-"user_id":  userID,
-"fullname": fullname,
-"email":    email,
-"verified": verified,
-"exp":      time.Now().Add(time.Hour * {{ expiry_hours }}).Unix(),
-"iat":      time.Now().Unix(),
-{% if config.authentication.jwt.claims %}
-// Add configured dynamic claims if any
-{% for claim in config.authentication.jwt.claims %}
-{% if claim.name not in ['user_id', 'fullname', 'email', 'verified', 'exp', 'iat'] %}
-// Note: {{ claim.name }} should be passed by caller if needed
+// TokenPayload defines the data embedded in the JWT
+type TokenPayload struct {
+	UserID uint `json:"user_id"`
+{% set use_email = config.authentication.email_password.enabled or config.authentication.social_auth.google.enabled or config.authentication.social_auth.facebook.enabled %}
+{% if use_email %}
+	Email    string `json:"email,omitempty"`
+{% endif %}
+{% if config.rbac.enabled %}
+	Role     string `json:"role,omitempty"`
+{% endif %}
+{% if config.authentication.email_verification.enabled %}
+	Verified bool   `json:"verified,omitempty"`
+{% endif %}
+{% for c in config.authentication.jwt.claims %}
+{% if c.name not in ['user_id', 'email', 'role', 'verified'] %}
+{% set field_name = c.name | replace('_', ' ') | title | replace(' ', '') %}
+	{{ field_name }} {{ c.type }} `json:"{{ c.name }}"`
 {% endif %}
 {% endfor %}
-{% endif %}
 }
 
-var token *jwt.Token
+// GenerateJWT generates a JWT token for a user with dynamic configuration
+func GenerateJWT(payload TokenPayload) (string, error) {
+{% set expiry_hours = config.authentication.jwt.expiry_hours | default(24) %}
+{% set algorithm = config.authentication.jwt.algorithm | default('HS256') %}
+	claims := jwt.MapClaims{
+		"user_id":  payload.UserID,
+{% set use_email = config.authentication.email_password.enabled or config.authentication.social_auth.google.enabled or config.authentication.social_auth.facebook.enabled %}
+{% if use_email %}
+		"email":    payload.Email,
+{% endif %}
+{% if config.rbac.enabled %}
+		"role":     payload.Role,
+{% endif %}
+{% if config.authentication.email_verification.enabled %}
+		"verified": payload.Verified,
+{% endif %}
+{% for c in config.authentication.jwt.claims %}
+{% if c.name not in ['user_id', 'email', 'role', 'verified'] %}
+{% set field_name = c.name | replace('_', ' ') | title | replace(' ', '') %}
+		"{{ c.name }}": payload.{{ field_name }},
+{% endif %}
+{% endfor %}
+		"exp": time.Now().Add(time.Hour * {{ expiry_hours }}).Unix(),
+		"iat": time.Now().Unix(),
+	}
+
+	var token *jwt.Token
 {% if algorithm == 'HS384' %}
-token = jwt.NewWithClaims(jwt.SigningMethodHS384, claims)
+	token = jwt.NewWithClaims(jwt.SigningMethodHS384, claims)
 {% elif algorithm == 'HS512' %}
-token = jwt.NewWithClaims(jwt.SigningMethodHS512, claims)
+	token = jwt.NewWithClaims(jwt.SigningMethodHS512, claims)
 {% else %}
-token = jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	token = jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 {% endif %}
 
-return token.SignedString([]byte(viper.GetString("{{ config.authentication.jwt.secret_key | default('JWT_SECRET') }}")))
+	return token.SignedString([]byte(viper.GetString("{{ config.authentication.jwt.secret_key | default('JWT_SECRET') }}")))
 }
 
 {% if config.authentication.refresh_token.enabled %}
 // GenerateRefreshJWT generates a refresh JWT token with dynamic configuration
-func GenerateRefreshJWT(userID uint, fullname string, email string, verified bool) (string, error) {
+func GenerateRefreshJWT(payload TokenPayload) (string, error) {
 {% set refresh_expiry = config.authentication.refresh_token.expiry | default('168h') %}
 {% set algorithm = config.authentication.jwt.algorithm | default('HS256') %}
-expiry, _ := time.ParseDuration("{{ refresh_expiry }}")
+	expiry, _ := time.ParseDuration("{{ refresh_expiry }}")
 
-claims := jwt.MapClaims{
-"user_id":  userID,
-"fullname": fullname,
-"email":    email,
-"verified": verified,
-"exp":      time.Now().Add(expiry).Unix(),
-"iat":      time.Now().Unix(),
-"type":     "refresh",
-}
+	claims := jwt.MapClaims{
+		"user_id":  payload.UserID,
+{% set use_email = config.authentication.email_password.enabled or config.authentication.social_auth.google.enabled or config.authentication.social_auth.facebook.enabled %}
+{% if use_email %}
+		"email":    payload.Email,
+{% endif %}
+{% if config.rbac.enabled %}
+		"role":     payload.Role,
+{% endif %}
+{% if config.authentication.email_verification.enabled %}
+		"verified": payload.Verified,
+{% endif %}
+{% for c in config.authentication.jwt.claims %}
+{% if c.name not in ['user_id', 'email', 'role', 'verified'] %}
+{% set field_name = c.name | replace('_', ' ') | title | replace(' ', '') %}
+		"{{ c.name }}": payload.{{ field_name }},
+{% endif %}
+{% endfor %}
+		"exp":  time.Now().Add(expiry).Unix(),
+		"iat":  time.Now().Unix(),
+		"type": "refresh",
+	}
 
-
-
-var token *jwt.Token
+	var token *jwt.Token
 {% if algorithm == 'HS384' %}
-token = jwt.NewWithClaims(jwt.SigningMethodHS384, claims)
+	token = jwt.NewWithClaims(jwt.SigningMethodHS384, claims)
 {% elif algorithm == 'HS512' %}
-token = jwt.NewWithClaims(jwt.SigningMethodHS512, claims)
+	token = jwt.NewWithClaims(jwt.SigningMethodHS512, claims)
 {% else %}
-token = jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	token = jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 {% endif %}
 
-return token.SignedString([]byte(viper.GetString("{{ config.authentication.jwt.secret_key | default('JWT_SECRET') }}")))
+	return token.SignedString([]byte(viper.GetString("{{ config.authentication.jwt.secret_key | default('JWT_SECRET') }}")))
 }
 {% endif %}
+
+// ValidateRefreshToken validates a refresh token and returns claims
+func ValidateRefreshToken(tokenString string) (jwt.MapClaims, error) {
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		return []byte(viper.GetString("{{ config.authentication.jwt.secret_key | default('JWT_SECRET') }}")), nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
+		if refreshType, ok := claims["type"].(string); !ok || refreshType != "refresh" {
+			return nil, errors.New("invalid token type")
+		}
+		return claims, nil
+	}
+
+	return nil, errors.New("invalid token")
+}
 
 
 

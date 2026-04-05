@@ -1,0 +1,103 @@
+"use strict";
+
+let validatePassword = (password) => {
+  const errors = [];
+  [% set min_len = authentication.email_password.password_validation.min_length | default(8) %]
+  if (password.length < [[ min_len ]]) errors.push("Password must be at least [[ min_len ]] characters long.");
+  if (!/[A-Z]/.test(password)) errors.push("Password must contain at least one uppercase letter.");
+  if (!/[0-9]/.test(password)) errors.push("Password must contain at least one number.");
+  if (!/[!@#$%^&*(),.?":{}|<>~_-]/.test(password)) errors.push("Password must contain at least one special character.");
+  return errors;
+};
+
+[% set login_methods = authentication.identifier.login_methods | default([]) %]
+[% set active_login = login_methods | selectattr('enabled') | first %]
+[% set login_field = active_login.field if active_login else 'email' %]
+
+[% if login_field == 'username' %]
+const signinIdentifierEl = document.getElementById("signin-username");
+const signinErrorEl = document.getElementById("signin-email-error");
+function validateIdentifier(val) { return val && val.length >= 3; }
+[% elif login_field in ['email_or_username', 'username_or_email'] %]
+const signinIdentifierEl = document.getElementById("signin-identifier");
+const signinErrorEl = document.getElementById("signin-email-error");
+function validateIdentifier(val) { return val && val.length >= 3; }
+[% else %]
+const signinIdentifierEl = document.getElementById("signin-email");
+const signinErrorEl = document.getElementById("signin-email-error");
+function validateIdentifier(val) { return val && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val); }
+[% endif %]
+
+if (signinIdentifierEl) {
+  signinIdentifierEl.addEventListener("input", function (event) {
+    const errorEl = document.getElementById("signin-password-error");
+    if (errorEl) errorEl.classList.add("hidden");
+  });
+}
+
+const signinPasswordEl = document.getElementById("signin-password");
+if (signinPasswordEl) {
+  signinPasswordEl.addEventListener("input", function (event) {
+    const errorEl = document.getElementById("signin-password-error");
+    if (!errorEl) return;
+    if (validatePassword(event.target.value).length > 0) {
+      errorEl.classList.remove("hidden");
+    } else {
+      errorEl.classList.add("hidden");
+    }
+  });
+}
+
+const signinForm = document.getElementById("signin-form");
+if (signinForm) {
+  signinForm.addEventListener("htmx:beforeRequest", function (event) {
+    const identVal = signinIdentifierEl?.value.trim();
+    const password = signinPasswordEl?.value.trim();
+
+    signinIdentifierEl?.classList.remove("border-red-500", "focus:ring-red-500");
+    signinPasswordEl?.classList.remove("border-red-500", "focus:ring-red-500");
+    signinErrorEl?.classList.add("hidden");
+    document.getElementById("signin-password-error")?.classList.add("hidden");
+
+    let isValid = true;
+    if (!validateIdentifier(identVal)) {
+      signinErrorEl?.classList.remove("hidden");
+      signinIdentifierEl?.classList.add("border-red-500", "focus:ring-red-500");
+      isValid = false;
+    }
+    if (!password || validatePassword(password).length > 0) {
+      document.getElementById("signin-password-error")?.classList.remove("hidden");
+      signinPasswordEl?.classList.add("border-red-500", "focus:ring-red-500");
+      showNotification("Invalid Password", "error");
+      isValid = false;
+    }
+    if (!isValid) {
+      event.preventDefault();
+      event.detail.shouldAbort = true;
+    }
+  });
+
+  signinForm.addEventListener("htmx:afterRequest", function (event) {
+    const xhr = event.detail.xhr;
+    const redirectURL = xhr.getResponseHeader("HX-Redirect");
+    try {
+      const response = JSON.parse(xhr.responseText);
+      if (redirectURL) {
+        window.location.href = redirectURL;
+      } else {
+        if (response.password) {
+          document.getElementById("signin-password-error")?.classList.remove("hidden");
+          signinPasswordEl?.classList.add("border-red-500", "focus:ring-red-500");
+        }
+        if (response.email || response.username || response.identifier) {
+          signinErrorEl?.classList.remove("hidden");
+          signinIdentifierEl?.classList.add("border-red-500", "focus:ring-red-500");
+        }
+        if (response.error) showNotification(response.error, "error");
+        if (response.message) showNotification(response.message, "info");
+      }
+    } catch (e) {
+      showNotification("An error occurred. Please try again.", "error");
+    }
+  });
+}

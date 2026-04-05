@@ -1,0 +1,38 @@
+# =============================================================================
+# STORAGE CONFIG EXAMPLE
+# Use this file with: python storage_generate.py --config configexample/storage_config.yaml
+# =============================================================================
+
+project:
+  module: github.com/username/my_api
+  user_model_name: User
+  repository_name: UserRepository
+# =============================================================================
+# STORAGE
+# Configure the file upload storage backend.
+# Only one provider block should have its credentials filled.
+# =============================================================================
+storage:
+  enabled: true
+  # Which provider to use at runtime (read from this env var)
+  provider_env: STORAGE_PROVIDER   # e.g. env value: "supabase", "s3", or "local"
+  # ── Supabase ────────────────────────────────────────────────────────────────
+  supabase:
+    url_env:         STORAGE_SUPABASE_URL
+    token_env:       STORAGE_SUPABASE_TOKEN
+    bucket_name_env: STORAGE_SUPABASE_BUCKET_NAME
+
+  # ── AWS S3 / S3-compatible ──────────────────────────────────────────────────
+  # s3:
+  #   endpoint_env:        STORAGE_S3_ENDPOINT          # leave blank for AWS
+  #   region_env:          STORAGE_S3_REGION
+  #   bucket_env:          STORAGE_S3_BUCKET
+  #   access_key_id_env:   STORAGE_S3_ACCESS_KEY_ID
+  #   secret_access_key_env: STORAGE_S3_SECRET_ACCESS_KEY
+  #   use_ssl_env:         STORAGE_S3_USE_SSL
+
+  # ── Local filesystem ────────────────────────────────────────────────────────
+  # local:
+  #   upload_path_env: STORAGE_LOCAL_UPLOAD_PATH   # e.g. ./uploads
+  #   base_url_env:    STORAGE_LOCAL_BASE_URL       # e.g. http://localhost:3000/uploads
+

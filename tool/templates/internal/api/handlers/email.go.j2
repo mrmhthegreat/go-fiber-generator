@@ -70,7 +70,7 @@ func (h *EmailHandler) getEmailsPage(c *fiber.Ctx, direction string, inboxType s
     {% set ep = im.web_handler %}
 
     {% if ep.context.needs_user and ep.context.user_config.use_repo %}
-    userRepo := utilspkg.Get{{ ep.context.user_config.repo_name }}(dbConn)
+    userRepo := dbConn.{{ config.project.user_model_name }}
     if userRepo == nil {
         return fiber.NewError(fiber.StatusInternalServerError, "db_connection_failed")
     }
@@ -95,13 +95,13 @@ func (h *EmailHandler) getEmailsPage(c *fiber.Ctx, direction string, inboxType s
     renderContext["perms"] = string(permsJSON)
     {% endif %}
     {% if ep.context.needs_dashbase %}
-    renderContext["dashBase"] = rbacpkg.GetDashboardBasePath(user.{{ config.rbac.model_field }})
+    renderContext["dashBase"] = rbacpkg.GetDashboardBasePath(user.Role)
     {% endif %}
     {% endif %}
 
     {% for data in ep.context.custom_data %}
     // Fetch {{ data.name }}
-    {{ data.repo | lower }}Repo := utilspkg.Get{{ data.repo }}Repository(dbConn)
+{{ data.repo | lower }}Repo := dbConn.{{ data.model_name | default(data.repo | replace('Repository', '')) }}
     if {{ data.repo | lower }}Repo != nil {
         {{ data.var }}, err := {{ data.repo | lower }}Repo.{{ data.method }}({% for arg in data.args %}{{ arg }}{% if not loop.last %}, {% endif %}{% endfor %})
         if err != nil {
@@ -141,7 +141,7 @@ func (h *EmailHandler) getEmailsPage(c *fiber.Ctx, direction string, inboxType s
 {% endif %}
 func (h *EmailHandler) GetEmailsList(c *fiber.Ctx) error {
     dbConn := utilspkg.GetDB(c)
-    emailRepo := utilspkg.GetEmailMessageRepository(dbConn)
+    emailRepo := dbConn.Emails
     if emailRepo == nil {
         return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "db_connection_failed"})
     }
@@ -189,7 +189,7 @@ func (h *EmailHandler) GetEmailsList(c *fiber.Ctx) error {
 {% endif %}
 func (h *EmailHandler) GetEmailDetail(c *fiber.Ctx) error {
     dbConn := utilspkg.GetDB(c)
-    emailRepo := utilspkg.GetEmailMessageRepository(dbConn)
+    emailRepo := dbConn.Emails
     if emailRepo == nil {
         return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "db_connection_failed"})
     }
@@ -247,8 +247,7 @@ func (h *EmailHandler) ComposeEmail(c *fiber.Ctx) error {
     }
 
     dbConn := utilspkg.GetDB(c)
-    emailRepo := utilspkg.GetEmailMessageRepository(dbConn)
-
+ emailRepo := dbConn.Emails
     userID, _ := c.Locals("user_id").(uint)
     userEmail, _ := c.Locals("email").(string)
 
@@ -285,7 +284,8 @@ func (h *EmailHandler) ComposeEmail(c *fiber.Ctx) error {
 {% endif %}
 func (h *EmailHandler) MarkEmailRead(c *fiber.Ctx) error {
     dbConn := utilspkg.GetDB(c)
-    emailRepo := utilspkg.GetEmailMessageRepository(dbConn)
+   
+ emailRepo := dbConn.Emails
     if emailRepo == nil {
         return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "db_connection_failed"})
     }

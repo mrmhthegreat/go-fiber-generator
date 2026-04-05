@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Helpers Generator — FCM, sendMail, saveUploadFile.
+Storage Generator — File upload storage provider (Supabase, S3, local).
 These are top-level features, not nested under authentication.
 
 Reads from:
@@ -19,7 +19,7 @@ import os
 import sys
 import argparse
 import yaml
-from auth_generate import render_all
+from help_utils import render_all
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -46,6 +46,11 @@ def build_context(config_path: str) -> dict:
     config['_has_file_uploads']   = any(f.get('file_upload') for f in register_fields)
     config['_file_upload_fields'] = [f for f in register_fields if f.get('file_upload')]
 
+    # Dependency validation
+    if config['_has_file_uploads'] and not storage.get('enabled'):
+        print('⚠️  WARNING: register_fields contain file_upload: true fields '
+              'but storage.enabled is false — uploaded files will have nowhere to go')
+
     return config
 
 
@@ -59,8 +64,8 @@ def get_templates(config: dict, t: str, o: str) -> list[tuple[str, str]]:
     # saveUploadFile — storage must be enabled OR a register field has file_upload
     if config['storage'].get('enabled') or config['_has_file_uploads']:
         result.append((
-            f'{t}/pkg/helpers/uploader.go.j2',
-            f'{o}/pkg/helpers/uploader.go',
+            f'{t}/pkg/storage/uploader.go.j2',
+            f'{o}/pkg/storage/uploader.go',
         ))
         if config['storage'].get('enabled'):
             result.append((

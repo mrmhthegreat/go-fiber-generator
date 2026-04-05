@@ -1,0 +1,53 @@
+[% set display_fields = model.list_response.fields if model.list_response is defined and model.list_response.enabled else model.fields %]
+[% set visible_fields = [] %]
+[% for field in display_fields %]
+[% set field_json = field.json_name | default(field.json) | default(field.name | lower) %]
+[% if field_json != '-' and field.name | lower not in ['id', 'password'] %]
+[% set _ = visible_fields.append(field) %]
+[% endif %]
+[% endfor %]
+[% set col_count = visible_fields | length + 1 %]
+
+<div class="p-5 border-t border-gray-100 dark:border-gray-800 sm:p-6">
+  <div class="overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-white/[0.03]">
+    <div class="max-w-full overflow-x-auto custom-scrollbar">
+      <table class="min-w-full">
+        <!-- Header -->
+        <thead class="border-gray-100 border-y bg-gray-50 dark:border-gray-800 dark:bg-gray-900">
+          <tr>
+            [% for field in visible_fields %]
+            <th class="px-6 py-3 whitespace-nowrap text-left">
+              <p class="font-medium text-gray-500 text-xs dark:text-gray-400" x-text="trans.[[ field.name | lower ]] || '[[ field.name | replace('_', ' ') | title ]]'"></p>
+            </th>
+            [% endfor %]
+            <th class="px-6 py-3 whitespace-nowrap">
+              <p class="font-medium text-gray-500 text-xs dark:text-gray-400 text-center" x-text="trans.action || 'Actions'"></p>
+            </th>
+          </tr>
+        </thead>
+
+        <!-- Table body: live rows -->
+        <tbody class="divide-y divide-gray-100 dark:divide-gray-800" id="[[ model.name | lower ]]-table-container"></tbody>
+
+        <!-- Table body: loading shimmer -->
+        <tbody class="divide-y divide-gray-100 dark:divide-gray-800" x-show="loadingMore[[ model.name ]]">
+          {{template "shared/table-loading" }}
+        </tbody>
+
+        <!-- Table body: load more -->
+        <tbody class="divide-y divide-gray-100 dark:divide-gray-800" x-show="hasMore[[ model.name ]] && !loadingMore[[ model.name ]]">
+          <tr>
+            <td colspan="[[ col_count ]]" class="px-6 py-6 text-center">
+              <div class="flex flex-row items-center justify-center">
+                <button @click="load[[ model.name ]]Table()"
+                  class="h-10 px-4 text-sm font-medium text-gray-600 bg-gray-50 hover:bg-gray-100 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700 rounded-lg transition-colors flex items-center gap-1.5">
+                  <span x-text="trans.load_more || 'Load More'"></span>
+                </button>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>

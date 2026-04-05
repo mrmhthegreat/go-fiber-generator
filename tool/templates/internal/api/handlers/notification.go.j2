@@ -61,7 +61,7 @@ func GetNotifications(c *fiber.Ctx) error {
 	if dbConn == nil {
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
 	}
-	notifRepo := utilspkg.GetNotificationRepository(dbConn)
+	notifRepo := dbConn.Notifications
 	if notifRepo == nil {
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
 	}
@@ -99,7 +99,8 @@ func MarkNotificationRead(c *fiber.Ctx) error {
 	if dbConn == nil {
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
 	}
-	notifRepo := utilspkg.GetNotificationRepository(dbConn)
+	notifRepo := dbConn.Notifications
+
 	if notifRepo == nil {
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
 	}
@@ -134,7 +135,8 @@ func BulkMarkNotificationRead(c *fiber.Ctx) error {
 	if dbConn == nil {
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
 	}
-	notifRepo := utilspkg.GetNotificationRepository(dbConn)
+	notifRepo := dbConn.Notifications
+
 	if notifRepo == nil {
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
 	}
@@ -163,7 +165,7 @@ func MarkAllNotificationsRead(c *fiber.Ctx) error {
 	if dbConn == nil {
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
 	}
-	notifRepo := utilspkg.GetNotificationRepository(dbConn)
+	notifRepo := dbConn.Notifications
 	if notifRepo == nil {
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
 	}
@@ -192,7 +194,8 @@ func GetUnreadNotificationCount(c *fiber.Ctx) error {
 	if dbConn == nil {
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
 	}
-	notifRepo := utilspkg.GetNotificationRepository(dbConn)
+	notifRepo := dbConn.Notifications
+
 	if notifRepo == nil {
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
 	}
@@ -226,7 +229,8 @@ func DeleteNotification(c *fiber.Ctx) error {
 	if dbConn == nil {
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
 	}
-	notifRepo := utilspkg.GetNotificationRepository(dbConn)
+	notifRepo := dbConn.Notifications
+
 	if notifRepo == nil {
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
 	}
@@ -261,7 +265,8 @@ func BulkDeleteNotification(c *fiber.Ctx) error {
 	if dbConn == nil {
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
 	}
-	notifRepo := utilspkg.GetNotificationRepository(dbConn)
+	notifRepo := dbConn.Notifications
+
 	if notifRepo == nil {
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
 	}

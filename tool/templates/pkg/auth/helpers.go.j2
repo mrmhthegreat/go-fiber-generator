@@ -15,7 +15,10 @@ import (
 "github.com/golang-jwt/jwt/v4"
 "github.com/spf13/viper"
 "golang.org/x/crypto/bcrypt"
-
+{% if config.session.enabled %}
+"github.com/gofiber/fiber/v2/middleware/session"
+"fmt"
+{% endif %}
 "{{ config.project.module }}/internal/domain"
 resppkg "{{ config.project.module }}/pkg/response"
 )
@@ -73,7 +76,7 @@ return nil
 {% endif %}
 {% endif %}
 
-{% if config.authentication.email_password.email_verification.enabled or config.authentication.email_password.forgot_password.enabled %}
+{% if config.authentication.email_verification.enabled or config.authentication.email_password.forgot_password.enabled %}
 // OTP storage (in-memory for simplicity, use Redis in production)
 var otpStore = make(map[string]OTPData)
 
@@ -84,7 +87,7 @@ ExpiresAt time.Time
 
 // GenerateOTP generates a random OTP
 func GenerateOTP() string {
-{% set otp_length = config.authentication.email_password.email_verification.otp_length | default(6) %}
+{% set otp_length = config.authentication.email_verification.otp_length | default(6) %}
 const otpLength = {{ otp_length }}
 const digits = "0123456789"
 
@@ -99,7 +102,7 @@ return string(otp)
 
 // StoreOTP stores an OTP for an email
 func StoreOTP(email, otp string) {
-{% set otp_expiry = config.authentication.email_password.email_verification.otp_expiry | default('10m') %}
+{% set otp_expiry = config.authentication.email_verification.otp_expiry | default('10m') %}
 expiry, _ := time.ParseDuration("{{ otp_expiry }}")
 otpStore[email] = OTPData{
 Code:      otp,
@@ -141,3 +144,23 @@ return true
 {% endif %}
 
 
+
+{% if config.session.enabled %}
+// GetSession retrieves the session from Fiber context
+func GetSession(c *fiber.Ctx) (*session.Session, error) {
+	sess, ok := c.Locals("session").(*session.Session)
+	if !ok {
+		return nil, fmt.Errorf("session not found in context")
+	}
+	return sess, nil
+}
+
+// MustGetSession retrieves the session or panics
+func MustGetSession(c *fiber.Ctx) *session.Session {
+	sess, err := GetSession(c)
+	if err != nil {
+		panic(err.Error())
+	}
+	return sess
+}
+{% endif %}

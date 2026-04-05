@@ -1,0 +1,97 @@
+{{define "[[ handler.template_base ]]/partials/show"}}
+<div class="p-4 mx-auto max-w-(--breakpoint-2xl) md:p-6">
+
+  <!-- Page Header -->
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-2xl font-bold text-gray-800 dark:text-white/90" x-text="trans.[[ model.name | lower ]]_details || '[[ model.name ]] Details'"></h1>
+      <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{if .item}}#{{.item.ID}}{{end}}</p>
+    </div>
+    <div class="flex items-center gap-3">
+      [% if handler.crud_settings is defined and handler.crud_settings.edit_page is defined and handler.crud_settings.edit_page.enabled %]
+      <a href="[[ handler.base_path ]]/{{if .item}}{{.item.ID}}{{end}}/edit"
+        class="inline-flex items-center gap-2 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-5M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+        <span x-text="trans.edit || 'Edit'"></span>
+      </a>
+      [% endif %]
+      <!-- Close detail view button -->
+      <button
+        @click="is[[ model.name ]]DetailsModalOpen = false; document.getElementById('[[ model.name | lower ]]-details-page').innerHTML = '';"
+        class="inline-flex items-center gap-2 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-400 dark:hover:bg-gray-800">
+        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+        <span x-text="trans.back || 'Back'"></span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Detail Card -->
+  <div class="rounded-2xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-white/[0.03]">
+    <div class="divide-y divide-gray-100 dark:divide-gray-800">
+      [% set display_fields = model.detail_response.fields if model.detail_response is defined and model.detail_response.enabled else model.fields %]
+      [% for field in display_fields %]
+      [% set field_json = field.json_name | default(field.json) | default(field.name | lower) %]
+      [% if field_json != '-' and field.name | lower not in ['password'] %]
+      <div class="flex items-start px-6 py-4">
+        <span class="w-40 flex-shrink-0 text-sm font-medium text-gray-500 dark:text-gray-400" x-text="trans.[[ field.name | lower ]] || '[[ field.name | replace('_', ' ') | title ]]'"></span>
+        <span class="text-sm text-gray-900 dark:text-white/90 flex-1">
+          [% if 'avatar' in field_json or 'image' in field_json or 'photo' in field_json or 'picture' in field_json %]
+          {{if .item}}<img src="{{.item.[[ field.name ]]}}" class="h-16 w-16 rounded-full border border-gray-200 object-cover dark:border-gray-600" onerror="this.src='/static/images/placeholder.png'" alt="[[ field.name ]]" />{{end}}
+          [% elif field.type == 'bool' %]
+          {{if .item}}{{if .item.[[ field.name ]]}}
+          <span class="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/20 dark:text-green-400" x-text="trans.yes || 'Yes'"></span>
+          {{else}}
+          <span class="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-600 dark:bg-gray-700 dark:text-gray-400" x-text="trans.no || 'No'"></span>
+          {{end}}{{end}}
+          [% elif 'role' in field_json or 'status' in field_json %]
+          {{if .item}}<span class="inline-flex items-center rounded-full bg-brand-100 px-2.5 py-0.5 text-xs font-semibold uppercase text-brand-700 dark:bg-brand-900/20 dark:text-brand-400">{{.item.[[ field.name ]]}}</span>{{end}}
+          [% else %]
+          {{if .item}}{{.item.[[ field.name ]]}}{{end}}
+          [% endif %]
+        </span>
+      </div>
+      [% endif %]
+      [% endfor %]
+    </div>
+  </div>
+
+  [% if handler.crud_settings is defined and handler.crud_settings.delete is defined and handler.crud_settings.delete.enabled %]
+  <!-- Danger Zone -->
+  <div class="mt-6 rounded-2xl border border-red-200 bg-red-50 p-6 dark:border-red-900/30 dark:bg-red-900/10" x-data="{ confirmDelete: false }">
+    <h3 class="text-sm font-semibold text-red-800 dark:text-red-400 mb-2" x-text="trans.danger_zone || 'Danger Zone'"></h3>
+    <p class="text-sm text-red-700 dark:text-red-400 mb-4" x-text="trans.delete_[[ model.name | lower ]]_warning || 'Permanently delete this [[ model.name | lower ]]. This action cannot be undone.'"></p>
+    <div x-show="!confirmDelete">
+      <button @click="confirmDelete = true" class="rounded-lg border border-red-300 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-100 dark:border-red-700 dark:text-red-400">
+        <span x-text="trans.delete_[[ model.name | lower ]] || 'Delete [[ model.name ]]'"></span>
+      </button>
+    </div>
+    <div x-show="confirmDelete" class="flex items-center gap-3">
+      <span class="text-sm text-red-700 dark:text-red-400" x-text="trans.are_you_sure || 'Are you sure?'"></span>
+      <button
+        {{if .item}}
+        hx-delete="[[ handler.base_path ]]/{{.item.ID}}"
+        {{end}}
+        hx-swap="none"
+        hx-include="[name=_csrf]"
+        hx-indicator="#delete-indicator-detail"
+        hx-on::after-request="
+          const xhr = event.detail.xhr;
+          const redirect = xhr.getResponseHeader('HX-Redirect');
+          if (redirect) { window.location.href = redirect; }
+          else if (xhr.status === 200) { window.location.href = '[[ handler.base_path ]]'; }
+          else { try { const r = JSON.parse(xhr.responseText); showNotification(r.error || 'Delete failed', 'error'); } catch(e){} confirmDelete = false; }"
+        class="rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white hover:bg-red-600 flex items-center gap-1">
+        <span class="animate-spin htmx-indicator" id="delete-indicator-detail">
+          <svg width="14" height="14" viewBox="0 0 20 20" fill="none"><circle opacity="0.5" cx="10" cy="10" r="8.75" stroke="white" stroke-width="2.5"></circle></svg>
+        </span>
+        <span x-text="trans.yes_delete || 'Yes, Delete'"></span>
+      </button>
+      <button @click="confirmDelete = false" class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300">
+        <span x-text="trans.cancel || 'Cancel'"></span>
+      </button>
+    </div>
+  </div>
+  [% endif %]
+
+</div>
+{{end}}

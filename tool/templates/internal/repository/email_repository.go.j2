@@ -13,11 +13,12 @@ import (
 
 // EmailMessageRepository defines the interface for email-related database operations.
 type EmailMessageRepository interface {
-    GetInbox(userID uint, offset, limit int, sortOrder string) ([]domain.EmailMessage, int64, error)
+    GetInbox(userID uint, offset, limit int, sortOrder string, fields ...string) ([]domain.EmailMessage, int64, error)
+    
     {%if config.imap.fetch_sent %}
-    GetSent(userID uint, offset, limit int, sortOrder string) ([]domain.EmailMessage, int64, error)
+    GetSent(userID uint, offset, limit int, sortOrder string, fields ...string) ([]domain.EmailMessage, int64, error)
     {%endif%}
-    GetByID(id uint) (*domain.EmailMessage, error)
+    GetByID(id uint, fields ...string) (*domain.EmailMessage, error)
     Create(email *domain.EmailMessage) error
     Update(email *domain.EmailMessage) error
     MarkAsRead(id uint) error
@@ -34,61 +35,61 @@ func NewEmailMessageRepository(db *gorm.DB) EmailMessageRepository {
 }
 
 // GetInbox retrieves inbound emails for a user
-func (r *emailMessageRepository) GetInbox(userID uint, offset, limit int, sortOrder string) ([]domain.EmailMessage, int64, error) {
+func (r *emailMessageRepository) GetInbox(userID uint, offset, limit int, sortOrder string, fields ...string) ([]domain.EmailMessage, int64, error) {
     var emails []domain.EmailMessage
     var total int64
-
     query := r.db.Model(&domain.EmailMessage{}).Where("direction = ?", "inbound")
+    if len(fields) > 0 {
+        query = query.Select(fields)
+    }
     // If you want to filter by user_id for inbox, you might need to add logic here if emails are user-specific
     // For now assuming all inbound visible or filtered by logic in handler?
     // Handler had: userID, ok := c.Locals("user_id").(uint) but didn't seem to use it for filtering inbound except maybe permissions?
     // Original handler: query = dbConn.DB.Where("direction = ?", direction)
     // It did NOT filter by user_id for inbound. Maybe shared inbox?
     // I will keep it as per original handler logic for now.
-
     query.Count(&total)
-
     if sortOrder == "" {
         sortOrder = "desc"
     }
-
     err := query.Order(fmt.Sprintf("created_at %s", sortOrder)).
         Offset(offset).
         Limit(limit).
         Find(&emails).Error
-
     return emails, total, err
 }
 
 // GetSent retrieves outbound emails
 {%if config.imap.fetch_sent %}
-func (r *emailMessageRepository) GetSent(userID uint, offset, limit int, sortOrder string) ([]domain.EmailMessage, int64, error) {
+func (r *emailMessageRepository) GetSent(userID uint, offset, limit int, sortOrder string, fields ...string) ([]domain.EmailMessage, int64, error) {
     var emails []domain.EmailMessage
     var total int64
-
     query := r.db.Model(&domain.EmailMessage{}).
         Where("direction = ?", "outbound").
         Where("user_id = ?", userID)
-
+    if len(fields) > 0 {
+        query = query.Select(fields)
+    }
     query.Count(&total)
-
     if sortOrder == "" {
         sortOrder = "desc"
     }
-
     err := query.Order(fmt.Sprintf("created_at %s", sortOrder)).
         Offset(offset).
         Limit(limit).
         Find(&emails).Error
-
     return emails, total, err
 }
 {%endif%}
 
 // GetByID retrieves an email by ID
-func (r *emailMessageRepository) GetByID(id uint) (*domain.EmailMessage, error) {
+func (r *emailMessageRepository) GetByID(id uint, fields ...string) (*domain.EmailMessage, error) {
     var email domain.EmailMessage
-    if err := r.db.First(&email, id).Error; err != nil {
+    query := r.db
+    if len(fields) > 0 {
+        query = query.Select(fields)
+    }
+    if err := query.First(&email, id).Error; err != nil {
         return nil, err
     }
     return &email, nil

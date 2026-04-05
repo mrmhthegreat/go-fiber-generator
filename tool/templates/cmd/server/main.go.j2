@@ -37,9 +37,6 @@ import (
 {% endif %}
     "{{ config.project.module }}/helpers"
 
-	i18npkg "{{ config.project.module }}/pkg/i18n"
-	errorspkg "{{ config.project.module }}/pkg/errors"
-
     "{{ config.project.module }}/middleware"
     "{{ config.project.module }}/routes"
 {% if config.storage.enabled %}
@@ -87,12 +84,12 @@ func ErrorHandler(ctx *fiber.Ctx, err error) error {
 
     // API requests get JSON errors
     if isAPIRequest(ctx) {
-        return errorspkg.SendError(ctx, code, errorKey)
+        return helpers.SendError(ctx, code, errorKey)
     }
 
 {% if config.template_engine.enabled %}
     // Web requests get rendered error pages
-    translation := i18npkg.TranslateMap(ctx, config.ErrorTranslations)
+    translation := helpers.TranslateMap(ctx, config.ErrorTranslations)
     
     if ctx.Get("HX-Request") == "true" {
         ctx.Set("HX-Redirect", fmt.Sprintf("/%d", code))
@@ -142,19 +139,19 @@ func ErrorHandler(ctx *fiber.Ctx, err error) error {
 // @license.url {{ config.swagger.license_url | default('http://www.apache.org/licenses/LICENSE-2.0.html') }}
 // @host {{ config.swagger.host | default('localhost:3000') }}
 // @BasePath {{ config.swagger.base_path | default('/') }}
-{% if config.middleware.combined.enabled %}
+{% if config.get('middleware', {}).get('combined', {}).get('enabled') %}
 // @securityDefinitions.apikey FullAuth
 // @in header
 // @name X-API-Key
 // @description Requires X-API-Key, X-App-Token, Authorization (Bearer), X-Timestamp, and X-Signature headers
 {% endif %}
-{% if config.middleware.jwt.enabled %}
+{% if config.get('middleware', {}).get('jwt', {}).get('enabled') %}
 // @securityDefinitions.apikey PartialAuth
 // @in header
 // @name Authorization
 // @description Requires Authorization Bearer token
 {% endif %}
-{% if config.middleware.api_key.enabled %}
+{% if config.get('middleware', {}).get('api_key', {}).get('enabled') %}
 // @securityDefinitions.apikey MinimalAuth
 // @in header
 // @name X-API-Key
@@ -244,7 +241,7 @@ func main() {
 {% endif %}
 
     // Middleware and Routes are initialized via SetupRoutes
-    routes.SetupRoutes(app{% if config.session.enabled %}, store{% endif %}, gormDB{% if config.features.rbac %}, rbacService{% endif %})
+    routes.SetupRoutes(app{% if config.session.enabled %}, store{% endif %}, gormDB{% if config.features.rbac %}, rbacCtrl{% endif %})
 
 
 {% if config.i18n.enabled %}
@@ -257,18 +254,22 @@ func main() {
 {% endfor %}
         },
         LangHandler: func(ctx *fiber.Ctx, defaultLang string) string {
-            return i18npkg.DetectLanguage(ctx)
+            return helpers.DetectLanguage(ctx)
         },
     }))
 {% endif %}
 
-    // CORS middleware
+    {% set cors_cfg = config.get('middleware', {}).get('cors', {}) %}
     app.Use(cors.New(cors.Config{
-        AllowOrigins:     "{{ config.middleware.cors.allow_origins | default('*') }}",
-        AllowHeaders:     "{{ config.middleware.cors.allow_headers | default('Origin, Content-Type, Accept, Authorization, Accept-Language') }}",
-        AllowMethods:     "{{ config.middleware.cors.allow_methods | default('GET, POST, PUT, DELETE, OPTIONS, PATCH') }}",
-        AllowCredentials: {{ config.middleware.cors.allow_credentials | default('true') }},
+        AllowOrigins:     "{{ cors_cfg.get('allow_origins', '*') }}",
+        AllowHeaders:     "{{ cors_cfg.get('allow_headers', 'Origin, Content-Type, Accept, Authorization, Accept-Language') }}",
+        AllowMethods:     "{{ cors_cfg.get('allow_methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH') }}",
+        AllowCredentials: {{ cors_cfg.get('allow_credentials', 'true') }},
     }))
+
+
+    // Setup routes
+    routes.SetupRoutes(app{% if config.session.enabled %}, store{% endif %})
 
 {% if config.features.cron_jobs %}
     // Start cron jobs
@@ -287,7 +288,8 @@ func main() {
     }
     
     log.Printf("🚀 Server starting on port %s", port)
-    if err := app.Listen(":" + port); err != nil {
+    err{% if not config.features.rbac %} :={% endif %} app.Listen(":" + port)
+    if err != nil {
         log.Fatal(err)
     }
 }

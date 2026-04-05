@@ -1,5 +1,4 @@
 package event
-
 import (
 	"fmt"
 	"log"
@@ -7,23 +6,21 @@ import (
 {% if config.websocket.events | selectattr('rate_limit', 'defined') | selectattr('rate_limit.enabled') | list %}
 	"sync"
 {% endif %}
-
 	"github.com/gofiber/contrib/websocket"
 	"github.com/gofiber/fiber/v2"
-
 	"{{ config.project.module }}/internal/domain"
-	ws "{{ config.project.module }}/websocket"
+{% if config.notifications.enabled %}
+	notifpkg "{{ config.project.module }}/pkg/notification"
+{% endif %}
+	ws "{{ config.project.module }}/internal/websocket"
 )
-
 {% if config.websocket.enabled and config.websocket.handler_type == 'dedicated' %}
 {% if config.websocket.get('dedicated', {}).get('events', {}).get('enabled', true) %}
-
 {# Hub broadcast variables — routes through registry since events pkg has no direct hub refs #}
 {% set hub_broadcast_all    = 'ws.BroadcastAll' %}
 {% set hub_broadcast_admins = 'ws.BroadcastRegistry.Admin.BroadcastToAdmins' %}
 {% set hub_broadcast_user   = 'ws.BroadcastRegistry.User.BroadcastToUser' %}
 {% set hub_broadcast_room   = 'func(id string, m interface{}){}' %}
-
 func authenticateDedicatedWS(c *websocket.Conn) (uint, error) {
 {% if config.websocket.authentication.method in ['jwt', 'unified'] %}
 	appToken   := c.Headers("{{ config.websocket.authentication.get('app_token', {}).get('header_name', 'X-App-Token') }}", c.Query("{{ config.websocket.authentication.get('app_token', {}).get('query_param', 'app_token') }}"))
@@ -36,7 +33,6 @@ func authenticateDedicatedWS(c *websocket.Conn) (uint, error) {
 	return 0, nil
 {% endif %}
 }
-
 {# Rate limiters for non-chat events only #}
 {% for event in config.websocket.events %}
 {% if event.enabled and event.get('rate_limit') and event.rate_limit.get('enabled', false) and event.handler_type != 'chat_message' %}
@@ -50,7 +46,6 @@ var rateLimiter{{ event.name | replace('_', '') | title }} = &struct {
 	max:      {{ event.rate_limit.max_per_minute }},
 	window:   time.Minute,
 }
-
 func checkRateLimit{{ event.name | replace('_', '') | title }}(userID uint) bool {
 	key := fmt.Sprintf("user_%d", userID)
 	limiter := rateLimiter{{ event.name | replace('_', '') | title }}
@@ -73,11 +68,9 @@ func checkRateLimit{{ event.name | replace('_', '') | title }}(userID uint) bool
 }
 {% endif %}
 {% endfor %}
-
 // EventsWebSocketHandler handles all custom and YAML-defined events.
 // Path: {{ config.websocket.get('dedicated', {}).get('events', {}).get('path', '/ws/events') }}
 // Events: {% for event in config.websocket.events %}{% if event.enabled and event.handler_type != 'chat_message' %}{{ event.name }} {% endif %}{% endfor %}
-
 func EventsWebSocketHandler(c *websocket.Conn) {
 	userID, err := authenticateDedicatedWS(c)
 	if err != nil {
@@ -85,9 +78,7 @@ func EventsWebSocketHandler(c *websocket.Conn) {
 		c.Close()
 		return
 	}
-
 	safeConn := ws.NewSafeConn(c)
-
 	for {
 		var msg map[string]interface{}
 		if err := safeConn.ReadJSON(&msg); err != nil {
@@ -123,27 +114,24 @@ func EventsWebSocketHandler(c *websocket.Conn) {
 		}
 	}
 }
-
 {# Generic Event Handler - Made Dynamic                            #}
 {# ────────────────────────────────────────────────────────────── #}
 func handleGenericEvent(eventType string, msg map[string]interface{}, userID uint, conn WSWriter) {
 	log.Printf("Generic event '%s' from user %d", eventType, userID)
 	msg["type"]      = eventType
 	msg["sender_id"] = userID
-
 {% for event in config.websocket.events %}
 {% if event.enabled and event.get('handler_type', 'generic') not in ['chat_message', 'custom'] %}
 	if eventType == "{{ event.name }}" {
 {% if event.get('persist', false) %}
 		// Persist event as a notification record
-		GlobalNotify(map[string]interface{}{
+		notifpkg.GlobalNotify(map[string]interface{}{
 			"user_id": userID,
 			"title":   "Event: {{ event.name }}",
 			"message": "{{ event.get('description', 'New activity detected') }}",
 			"type":    "{{ event.name }}",
 		}, nil)
 {% endif %}
-
 		// Broadcast to configured targets
 {% for target in event.get('broadcast_to', []) %}
 {% if target == 'all' %}
@@ -162,7 +150,6 @@ func handleGenericEvent(eventType string, msg map[string]interface{}, userID uin
 		{{ event.custom_broadcast_function }}(msg)
 {% endif %}
 {% endfor %}
-
 		// Send success response
 		_ = conn.WriteJSON(fiber.Map{
 			"success": true,
@@ -172,7 +159,6 @@ func handleGenericEvent(eventType string, msg map[string]interface{}, userID uin
 	}
 {% endif %}
 {% endfor %}
-
 	// Default: just log it
 	_ = conn.WriteJSON(fiber.Map{
 		"success": true,
@@ -180,8 +166,6 @@ func handleGenericEvent(eventType string, msg map[string]interface{}, userID uin
 		"note": "Event received but no specific handler configured",
 	})
 }
-
-
 {# ────────────────────────────────────────────────────────────── #}
 {# Custom Event Handlers - Generated from YAML                     #}
 {# ────────────────────────────────────────────────────────────── #}
@@ -199,14 +183,13 @@ func {{ event.custom_handler }}(msg map[string]interface{}, userID uint, conn WS
 	
 {% if event.get('persist', false) %}
 	// Auto-persist as notification
-	GlobalNotify(map[string]interface{}{
+	notifpkg.GlobalNotify(map[string]interface{}{
 		"user_id": userID,
 		"title":   "{{ event.get('notification_title', 'Event: ' + event.name) }}",
 		"message": "{{ event.get('notification_message', 'Activity recorded') }}",
 		"type":    "{{ event.name }}",
 	}, nil)
 {% endif %}
-
 	// Broadcast to configured targets
 {% for target in event.get('broadcast_to', []) %}
 {% if target == 'all' %}
@@ -225,7 +208,6 @@ func {{ event.custom_handler }}(msg map[string]interface{}, userID uint, conn WS
 	{{ event.custom_broadcast_function }}(msg)
 {% endif %}
 {% endfor %}
-
 	// Send success response
 	_ = conn.WriteJSON(fiber.Map{
 		"success": true,
@@ -234,6 +216,5 @@ func {{ event.custom_handler }}(msg map[string]interface{}, userID uint, conn WS
 }
 {% endif %}
 {% endfor %}
-
 {% endif %}{# dedicated.events #}
 {% endif %}{# websocket.enabled #}

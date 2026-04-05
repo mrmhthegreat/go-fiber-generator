@@ -1,5 +1,4 @@
 package chat
-
 import (
 	"log"
 	"time"
@@ -7,24 +6,22 @@ import (
 	"sync"
 {% endif %}
 	"fmt"
-
 	"github.com/gofiber/contrib/websocket"
 	"github.com/gofiber/fiber/v2"
-
 	"{{ config.project.module }}/config"
 	"{{ config.project.module }}/internal/domain"
-	ws "{{ config.project.module }}/websocket"
+{% if config.notifications.enabled %}
+	notifpkg "{{ config.project.module }}/pkg/notification"
+{% endif %}
+	ws "{{ config.project.module }}/internal/websocket"
 )
-
 {% if config.websocket.enabled and config.websocket.handler_type == 'dedicated' %}
 {% if config.chat.enabled and config.websocket.get('dedicated', {}).get('chat', {}).get('enabled', true) %}
-
 {# Hub broadcast variables for shared handlers #}
 {% set hub_broadcast_all    = 'ws.BroadcastAll' %}
 {% set hub_broadcast_admins = 'ws.BroadcastRegistry.Admin.BroadcastToAdmins' %}
 {% set hub_broadcast_user   = 'ChatHubInst.BroadcastToUser' %}
 {% set hub_broadcast_room   = 'ChatHubInst.BroadcastToRoom' %}
-
 {# Auth helper #}
 func authenticateDedicatedWS(c *websocket.Conn) (uint, error) {
 {% if config.websocket.authentication.method in ['jwt', 'unified'] %}
@@ -41,7 +38,6 @@ func authenticateDedicatedWS(c *websocket.Conn) (uint, error) {
 	return 0, nil
 {% endif %}
 }
-
 {# Validation #}
 {% if config.chat.get('controller', {}).get('validation', {}).get('message', {}).get('content') %}
 func validateMessageContent(content string) error {
@@ -63,7 +59,6 @@ func validateMessageContent(content string) error {
 	return nil
 }
 {% endif %}
-
 {# Rate limiters for chat_message events only #}
 {% for event in config.websocket.events %}
 {% if event.enabled and event.get('rate_limit') and event.rate_limit.get('enabled', false) and event.handler_type == 'chat_message' %}
@@ -77,7 +72,6 @@ var rateLimiter{{ event.name | replace('_', '') | title }} = &struct {
 	max:      {{ event.rate_limit.max_per_minute }},
 	window:   time.Minute,
 }
-
 func checkRateLimit{{ event.name | replace('_', '') | title }}(userID uint) bool {
 	key := fmt.Sprintf("user_%d", userID)
 	limiter := rateLimiter{{ event.name | replace('_', '') | title }}
@@ -100,7 +94,6 @@ func checkRateLimit{{ event.name | replace('_', '') | title }}(userID uint) bool
 }
 {% endif %}
 {% endfor %}
-
 // ChatWebSocketHandler handles real-time user chat messages.
 // Path: {{ config.websocket.get('dedicated', {}).get('chat', {}).get('path', '/ws/chat') }}
 func ChatWebSocketHandler(c *websocket.Conn) {
@@ -110,9 +103,7 @@ func ChatWebSocketHandler(c *websocket.Conn) {
 		c.Close()
 		return
 	}
-
 	safeConn := ws.NewSafeConn(c)
-
 {% set ns = namespace(user_pool=None) %}
 {% for pool in config.websocket.hub.pools %}
 {% if pool.enabled and 'user' in pool.name | lower and 'admin' not in pool.name | lower %}
@@ -124,11 +115,9 @@ func ChatWebSocketHandler(c *websocket.Conn) {
 	ChatHubInst.register{{ ns.user_pool.name | title }} <- userConn
 	defer func() { ChatHubInst.unregister{{ ns.user_pool.name | title }} <- userConn }()
 {% endif %}
-
 {% if config.websocket.get('presence', {}).get('enabled', false) and config.websocket.presence.get('broadcast_on_connect', false) %}
 	ChatHubInst.BroadcastStatus(userID, true)
 {% endif %}
-
 	for {
 		var msg map[string]interface{}
 		if err := safeConn.ReadJSON(&msg); err != nil {
@@ -155,12 +144,10 @@ func ChatWebSocketHandler(c *websocket.Conn) {
 			_ = safeConn.WriteJSON(fiber.Map{"error": "unknown_event_type", "type": eventType})
 		}
 	}
-
 {% if config.websocket.get('presence', {}).get('enabled', false) and config.websocket.presence.get('broadcast_on_disconnect', false) %}
 	ChatHubInst.BroadcastStatus(userID, false)
 {% endif %}
 }
-
 {# ────────────────────────────────────────────────────────────── #}
 {% if config.chat.enabled %}
 {% set chat_event = config.websocket.events | selectattr('handler_type', 'defined') | selectattr('handler_type', 'equalto', 'chat_message') | first | default(none) %}
@@ -168,13 +155,11 @@ func handleChatMessage(msg map[string]interface{}, userID uint, conn WSWriter) {
 	conversationIDFloat, _ := msg["conversation_id"].(float64)
 	conversationID := uint(conversationIDFloat)
 	content, _ := msg["content"].(string)
-
 	// Validation
 	if conversationID == 0 {
 		_ = conn.WriteJSON(fiber.Map{"error": "conversation_id is required"})
 		return
 	}
-
 	{% if config.chat.get('controller', {}).get('validation', {}).get('message', {}).get('content') %}
 	if err := validateMessageContent(content); err != nil {
 		_ = conn.WriteJSON(fiber.Map{"error": err.Error()})
@@ -186,7 +171,6 @@ func handleChatMessage(msg map[string]interface{}, userID uint, conn WSWriter) {
 		return
 	}
 	{% endif %}
-
 	// Fetch conversation for authorization
 	var conversation domain.Conversation
 	if err := config.DB.First(&conversation, conversationID).Error; err != nil {
@@ -194,9 +178,8 @@ func handleChatMessage(msg map[string]interface{}, userID uint, conn WSWriter) {
 		_ = conn.WriteJSON(fiber.Map{"error": "conversation not found"})
 		return
 	}
-
 	// Authorization: user must be owner or receiver of the conversation
-	{% set receiver_id_field = config.chat.domain.conversation.fields | selectattr('name', 'equalto', 'receiver_id') | first %}
+	{% set receiver_id_field = config.chat.models.conversation.fields | selectattr('name', 'equalto', 'receiver_id') | first %}
 	isParticipant := conversation.UserID == userID
 	{% if receiver_id_field %}
 	isParticipant = isParticipant || (conversation.ReceiverID != nil && *conversation.ReceiverID == userID)
@@ -206,7 +189,6 @@ func handleChatMessage(msg map[string]interface{}, userID uint, conn WSWriter) {
 		_ = conn.WriteJSON(fiber.Map{"error": "unauthorized"})
 		return
 	}
-
 	// Create message
 	chatMsg := domain.Message{
 		ConversationID: conversationID,
@@ -214,7 +196,6 @@ func handleChatMessage(msg map[string]interface{}, userID uint, conn WSWriter) {
 		SenderType:     "user",
 		Content:        content,
 	}
-
 	{% if not chat_event or chat_event.get('persist', true) %}
 	// Save to database
 	if err := config.DB.Create(&chatMsg).Error; err != nil {
@@ -222,16 +203,14 @@ func handleChatMessage(msg map[string]interface{}, userID uint, conn WSWriter) {
 		_ = conn.WriteJSON(fiber.Map{"error": "failed to create message"})
 		return
 	}
-
 	// Update conversation last message
-	{% set last_message_field = config.chat.domain.conversation.fields | selectattr('name', 'equalto', 'last_message') | first %}
+	{% set last_message_field = config.chat.models.conversation.fields | selectattr('name', 'equalto', 'last_message') | first %}
 	{% if last_message_field %}
 	config.DB.Model(&domain.Conversation{}).
 		Where("id = ?", conversationID).
 		Update("last_message", content)
 	{% endif %}
 	{% endif %}
-
 	{% if chat_event %}
 	// Broadcast to configured targets
 	{% for target in chat_event.get('broadcast_to', ['conversation']) %}
@@ -251,7 +230,6 @@ func handleChatMessage(msg map[string]interface{}, userID uint, conn WSWriter) {
 	NotifyUser(chatMsg)
 	NotifyAdmins(chatMsg)
 	{% endif %}
-
 	// Trigger notifications for offline users
 	{% if config.notifications.enabled %}
 	triggerData := map[string]interface{}{
@@ -259,15 +237,14 @@ func handleChatMessage(msg map[string]interface{}, userID uint, conn WSWriter) {
 		"user_id":         userID,
 		"content":         content,
 	}
-	{% set receiver_id_field = config.chat.domain.conversation.fields | selectattr('name', 'equalto', 'receiver_id') | first %}
+	{% set receiver_id_field = config.chat.models.conversation.fields | selectattr('name', 'equalto', 'receiver_id') | first %}
 	{% if receiver_id_field %}
 	if conversation.ReceiverID != nil {
 		triggerData["receiver_id"] = *conversation.ReceiverID
 	}
 	{% endif %}
-	TriggerNotification("message_sent", triggerData)
+	notifpkg.TriggerNotification("message_sent", triggerData)
 	{% endif %}
-
 	// Send success response
 	_ = conn.WriteJSON(fiber.Map{
 		"success": true,
@@ -275,8 +252,6 @@ func handleChatMessage(msg map[string]interface{}, userID uint, conn WSWriter) {
 	})
 }
 {% endif %}
-
 {# ────────────────────────────────────────────────────────────── #}
-
 {% endif %}{# dedicated.chat #}
 {% endif %}{# websocket.enabled #}

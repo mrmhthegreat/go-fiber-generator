@@ -16,21 +16,21 @@ import (
 {% if config.rbac.enabled %}
 {% set rc = config.rbac.controller %}
 {% set rw = config.rbac.web_handler %}
-// RBACController handles RBAC management endpoints
-type RBACController struct {
+// RBACHandler handles RBAC management endpoints
+type RBACHandler struct {
     rbacService *RBACService
 }
 
-// NewRBACController creates a new RBAC web handler
-func NewRBACController(rbacService *RBACService) *RBACController {
-    return &RBACController{
+// NewRBACHandler creates a new RBAC web handler
+func NewRBACHandler(rbacService *RBACService) *RBACHandler {
+    return &RBACHandler{
         rbacService: rbacService,
     }
 }
 
 {% if rw.ManageRolesPage.enabled or rw.ManageOverridesPage.enabled %}
 // ShowRBACManagement renders the RBAC management page
-func (h *RBACController) ShowRBACManagement(c *fiber.Ctx) error {
+func (h *RBACHandler) ShowRBACManagement(c *fiber.Ctx) error {
     return c.Render("admin_rbac", fiber.Map{
         "title":     "RBAC Management",
         "csrfToken": c.Locals("csrf").(string),
@@ -53,7 +53,7 @@ func (h *RBACController) ShowRBACManagement(c *fiber.Ctx) error {
 // @Failure 404 {object} map[string]string
 // @Router {{ config.rbac.controller.base_path | default('/api/rbac') }}{{ config.rbac.controller.SetUserOverride.path | default('/users/{userId}/overrides') }} [post]
 {% endif %}
-func (ctrl *RBACController) CreateUserPermissionOverride(c *fiber.Ctx) error {
+func (h *RBACHandler) CreateUserPermissionOverride(c *fiber.Ctx) error {
     userID := c.Params("userId")
     db := utilspkg.GetDB(c).DB
 
@@ -76,19 +76,19 @@ func (ctrl *RBACController) CreateUserPermissionOverride(c *fiber.Ctx) error {
         })
     }
 
-    var user domain.User
+    var user domain.{{ config.project.user_model_name }}
     if err := db.First(&user, uid).Error; err != nil {
         return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
             "error": "User not found",
         })
     }
 
-    userRole := user.{{ config.rbac.model_field }}
+    userRole := user.Role
     if userRole == "" {
         userRole =  {{ config.rbac.default_role }}
     }
 
-    if req.Allow && !ctrl.rbacService.IsPermissionAllowedForRole(userRole, req.PermissionKey) {
+    if req.Allow && !h.rbacService.IsPermissionAllowedForRole(userRole, req.PermissionKey) {
         return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
             "error":   "Cannot grant permission: " + req.PermissionKey,
             "message": "Permission '" + req.PermissionKey + "' is not allowed for users with role '" + userRole + "'.",
@@ -117,7 +117,7 @@ func (ctrl *RBACController) CreateUserPermissionOverride(c *fiber.Ctx) error {
     }
 
     ctx := context.Background()
-    ctrl.rbacService.InvalidateUserCache(ctx, uint(uid))
+    h.rbacService.InvalidateUserCache(ctx, uint(uid))
 
     return c.Status(fiber.StatusCreated).JSON(fiber.Map{
         "message":  "Override created successfully",
@@ -136,7 +136,7 @@ func (ctrl *RBACController) CreateUserPermissionOverride(c *fiber.Ctx) error {
 // @Failure 500 {object} map[string]string
 // @Router {{ config.rbac.controller.base_path | default('/api/rbac') }}{{ config.rbac.controller.ListRoles.path | default('/roles') }} [get]
 {% endif %}
-func (ctrl *RBACController) GetRoles(c *fiber.Ctx) error {
+func (h *RBACHandler) GetRoles(c *fiber.Ctx) error {
     db := utilspkg.GetDB(c).DB
 
     var roles []domain.Role
@@ -162,7 +162,7 @@ func (ctrl *RBACController) GetRoles(c *fiber.Ctx) error {
 // @Failure 500 {object} map[string]string
 // @Router {{ config.rbac.controller.base_path | default('/api/rbac') }}{{ config.rbac.controller.ListPermissions.path | default('/permissions') }} [get]
 {% endif %}
-func (ctrl *RBACController) GetPermissions(c *fiber.Ctx) error {
+func (h *RBACHandler) GetPermissions(c *fiber.Ctx) error {
     db := utilspkg.GetDB(c).DB
 
     var permissions []domain.Permission
@@ -178,9 +178,9 @@ func (ctrl *RBACController) GetPermissions(c *fiber.Ctx) error {
     }
 
     roleAllowed := make(map[string][]string)
-    for roleName := range ctrl.rbacService.Config.RoleDefaults {
+    for roleName := range h.rbacService.Config.RoleDefaults {
         if roleName != "seller_allowed" && roleName != "moderator_allowed" && roleName != "admin_allowed" {
-            roleAllowed[roleName] = ctrl.rbacService.GetRoleAllowedPermissions(roleName)
+            roleAllowed[roleName] = h.rbacService.GetRoleAllowedPermissions(roleName)
         }
     }
 
@@ -204,7 +204,7 @@ func (ctrl *RBACController) GetPermissions(c *fiber.Ctx) error {
 // @Failure 404 {object} map[string]string
 // @Router {{ config.rbac.controller.base_path | default('/api/rbac') }}{{ config.rbac.controller.GetRole.path | default('/roles/:id') | replace(':id', '{roleId}') }} [get]
 {% endif %}
-func (ctrl *RBACController) GetRolePermissions(c *fiber.Ctx) error {
+func (h *RBACHandler) GetRolePermissions(c *fiber.Ctx) error {
     roleID := c.Params("roleId")
     db := utilspkg.GetDB(c).DB
 
@@ -249,7 +249,7 @@ func (ctrl *RBACController) GetRolePermissions(c *fiber.Ctx) error {
 // @Failure 403 {object} map[string]string
 // @Router {{ config.rbac.controller.base_path | default('/api/rbac') }}{{ config.rbac.controller.BulkUpdateRolePermissions.path | default('/roles/:id/permissions/bulk') | replace(':id', '{roleId}') }} [put]
 {% endif %}
-func (ctrl *RBACController) UpdateRolePermissions(c *fiber.Ctx) error {
+func (h *RBACHandler) UpdateRolePermissions(c *fiber.Ctx) error {
     roleID := c.Params("roleId")
     db := utilspkg.GetDB(c).DB
 
@@ -270,7 +270,7 @@ func (ctrl *RBACController) UpdateRolePermissions(c *fiber.Ctx) error {
     }
 
     for permKey, allow := range req.Permissions {
-        if allow && !ctrl.rbacService.IsPermissionAllowedForRole(role.Name, permKey) {
+        if allow && !h.rbacService.IsPermissionAllowedForRole(role.Name, permKey) {
             return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
                 "error":   "Invalid permission for " + role.Name + " role",
                 "message": "Permission '" + permKey + "' is not allowed for " + role.Name + ".",
@@ -368,7 +368,7 @@ func (ctrl *RBACController) UpdateRolePermissions(c *fiber.Ctx) error {
     }
 
     ctx := context.Background()
-    ctrl.rbacService.InvalidateRoleCache(ctx, role.Name)
+    h.rbacService.InvalidateRoleCache(ctx, role.Name)
 
     return c.JSON(fiber.Map{
         "message": "Permissions updated successfully",
@@ -389,7 +389,7 @@ func (ctrl *RBACController) UpdateRolePermissions(c *fiber.Ctx) error {
 // @Failure 400 {object} map[string]string
 // @Router {{ config.rbac.controller.base_path | default('/api/rbac') }}{{ config.rbac.controller.CreateRole.path | default('/roles') }} [post]
 {% endif %}
-func (ctrl *RBACController) CreateRole(c *fiber.Ctx) error {
+func (h *RBACHandler) CreateRole(c *fiber.Ctx) error {
     db := utilspkg.GetDB(c).DB
 
     var req struct {
@@ -436,7 +436,7 @@ func (ctrl *RBACController) CreateRole(c *fiber.Ctx) error {
 // @Failure 404 {object} map[string]string
 // @Router {{ config.rbac.controller.base_path | default('/api/rbac') }}{{ config.rbac.controller.DeleteRole.path | default('/roles/:id') | replace(':id', '{roleId}') }} [delete]
 {% endif %}
-func (ctrl *RBACController) DeleteRole(c *fiber.Ctx) error {
+func (h *RBACHandler) DeleteRole(c *fiber.Ctx) error {
     roleID := c.Params("roleId")
     db := utilspkg.GetDB(c).DB
 
@@ -476,7 +476,7 @@ func (ctrl *RBACController) DeleteRole(c *fiber.Ctx) error {
 // @Success 200 {object} map[string]interface{}
 // @Router {{ config.rbac.controller.base_path | default('/api/rbac') }}{{ config.rbac.controller.GetUserOverrides.path | default('/users/{userId}/overrides') }} [get]
 {% endif %}
-func (ctrl *RBACController) GetUserPermissionOverrides(c *fiber.Ctx) error {
+func (h *RBACHandler) GetUserPermissionOverrides(c *fiber.Ctx) error {
     userID := c.Params("userId")
     db := utilspkg.GetDB(c).DB
 
@@ -502,7 +502,7 @@ func (ctrl *RBACController) GetUserPermissionOverrides(c *fiber.Ctx) error {
 // @Success 200 {object} map[string]interface{}
 // @Failure 401 {object} map[string]string
 // @Router {{ config.rbac.controller.base_path | default('/api/rbac') }}/me/permissions [get]
-func (ctrl *RBACController) GetMyPermissions(c *fiber.Ctx) error {
+func (h *RBACHandler) GetMyPermissions(c *fiber.Ctx) error {
     userID, ok := c.Locals("user_id").(uint)
     if !ok {
         return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
@@ -511,7 +511,7 @@ func (ctrl *RBACController) GetMyPermissions(c *fiber.Ctx) error {
     }
 
     ctx := context.Background()
-    perms, err := ctrl.rbacService.GetUserPermissions(ctx, userID)
+    perms, err := h.rbacService.GetUserPermissions(ctx, userID)
     if err != nil {
         return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
             "error": "Failed to fetch permissions",
@@ -525,45 +525,6 @@ func (ctrl *RBACController) GetMyPermissions(c *fiber.Ctx) error {
 {% endif %}
 {% endif %}
 
-{% if rc.enabled or rw.ManageOverridesPage.enabled %}
-// SearchUsers searches for users by email, name, or ID
-// @Summary Search users for RBAC
-// @Description Search for users to manage their permissions or overrides
-// @Tags {{ config.rbac.controller.tag | default('RBAC Management') }}
-// @Produce json
-// @Param q query string true "Search query"
-// @Success 200 {object} map[string]interface{}
-// @Router {{ config.rbac.controller.base_path | default('/api/rbac') }}/users/search [get]
-func (ctrl *RBACController) SearchUsers(c *fiber.Ctx) error {
-    query := c.Query("q")
-    if query == "" {
-        return c.JSON(fiber.Map{"users": []interface{}{}})
-    }
-
-    db := utilspkg.GetDB(c).DB
-    var users []domain.User
-
-    if id, err := strconv.ParseUint(query, 10, 32); err == nil {
-        db.Where("id = ?", uint(id)).Limit(10).Find(&users)
-    } else {
-        searchTerm := "%" + query + "%"
-        db.Where("email LIKE ? OR fullname LIKE ?", searchTerm, searchTerm).Limit(10).Find(&users)
-    }
-
-    var response []fiber.Map
-    for _, user := range users {
-        response = append(response, fiber.Map{
-            "id":            user.ID,
-            "name":          user.Fullname,
-            "email":         user.Email,
-            "fullname":      user.Fullname,
-            "role":          user.{{ config.rbac.model_field }},
-        })
-    }
-
-    return c.JSON(fiber.Map{"users": response})
-}
-{% endif %}
 
 {% if rc.SetUserOverride.enabled or rw.ManageOverridesPage.enabled or rw.SetUserOverride.enabled %}
 {% if rc.SetUserOverride.enabled %}
@@ -580,7 +541,7 @@ func (ctrl *RBACController) SearchUsers(c *fiber.Ctx) error {
 // @Failure 403 {object} map[string]string
 // @Router {{ config.rbac.controller.base_path | default('/api/rbac') }}{{ config.rbac.controller.SetUserOverride.path | default('/users/{userId}/overrides') }} [put]
 {% endif %}
-func (ctrl *RBACController) UpdateUserPermissionOverrides(c *fiber.Ctx) error {
+func (h *RBACHandler) UpdateUserPermissionOverrides(c *fiber.Ctx) error {
     userID := c.Params("userId")
     db := utilspkg.GetDB(c).DB
 
@@ -604,21 +565,21 @@ func (ctrl *RBACController) UpdateUserPermissionOverrides(c *fiber.Ctx) error {
         })
     }
 
-    var user domain.User
+    var user domain.{{ config.project.user_model_name }}
     if err := db.First(&user, uid).Error; err != nil {
         return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
             "error": "User not found",
         })
     }
 
-    userRole := user.{{ config.rbac.model_field }}
+    userRole := user.Role
     if userRole == "" {
         userRole = {{config.rbac.default_role}}
     }
 
     for _, override := range req.Overrides {
         if override.Allow {
-            if !ctrl.rbacService.IsPermissionAllowedForRole(userRole, override.PermissionKey) {
+            if !h.rbacService.IsPermissionAllowedForRole(userRole, override.PermissionKey) {
                 return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
                     "error":   "Invalid permission override",
                     "message": "Cannot grant permission '" + override.PermissionKey + "' to user with role '" + userRole + "'.",
@@ -680,7 +641,7 @@ func (ctrl *RBACController) UpdateUserPermissionOverrides(c *fiber.Ctx) error {
     }
 
     ctx := context.Background()
-    ctrl.rbacService.InvalidateUserCache(ctx, uint(uid))
+    h.rbacService.InvalidateUserCache(ctx, uint(uid))
 
     return c.JSON(fiber.Map{
         "success": true,
@@ -701,7 +662,7 @@ func (ctrl *RBACController) UpdateUserPermissionOverrides(c *fiber.Ctx) error {
 // @Failure 404 {object} map[string]string
 // @Router {{ config.rbac.controller.base_path | default('/api/rbac') }}{{ config.rbac.controller.RemoveUserOverride.path | default('/users/{userId}/overrides/{permId}') | replace(':userId', '{userId}') | replace(':permId', '{permId}') }} [delete]
 {% endif %}
-func (ctrl *RBACController) DeleteUserPermissionOverride(c *fiber.Ctx) error {
+func (h *RBACHandler) DeleteUserPermissionOverride(c *fiber.Ctx) error {
     overrideID := c.Params("overrideId")
     db := utilspkg.GetDB(c).DB
 
@@ -721,7 +682,7 @@ func (ctrl *RBACController) DeleteUserPermissionOverride(c *fiber.Ctx) error {
     }
 
     ctx := context.Background()
-    ctrl.rbacService.InvalidateUserCache(ctx, userID)
+    h.rbacService.InvalidateUserCache(ctx, userID)
 
     return c.JSON(fiber.Map{
         "message": "Override deleted successfully",
@@ -741,7 +702,7 @@ func (ctrl *RBACController) DeleteUserPermissionOverride(c *fiber.Ctx) error {
 // @Failure 400 {object} map[string]string
 // @Router {{ config.rbac.controller.base_path | default('/api/rbac') }}{{ config.rbac.controller.InvalidateCache.path | default('/cache/invalidate/:userId') | replace(':userId', '{userId}') }} [post]
 {% endif %}
-func (ctrl *RBACController) InvalidateUserCache(c *fiber.Ctx) error {
+func (h *RBACHandler) InvalidateUserCache(c *fiber.Ctx) error {
     userID := c.Params("userId")
 
     uid, err := strconv.ParseUint(userID, 10, 32)
@@ -752,7 +713,7 @@ func (ctrl *RBACController) InvalidateUserCache(c *fiber.Ctx) error {
     }
 
     ctx := context.Background()
-    if err := ctrl.rbacService.InvalidateUserCache(ctx, uint(uid)); err != nil {
+    if err := h.rbacService.InvalidateUserCache(ctx, uint(uid)); err != nil {
         return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
             "error": "Failed to invalidate cache",
         })
@@ -777,7 +738,7 @@ func (ctrl *RBACController) InvalidateUserCache(c *fiber.Ctx) error {
 // @Failure 400 {object} map[string]string
 // @Router {{ config.rbac.controller.base_path | default('/api/rbac') }}{{ config.rbac.controller.GetUserPermissions.path | default('/users/{userId}/permissions') | replace(':userId', '{userId}') }} [get]
 {% endif %}
-func (ctrl *RBACController) GetUserRolePermissions(c *fiber.Ctx) error {
+func (h *RBACHandler) GetUserRolePermissions(c *fiber.Ctx) error {
     userID := c.Params("userId")
 
     uid, err := strconv.ParseUint(userID, 10, 32)
@@ -788,7 +749,7 @@ func (ctrl *RBACController) GetUserRolePermissions(c *fiber.Ctx) error {
     }
 
     ctx := context.Background()
-    perms, err := ctrl.rbacService.GetUserPermissions(ctx, uint(uid))
+    perms, err := h.rbacService.GetUserPermissions(ctx, uint(uid))
     if err != nil {
         return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
             "error": "Failed to fetch user permissions",

@@ -13,9 +13,7 @@ import (
 {% endif %}
     "github.com/spf13/viper"
     "go.uber.org/zap"
-{% if config.analytics.google.enabled %}
-    analyticsdata "google.golang.org/api/analyticsdata/v1beta"
-{% endif %}
+
     "gorm.io/driver/postgres"
     "gorm.io/gorm"
 

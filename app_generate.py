@@ -114,10 +114,10 @@ def build_context(config_path: str) -> dict:
 
     hlp = config.setdefault('helpers', {})
     hlp.setdefault('math_helpers',          True)
-    i18n.setdefault('string_helpers',        True)
-    i18n.setdefault('random_helpers', True)
-    i18n.setdefault('time_helpers',       True)
-    i18n.setdefault('validation_helpers',       True)
+    hlp.setdefault('string_helpers',        True)
+    hlp.setdefault('random_helpers', True)
+    hlp.setdefault('time_helpers',       True)
+    hlp.setdefault('validation_helpers',       True)
 
     # static files
     sf = config.setdefault('static_files', {})
@@ -165,23 +165,23 @@ def get_templates(config: dict, t: str, o: str) -> list[tuple[str, str]]:
         # config package
         (f'{t}/config/config.go.j2',          f'{o}/config/config.go'),
         (f'{t}/config/database.go.j2',         f'{o}/config/database.go'),
-        (f'{t}/config/env.config.yaml.j2',     f'{o}/config.yaml'),
-        (f'{t}/config/permissions.yaml.j2',     f'{o}/permissions.yaml'),
+        (f'{t}/config/env.config.yaml.j2',     f'{o}/config/config.yaml'),
+        (f'{t}/config/permissions.yaml.j2',     f'{o}/config/permissions.yaml'),
 
         # context helpers + routes + main
-        # (f'{t}/internal/routes/routes.go.j2',  f'{o}/internal/routes/routes.go'),
+        (f'{t}/internal/routes/routes.go.j2',  f'{o}/internal/routes/routes.go'),
         (f'{t}/cmd/server/main.go.j2',         f'{o}/cmd/server/main.go'),
 
         # infra
-        (f'{t}/Dockerfile.j2',                 f'{o}/Dockerfile'),
-        (f'{t}/docker-compose.yml.j2',         f'{o}/docker-compose.yml'),
-        (f'{t}/Makefile.j2',                   f'{o}/Makefile'),
-        (f'{t}/README.md.j2',                  f'{o}/README.md'),
-        (f'{t}/gitignore.j2',                  f'{o}/.gitignore'),
-        (f'{t}/dockerignore.j2',               f'{o}/.dockerignore'),
-        (f'{t}/pkg/response/basic_response.go.j2', f'{o}/pkg/response/basic_response.go'),
+        (f'{t}/infra/Dockerfile.j2',                 f'{o}/infra/Dockerfile'),
+        (f'{t}/infra/docker-compose.yml.j2',         f'{o}/infra/docker-compose.yml'),
+        (f'{t}/infra/Makefile.j2',                   f'{o}/infra/Makefile'),
+        (f'{t}/infra/README.md.j2',                  f'{o}/infra/README.md'),
+        (f'{t}/infra/gitignore.j2',                  f'{o}/.gitignore'),
+        (f'{t}/infra/dockerignore.j2',               f'{o}/infra/.dockerignore'),
+        (f'{t}/pkg/response/basic_response.j2', f'{o}/pkg/response/basic_response.go'),
         (f'{t}/pkg/utils/utils.go.j2',                            f'{o}/pkg/utils/utils.go'),
-        (f'{t}/pkg/errors/erros.go.j2', f'{o}/pkg/errors/erros.go'),
+        (f'{t}/pkg/errors/handler.go.j2', f'{o}/pkg/errors/handler.go'),
         (f'{t}/pkg/utils/context_helpers.go.j2',f'{o}/pkg/utils/context_helpers.go'),
      
     ]
@@ -192,26 +192,13 @@ def get_templates(config: dict, t: str, o: str) -> list[tuple[str, str]]:
 
     # swagger
     if config['swagger'].get('enabled'):
-        # result.append((f'{t}/config/swagger.go.j2', f'{o}/config/swagger.go'))
+        result.append((f'{t}/docs/docs.go.j2', f'{o}/docs/docs.go'))
     if config['i18n'].get('enabled'):
         result.append((f'{t}/pkg/i18n/i18n.go.j2', f'{o}/pkg/i18n/i18n.go'))
 
     return result
 
 
-def copy_web_templates(config: dict, templates_dir: str, output_dir: str):
-    """Copy HTML templates directory if template_engine is enabled."""
-    if not config.get('template_engine', {}).get('enabled'):
-        return
-    src  = Path(templates_dir) / "web" / "templates"
-    dest = Path(output_dir)    / "web" / "templates"
-    if not src.exists():
-        print(f"  ⚠️  Web templates source not found: {src}")
-        return
-    if dest.exists():
-        shutil.rmtree(dest)
-    shutil.copytree(str(src), str(dest))
-    print(f"  ✅ {dest}  (HTML templates)")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -222,7 +209,6 @@ def run(config_path: str, templates_dir: str, output_dir: str):
     config    = build_context(config_path)
     templates = get_templates(config, templates_dir, output_dir)
     render_all(config, templates)
-    copy_web_templates(config, templates_dir, output_dir)
 
 
 def main():
@@ -244,18 +230,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-# def generate_storage(self, config: Dict[str, Any]) -> None:
-#         """Generate storage provider files"""
-#         if config.get("storage", {}).get("enabled"):
-#             output_path = Path(self.output_dir) / "pkg" / "storage"
-#             output_path.mkdir(parents=True, exist_ok=True)
-            
-#             try:
-#                 template = self.env.get_template("pkg/storage/provider.go.j2")
-#                 output = template.render(config=config)
-#                 output_file = output_path / "provider.go"
-#                 with open(output_file, "w") as f:
-#                     f.write(output)
-#                 print(f"✅ Generated {output_file}")
-#             except Exception as e:
-#                 print(f"⚠️  Error generating storage provider: {e}")

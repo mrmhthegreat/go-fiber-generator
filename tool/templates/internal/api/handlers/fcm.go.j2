@@ -13,6 +13,7 @@ import (
 	utilspkg "{{ config.project.module }}/pkg/utils"
 	fcmpkg "{{ config.project.module }}/pkg/fcm"
     "{{ config.project.module }}/internal/domain"
+	notifpkg "{{ config.project.module }}/pkg/notification"
 )
 {% set fcm = config.fcm %}
 
@@ -27,7 +28,7 @@ import (
 type FCMHandler struct{}
 
 // New creates a new FCMHandler
-func New() *FCMHandler {
+func NewFCMHandler() *FCMHandler {
     return &FCMHandler{}
 }
 
@@ -45,7 +46,7 @@ func (h *FCMHandler) GetNotificationPage(c *fiber.Ctx) error {
 
     {% set ep = fcm.web_handler %}
     {% if ep.context.needs_user and ep.context.user_config.use_repo %}
-    userRepo := utilspkg.Get{{ ep.context.user_config.repo_name }}(dbConn)
+    userRepo := dbConn.{{ config.project.user_model_name }}
     if userRepo == nil {
         return fiber.NewError(fiber.StatusInternalServerError, "db_connection_failed")
     }
@@ -64,20 +65,19 @@ func (h *FCMHandler) GetNotificationPage(c *fiber.Ctx) error {
     renderContext["user"] = user
     {% endif %}
     {% if ep.context.needs_dashbase %}
-    renderContext["dashBase"] = rbacpkg.GetDashboardBasePath(user.{{ config.rbac.model_field }})
+    renderContext["dashBase"] = rbacpkg.GetDashboardBasePath(user.Role)
     {% endif %}
 
     // Load users with FCM tokens
-    userRepo2 := utilspkg.Get{{ ep.context.user_config.repo_name }}(dbConn)
+    userRepo2 := dbConn.{{ config.project.user_model_name }}
     if userRepo2 != nil {
         users, _ := userRepo2.{{ ep.context.user_config.get_all_method }}()
         userList := make([]map[string]interface{}, len(users))
         for i, u := range users {
             userList[i] = map[string]interface{}{
                 "id":       u.ID,
-                "fullname": u.Fullname,
                 "email":    u.Email,
-                "token":    u.Token,
+                "fcm_token":    u.FCMToken,
             }
         }
         usersJSON, _ := sonic.Marshal(userList)
@@ -115,9 +115,12 @@ func (h *FCMHandler) SendNotification(c *fiber.Ctx) error {
     }
 
     // Capture DB + userRepo before goroutine (c is unsafe inside goroutine)
-    dbConn := utilspkg.GetDB(c)
     {% set ep = fcm.web_handler %}
-    userRepo := utilspkg.Get{{ ep.context.user_config.repo_name }}(dbConn)
+    {% if fcm.save_to_database %}
+    dbConn := utilspkg.GetDB(c)
+
+    userRepo := dbConn.{{ config.project.user_model_name }}
+    {% endif %}
 
     go func() {
         switch req.Type {
@@ -127,10 +130,10 @@ func (h *FCMHandler) SendNotification(c *fiber.Ctx) error {
                 u, _ := userRepo.{{ ep.context.user_config.get_user_by_token_method }}(req.Tokens[0])
                 var uid uint
                 if u != nil { uid = u.ID }
-                handlers.GlobalNotify(domain.Notification{
-                    UserID:  uid,
-                    Title:   req.Title,
-                    Message: req.Body,
+                notifpkg.GlobalNotify(map[string]interface{}{
+                    "user_id": uid,
+                    "title":   req.Title,
+                    "message": req.Body,
                 }, &req.Tokens[0])
                 {% else %}
                 if err := fcmpkg.SendToDevice(config.FCM, req.Tokens[0], req.Title, req.Body); err != nil {
@@ -144,10 +147,10 @@ func (h *FCMHandler) SendNotification(c *fiber.Ctx) error {
                 u, _ := userRepo.{{ ep.context.user_config.get_user_by_token_method }}(token)
                 var uid uint
                 if u != nil { uid = u.ID }
-                handlers.GlobalNotify(domain.Notification{
-                    UserID:  uid,
-                    Title:   req.Title,
-                    Message: req.Body,
+                notifpkg.GlobalNotify(map[string]interface{}{
+                    "user_id": uid,
+                    "title":   req.Title,
+                    "message": req.Body,
                 }, &token)
                 {% else %}
                 if err := fcmpkg.SendToDevice(config.FCM, token, req.Title, req.Body); err != nil {
@@ -159,10 +162,10 @@ func (h *FCMHandler) SendNotification(c *fiber.Ctx) error {
             if req.Topic != "" {
                 _ = fcmpkg.SendToTopic(config.FCM, req.Topic, req.Title, req.Body)
                 {% if fcm.save_to_database %}
-                handlers.GlobalNotify(domain.Notification{
-                    UserID:  0,
-                    Title:   "[Topic: " + req.Topic + "] " + req.Title,
-                    Message: req.Body,
+                notifpkg.GlobalNotify(map[string]interface{}{
+                    "user_id": 0,
+                    "title":   "[Topic: " + req.Topic + "] " + req.Title,
+                    "message": req.Body,
                 }, nil)
                 {% endif %}
             }
@@ -225,7 +228,7 @@ func (h *FCMHandler) SubscribeToTopic(c *fiber.Ctx) error {
 func (h *FCMHandler) GetUsersWithTokens(c *fiber.Ctx) error {
     dbConn := utilspkg.GetDB(c)
     {% set ep = fcm.web_handler %}
-    userRepo := utilspkg.Get{{ ep.context.user_config.repo_name }}(dbConn)
+    userRepo := dbConn.{{ config.project.user_model_name }}
     if userRepo == nil {
         return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "db_connection_failed"})
     }
@@ -237,12 +240,11 @@ func (h *FCMHandler) GetUsersWithTokens(c *fiber.Ctx) error {
 
     result := make([]fiber.Map, 0, len(users))
     for _, u := range users {
-        if u.Token != "" {
+        if u.FCMToken != "" {
             result = append(result, fiber.Map{
                 "id":       u.ID,
-                "fullname": u.Fullname,
                 "email":    u.Email,
-                "token":    u.Token,
+                "fcm_token":    u.FCMToken,
             })
         }
     }

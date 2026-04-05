@@ -41,15 +41,8 @@ class Route:
 
 
 class RouteGenerator:
-    def __init__(self, 
-                 auth_config: str = "authenticaton_config.yaml",
-                 chat_config: str = "chat_noti_web.yaml",
-                 middleware_config: str = "middleware_config.yaml",
-                 repo_config: str = "repo_model_config.yaml"):
-        self.auth_config_path = Path(auth_config)
-        self.chat_config_path = Path(chat_config)
-        self.middleware_config_path = Path(middleware_config)
-        self.repo_config_path = Path(repo_config)
+    def __init__(self, config_path: str = "master_config.yaml"):
+        self.config_path = Path(config_path)
         
         self.routes: List[Route] = []
         self.project_info = {}
@@ -73,13 +66,16 @@ class RouteGenerator:
         
         # Project info
         self.project_info['module'] = config.get('project', {}).get('module', 'unknown')
-        self.project_info['session_enabled'] = auth.get('session', {}).get('enabled', False)
-        self.project_info['rbac_enabled'] = auth.get('rbac', {}).get('enabled', False)
+        self.project_info['session_enabled'] = config.get('session', {}).get('enabled', False)
+        self.project_info['rbac_enabled'] = config.get('rbac', {}).get('enabled', False)
         
         # === API ROUTES ===
         
         # Email/Password Auth
         ep = auth.get('email_password', {})
+        # email_verification lives at authentication level (not inside email_password)
+        ev = auth.get('email_verification', {})
+
         if ep.get('enabled', False):
             # Register
             routes.append(Route(
@@ -105,8 +101,7 @@ class RouteGenerator:
                 category="auth"
             ))
             
-            # Email Verification
-            ev = ep.get('email_verification', {})
+            # Email Verification — defined at authentication level, not inside email_password
             if ev.get('enabled', False):
                 routes.append(Route(
                     name="VerifyEmail",
@@ -115,7 +110,8 @@ class RouteGenerator:
                     route_type=RouteType.API,
                     handler="VerifyEmail",
                     middleware=["auth"],
-                    rate_limit=auth.get('rate_limit', {})
+                    rate_limit=ev.get('rate_limit', auth.get('rate_limit', {})),
+                    category="auth"
                 ))
                 routes.append(Route(
                     name="ResendVerification",
@@ -123,8 +119,9 @@ class RouteGenerator:
                     path="/api/user/resend-verification",
                     route_type=RouteType.API,
                     handler="ResendVerification",
-                    middleware=[],
-                    rate_limit=auth.get('rate_limit', {})
+                    middleware=ev.get('middleware', []),
+                    rate_limit=ev.get('rate_limit', auth.get('rate_limit', {})),
+                    category="auth"
                 ))
             
             # Forgot Password
@@ -136,8 +133,9 @@ class RouteGenerator:
                     path="/api/auth/forgot-password",
                     route_type=RouteType.API,
                     handler="ForgotPassword",
-                    middleware=[],
-                    rate_limit=auth.get('rate_limit', {})
+                    middleware=fp.get('middleware', []),
+                    rate_limit=fp.get('rate_limit', auth.get('rate_limit', {})),
+                    category="auth"
                 ))
                 routes.append(Route(
                     name="ResetPassword",
@@ -146,7 +144,8 @@ class RouteGenerator:
                     route_type=RouteType.API,
                     handler="ResetPassword",
                     middleware=[],
-                    rate_limit=auth.get('rate_limit', {})
+                    rate_limit=fp.get('rate_limit', auth.get('rate_limit', {})),
+                    category="auth"
                 ))
             
             # Change Password
@@ -158,8 +157,9 @@ class RouteGenerator:
                     path="/api/user/change-password",
                     route_type=RouteType.API,
                     handler="ChangePassword",
-                    middleware=["auth"],
-                    rate_limit=auth.get('rate_limit', {})
+                    middleware=cp.get('middleware', ['auth']),
+                    rate_limit=cp.get('rate_limit', auth.get('rate_limit', {})),
+                    category="auth"
                 ))
         
         # Refresh Token
@@ -390,7 +390,7 @@ class RouteGenerator:
                         ))
 
         # === RBAC ROUTES ===
-        rbac = auth.get('rbac', {})
+        rbac = config.get('rbac', {})
         if rbac.get('enabled', False):
             # API Routes
             ctrl = rbac.get('controller', {})
@@ -1007,23 +1007,20 @@ class RouteGenerator:
         print("COMPLETE ROUTE GENERATOR")
         print("=" * 80)
         
-        # Load all configs
-        print("\n📂 Loading configurations...")
-        auth_config = self.load_yaml(self.auth_config_path)
-        chat_config = self.load_yaml(self.chat_config_path)
-        middleware_config = self.load_yaml(self.middleware_config_path)
-        repo_config = self.load_yaml(self.repo_config_path)
+        # Load config
+        print("\n📂 Loading configuration...")
+        config = self.load_yaml(self.config_path)
         
-        # Extract routes from each
+        # Extract routes
         print("\n🔍 Extracting routes...")
         
-        auth_routes = self.extract_auth_routes(auth_config)
-        print(f"  ✅ Auth routes: {len(auth_routes)}")
+        auth_routes = self.extract_auth_routes(config)
+        print(f"  ✅ Auth/System routes: {len(auth_routes)}")
         
-        chat_ws_routes = self.extract_chat_websocket_routes(chat_config)
+        chat_ws_routes = self.extract_chat_websocket_routes(config)
         print(f"  ✅ Chat/WebSocket routes: {len(chat_ws_routes)}")
         
-        model_routes = self.extract_model_routes(repo_config)
+        model_routes = self.extract_model_routes(config)
         print(f"  ✅ Model routes: {len(model_routes)}")
         
         self.routes = auth_routes + chat_ws_routes + model_routes
@@ -1100,20 +1097,12 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description='Generate complete route documentation')
-    parser.add_argument('--auth-config', default='authenticaton_config.yaml', help='Auth config file')
-    parser.add_argument('--chat-config', default='chat_noti_web.yaml', help='Chat/WebSocket config file')
-    parser.add_argument('--middleware-config', default='middleware_config.yaml', help='Middleware config file')
-    parser.add_argument('--repo-config', default='repo_model_config.yaml', help='Repository/model config file')
+    parser.add_argument('--config', default='master_config.yaml', help='Master configuration file')
     parser.add_argument('-o', '--output', default='complete_routes.yaml', help='Output file')
     
     args = parser.parse_args()
     
-    generator = RouteGenerator(
-        auth_config=args.auth_config,
-        chat_config=args.chat_config,
-        middleware_config=args.middleware_config,
-        repo_config=args.repo_config
-    )
+    generator = RouteGenerator(config_path=args.config)
     
     generator.generate(output_file=args.output)
 

@@ -1,14 +1,11 @@
-package contexthelpers
+package utilspkg
 
 import (
 	{% if config.websocket.enabled %}
 	"github.com/gofiber/contrib/websocket"
 	{% endif %}
 	"github.com/gofiber/fiber/v2"
-	{% if config.session.enabled %}
-	"github.com/gofiber/fiber/v2/middleware/session"
-	"fmt"
-	{% endif %}
+	
 	{% if config.redis.enabled %}
 	"github.com/redis/go-redis/v9"
 	{% endif %}
@@ -37,88 +34,6 @@ func GetDBW(c *websocket.Conn) *db.GormDatabase {
 		panic("database not found in websocket context")
 	}
 	return dbObj.(*db.GormDatabase)
-}
-{% endif %}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// GENERATED MODEL REPOSITORIES
-// One getter per model defined in config.models
-// ═══════════════════════════════════════════════════════════════════════════
-
-{% for model in config.models | default([]) %}
-// Get{{ model.name }}Repository returns the {{ model.name }} repository from the database
-func Get{{ model.name }}Repository(database *db.GormDatabase) db.{{ model.name }}Repository {
-	return database.{{ model.name }}
-}
-
-// Get{{ model.name }}Repo is a shorthand that reads DB from Fiber context and returns the {{ model.name }} repository
-func Get{{ model.name }}Repo(c *fiber.Ctx) db.{{ model.name }}Repository {
-	return GetDB(c).{{ model.name }}
-}
-{% endfor %}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// FEATURE REPOSITORIES
-// ═══════════════════════════════════════════════════════════════════════════
-
-{% if config.chat.enabled %}
-// GetChatRepository retrieves the chat repository from the database instance
-func GetChatRepository(database *db.GormDatabase) db.ChatRepository {
-	return database.Chat
-}
-
-// GetChatRepo is a shorthand that reads DB from Fiber context and returns the chat repository
-func GetChatRepo(c *fiber.Ctx) db.ChatRepository {
-	return GetDB(c).Chat
-}
-{% endif %}
-
-{% if config.notifications.enabled %}
-// GetNotificationRepository retrieves the notification repository from the database instance
-func GetNotificationRepository(database *db.GormDatabase) db.NotificationRepository {
-	return database.Notifications
-}
-
-// GetNotificationRepo is a shorthand that reads DB from Fiber context
-func GetNotificationRepo(c *fiber.Ctx) db.NotificationRepository {
-	return GetDB(c).Notifications
-}
-{% endif %}
-
-{% if config.imap.enabled %}
-// GetEmailMessageRepository retrieves the email message repository from the database instance
-func GetEmailMessageRepository(database *db.GormDatabase) db.EmailMessageRepository {
-	return database.Emails
-}
-
-// GetEmailMessageRepo is a shorthand that reads DB from Fiber context
-func GetEmailMessageRepo(c *fiber.Ctx) db.EmailMessageRepository {
-	return GetDB(c).Emails
-}
-{% endif %}
-
-
-// ═══════════════════════════════════════════════════════════════════════════
-// SESSION
-// ═══════════════════════════════════════════════════════════════════════════
-
-{% if config.session.enabled %}
-// GetSession retrieves the session from Fiber context
-func GetSession(c *fiber.Ctx) (*session.Session, error) {
-	sess, ok := c.Locals("session").(*session.Session)
-	if !ok {
-		return nil, fmt.Errorf("session not found in context")
-	}
-	return sess, nil
-}
-
-// MustGetSession retrieves the session or panics
-func MustGetSession(c *fiber.Ctx) *session.Session {
-	sess, err := GetSession(c)
-	if err != nil {
-		panic(err.Error())
-	}
-	return sess
 }
 {% endif %}
 
@@ -158,7 +73,7 @@ func GetUserID(c *fiber.Ctx) uint {
 	return 0
 }
 
-{% config.rbac.enable %}
+{% if config.rbac.enabled %}
 // GetRole returns the role string from Locals
 func GetRole(c *fiber.Ctx) string {
 	raw := c.Locals("role")

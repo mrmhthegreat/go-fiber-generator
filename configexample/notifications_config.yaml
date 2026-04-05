@@ -6,6 +6,79 @@ project:
 # ============================================================================
 # NOTIFICATIONS CONFIGURATION - Fully Dynamic
 # ============================================================================
+
+rbac:
+  enabled: true
+  service_name: "RBACService"
+  default_role: user
+  all_privileges: 'super_admin'
+  model_field: Role  # Field name in User model
+  # Define custom roles with dashboard paths
+# ============================================
+# FCM CONFIGURATION
+# ============================================
+fcm:
+  enabled: true
+  credentials_path_env: FCM_CREDENTIALS_PATH
+  project_id_env: FCM_PROJECT_ID
+  save_to_database: false
+  admin_topic_env: admin_default_stogne
+  controller:
+    enabled: true
+    middleware: []
+    base_path: /api
+    SendFCM:
+      enabled: true
+      middleware: []
+      path: /send-fcm
+    SubscribeToTopic:
+      enabled: true
+      middleware: []
+      path: /subscribe-to-topic
+
+  web_handler:
+    enabled: false
+    middleware: []
+    permissions: [post.view.user]
+    context:
+      needs_user: true
+      needs_csrf: true
+      needs_perms: true
+      needs_dashbase: true
+      needs_translations: true
+      # base_translations: PostBase
+      # extra_translations: [CommonTranslations]
+      user_config:
+        use_repo: true
+        repo_name: userRepo
+        method: GetByID
+        get_all_method: GetAll
+        get_user_by_token_method: GetUserByToken
+      # custom_data:
+        # - name: categories
+        #   var: categories
+        #   repo: Category
+        #   method: GetAll
+        #   args: []
+        #   marshal: true
+    GetNotificationPage:
+      enabled: true
+      middleware: []
+      permissions: [post.view.user]
+      path: /get-notification-page
+    SendFCM:
+      enabled: true
+      middleware: []
+      permissions: [post.view.user]
+      path: /send-fcm
+    SubscribeToTopic:
+      enabled: true
+      middleware: []
+      permissions: [post.view.user]
+      path: /subscribe-to-topic
+
+
+
 notifications:
   enabled: true
   
@@ -141,40 +214,40 @@ notifications:
   # Push Notifications (FCM)
   # ──────────────────────────────────────────────────────────────────────────
   push:
-    enabled: true
+    enabled: false
     # When to send push notifications
-    triggers:
-      - event: notification_created
-        condition: user_offline  # always | user_offline | custom
-        custom_condition_function: ""
-      - event: message_sent
-        condition: user_offline  # always | user_offline | custom
-        custom_condition_function: ""
+    # triggers:
+      # - event: notification_created
+      #   condition: user_offline  # always | user_offline | custom
+      #   custom_condition_function: ""
+      # - event: message_sent
+      #   condition: user_offline  # always | user_offline | custom
+      #   custom_condition_function: ""
   # ──────────────────────────────────────────────────────────────────────────
   # Notification Triggers (Auto-create notifications)
   # ──────────────────────────────────────────────────────────────────────────
-  triggers:
+  # triggers:
     # Chat-related triggers
-    - event: message_sent
-      condition: receiver_offline
-      notification:
-        type: chat
-        title_template: "New message from {sender_name}"
-        message_template: "{message_content}"
-        reference_type: conversation
-        reference_id_field: conversation_id
-    - event: order_init
-      enabled: true
-      notification:
-        type: order
-        title_template: "New order #{order_id}"
-        message_template: "Your order has been created"
+    # - event: message_sent
+    #   condition: receiver_offline
+    #   notification:
+    #     type: chat
+    #     title_template: "New message from {sender_name}"
+    #     message_template: "{message_content}"
+    #     reference_type: conversation
+    #     reference_id_field: conversation_id
+    # - event: order_init
+    #   enabled: true
+    #   notification:
+    #     type: order
+    #     title_template: "New order #{order_id}"
+    #     message_template: "Your order has been created"
     # Order-related triggers
-    - event: order_created
-      condition: receiver_offline
-      notification:
-        type: order
-        title_template: "New order from {sender_name}"
-        message_template: "{message_content}"
-        reference_type: order
-        reference_id_field: order_id
+    # - event: order_created
+    #   condition: receiver_offline
+    #   notification:
+    #     type: order
+    #     title_template: "New order from {sender_name}"
+    #     message_template: "{message_content}"
+    #     reference_type: order
+    #     reference_id_field: order_id

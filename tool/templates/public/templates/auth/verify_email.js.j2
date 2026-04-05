@@ -1,0 +1,119 @@
+"use strict";
+
+function combineOTP() {
+  const inputs = document.querySelectorAll(".otp-input");
+  const otp = Array.from(inputs).map(i => i.value).join("");
+  document.getElementById("otp").value = otp;
+}
+
+// Auto-advance, backspace, arrow key, paste handling for OTP inputs
+(function setupOtpInputs() {
+  const inputs = Array.from(document.querySelectorAll("#otp-container .otp-input"));
+  if (!inputs.length) return;
+
+  inputs.forEach((input, idx) => {
+    input.addEventListener("input", (e) => {
+      const v = e.target.value.replace(/\D/g, "");
+      e.target.value = v.slice(-1);
+      if (e.target.value && idx < inputs.length - 1) {
+        inputs[idx + 1].focus();
+        inputs[idx + 1].select();
+      }
+    });
+
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Backspace" && !e.currentTarget.value && idx > 0) {
+        inputs[idx - 1].focus();
+        inputs[idx - 1].value = "";
+      }
+      if (e.key === "ArrowLeft" && idx > 0) { e.preventDefault(); inputs[idx - 1].focus(); }
+      if (e.key === "ArrowRight" && idx < inputs.length - 1) { e.preventDefault(); inputs[idx + 1].focus(); }
+    });
+  });
+
+  // Paste: fill all digits at once
+  const container = inputs[0].closest("#otp-container");
+  if (container) {
+    container.addEventListener("paste", (e) => {
+      const text = (e.clipboardData || window.clipboardData).getData("text");
+      if (!text) return;
+      const digits = text.replace(/\D/g, "").slice(0, inputs.length).split("");
+      if (!digits.length) return;
+      e.preventDefault();
+      inputs.forEach((inp, i) => { inp.value = digits[i] || ""; });
+      const lastFilled = Math.min(digits.length, inputs.length) - 1;
+      if (lastFilled >= 0) inputs[lastFilled].focus();
+    });
+  }
+})();
+
+// Submit: validate OTP then let HTMX fire
+const verifyForm = document.getElementById("verifyEmailForm");
+if (verifyForm) {
+  verifyForm.addEventListener("htmx:beforeRequest", function (event) {
+    combineOTP();
+    const otp = document.getElementById("otp")?.value;
+    if (!otp || otp.length !== 6) {
+      document.getElementById("verify-otp-error")?.classList.remove("hidden");
+      event.preventDefault();
+      event.detail.shouldAbort = true;
+    } else {
+      document.getElementById("verify-otp-error")?.classList.add("hidden");
+    }
+  });
+
+  verifyForm.addEventListener("htmx:afterRequest", function (event) {
+    const xhr = event.detail.xhr;
+    const redirectURL = xhr.getResponseHeader("HX-Redirect");
+    try {
+      const response = JSON.parse(xhr.responseText || "{}");
+      if (redirectURL) {
+        window.location.href = redirectURL;
+      } else if (xhr.status === 200) {
+        if (response.message) showNotification(response.message, "success");
+      } else {
+        if (response.error) showNotification(response.error, "error");
+        else if (response.message) showNotification(response.message, "error");
+      }
+    } catch (e) {
+      if (xhr.status >= 400) showNotification("An error occurred. Please try again.", "error");
+    }
+  });
+}
+
+// Countdown timer — only triggered after resend click, not on page load
+function startCountdown(seconds) {
+  seconds = seconds || 60;
+  const resendEl = document.getElementById("resend");
+  const countdownEl = document.getElementById("countdown");
+  if (!resendEl || !countdownEl) return;
+  resendEl.style.display = "none";
+  countdownEl.style.display = "inline";
+  const interval = setInterval(() => {
+    countdownEl.textContent = `Resend in ${seconds}s`;
+    seconds--;
+    if (seconds < 0) {
+      clearInterval(interval);
+      resendEl.style.display = "inline";
+      countdownEl.style.display = "none";
+    }
+  }, 1000);
+}
+
+// Called from hx-on::after-request on the resend link
+function handleResendVerify(event) {
+  const xhr = event.detail.xhr;
+  const redirectURL = xhr.getResponseHeader("HX-Redirect");
+  if (redirectURL) { window.location.href = redirectURL; return; }
+  try {
+    const response = JSON.parse(xhr.responseText || "{}");
+    if (xhr.status === 200) {
+      startCountdown();
+      showNotification(response.message || "Verification code resent.", "success");
+    } else {
+      showNotification(response.error || response.message || "Failed to resend code.", "error");
+    }
+  } catch (e) {
+    showNotification("An error occurred.", "error");
+  }
+}

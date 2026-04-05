@@ -1,0 +1,111 @@
+"use strict";
+
+let validateSignupPassword = (password) => {
+  const errors = [];
+  [% set min_len = authentication.email_password.password_validation.min_length | default(8) %]
+  if (password.length < [[ min_len ]]) errors.push("Password must be at least [[ min_len ]] characters long.");
+  if (!/[A-Z]/.test(password)) errors.push("Must include an uppercase letter.");
+  if (!/[0-9]/.test(password)) errors.push("Must include a number.");
+  if (!/[!@#$%^&*(),.?":{}|<>~_-]/.test(password)) errors.push("Must include a special character.");
+  return errors;
+};
+
+[% set register_fields = authentication.identifier.register_fields | default([]) %]
+[% set has_username = register_fields | selectattr('field', 'equalto', 'username') | list | length > 0 %]
+
+[% if has_username %]
+// Username availability check
+let usernameCheckTimeout = null;
+const usernameInput = document.getElementById("signup-username");
+if (usernameInput) {
+  usernameInput.addEventListener("input", function () {
+    clearTimeout(usernameCheckTimeout);
+    const val = this.value.trim();
+    const errorEl = document.getElementById("signup-username-error");
+    const okEl = document.getElementById("signup-username-ok");
+    if (errorEl) errorEl.classList.add("hidden");
+    if (okEl) okEl.classList.add("hidden");
+    if (val.length < 3) return;
+    usernameCheckTimeout = setTimeout(async () => {
+      try {
+        const res = await fetch(`/auth/check-username?username=${encodeURIComponent(val)}`);
+        const data = await res.json();
+        if (data.available === false) {
+          if (errorEl) { errorEl.textContent = "Username already taken."; errorEl.classList.remove("hidden"); }
+        } else {
+          if (okEl) { okEl.textContent = "Username is available!"; okEl.classList.remove("hidden"); }
+        }
+      } catch (e) {}
+    }, 500);
+  });
+}
+[% endif %]
+
+// Password validation feedback
+const signupPasswordEl = document.getElementById("signup-password");
+if (signupPasswordEl) {
+  signupPasswordEl.addEventListener("input", function (event) {
+    const errorEl = document.getElementById("signup-password-error");
+    if (!errorEl) return;
+    const errors = validateSignupPassword(event.target.value);
+    if (errors.length > 0) { errorEl.textContent = errors[0]; errorEl.classList.remove("hidden"); }
+    else { errorEl.classList.add("hidden"); }
+  });
+}
+
+// HTMX form handlers
+const signupForm = document.getElementById("signup-form");
+if (signupForm) {
+  signupForm.addEventListener("htmx:beforeRequest", function (event) {
+    // Clear previous errors
+    document.querySelectorAll("[id$='-error']").forEach(el => el.classList.add("hidden"));
+
+    let isValid = true;
+    [% if has_username %]
+    const usernameVal = document.getElementById("signup-username")?.value.trim();
+    if (!usernameVal || usernameVal.length < 3) {
+      const errEl = document.getElementById("signup-username-error");
+      if (errEl) { errEl.textContent = "Username must be at least 3 characters."; errEl.classList.remove("hidden"); }
+      isValid = false;
+    }
+    [% endif %]
+    [% set has_email = register_fields | selectattr('field', 'equalto', 'email') | list | length > 0 %]
+    [% if has_email %]
+    const emailVal = document.getElementById("signup-email")?.value.trim();
+    if (!emailVal || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailVal)) {
+      document.getElementById("signup-email-error")?.classList.remove("hidden");
+      isValid = false;
+    }
+    [% endif %]
+    [% if authentication.email_password.enabled %]
+    const passVal = document.getElementById("signup-password")?.value.trim();
+    if (!passVal || validateSignupPassword(passVal).length > 0) {
+      const errEl = document.getElementById("signup-password-error");
+      if (errEl) errEl.classList.remove("hidden");
+      isValid = false;
+    }
+    [% endif %]
+    if (!isValid) { event.preventDefault(); event.detail.shouldAbort = true; }
+  });
+
+  signupForm.addEventListener("htmx:afterRequest", function (event) {
+    const xhr = event.detail.xhr;
+    const redirectURL = xhr.getResponseHeader("HX-Redirect");
+    try {
+      const response = JSON.parse(xhr.responseText);
+      if (redirectURL) {
+        window.location.href = redirectURL;
+      } else {
+        if (response.email) { document.getElementById("signup-email-error")?.classList.remove("hidden"); }
+        if (response.username) {
+          const errEl = document.getElementById("signup-username-error");
+          if (errEl) { errEl.textContent = response.username; errEl.classList.remove("hidden"); }
+        }
+        if (response.error) showNotification(response.error, "error");
+        if (response.message) showNotification(response.message, "info");
+      }
+    } catch (e) {
+      if (xhr.status >= 400) showNotification("An error occurred. Please try again.", "error");
+    }
+  });
+}

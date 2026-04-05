@@ -46,15 +46,21 @@ type LoginUserInput struct {
 
 {% endif %}
 
-{% if auth.email_password.email_verification.enabled %}
+{% if auth.email_verification.enabled %}
 // VerifyEmailInput defines the input for email verification
 type VerifyEmailInput struct {
-	OTP  string  `json:"otp" validate:"required,len={{ auth.email_password.email_verification.otp_length }}"`
+	OTP  string  `json:"otp" validate:"required,len={{ auth.email_verification.otp_length }}"`
 }
 
 // ResendVerificationInput defines the input for resending verification email
 type ResendVerificationInput struct {
-	Email  string  `json:"email" validate:"required,email"`
+	{% if auth.email_password.forgot_password.identifier_field == 'email' %}
+		Email  string  `json:"email" validate:"required,email"`
+	{% elif auth.email_password.forgot_password.identifier_field == 'username' %}
+		Username  string  `json:"username" validate:"required"`
+	{% elif auth.email_password.forgot_password.identifier_field == 'email_or_username' %}
+		Identifier  string  `json:"identifier" validate:"required"`  // Email or username
+	{% endif %}
 }
 {% endif %}
 
@@ -68,6 +74,7 @@ type ForgotPasswordInput struct {
 {% elif auth.email_password.forgot_password.identifier_field == 'email_or_username' %}
 	Identifier  string  `json:"identifier" validate:"required"`  // Email or username
 {% endif %}
+
 }
 
 // ResetPasswordInput defines the input for password reset
@@ -79,7 +86,7 @@ type ResetPasswordInput struct {
 {% elif auth.email_password.forgot_password.identifier_field == 'email_or_username' %}
 	Identifier  string  `json:"identifier" validate:"required"`  // Email or username
 {% endif %}
-	OTP  string  `json:"otp" validate:"required,len={{ auth.email_password.email_verification.otp_length }}"`
+	OTP  string  `json:"otp" validate:"required,len={{ auth.email_verification.otp_length }}"`
 	NewPassword  string  `json:"new_password" validate:"required,min={{ auth.email_password.password_validation.min_length }}"`
 }
 {% endif %}
@@ -139,24 +146,8 @@ type AuthUserResponse struct {
 {% if auth.refresh_token.enabled %}
 	RefreshToken  string  `json:"refresh_token,omitempty"`
 {% endif %}
-{% if auth.email_password.email_verification.enabled %}
+{% if auth.email_verification.enabled %}
 	Verified  bool  `json:"verified"`
-	Message  string  `json:"message,omitempty"`
-{% endif %}
-	User  *UserResponse  `json:"user,omitempty"`
-}
-
-// UserResponse is the user data returned in auth responses
-type UserResponse struct {
-	ID  uint  `json:"id"`
-{% for field in identifier.register_fields %}
-{% if not field.get('sensitive', False) %}
-	{{ field.field | title }}  {{ field.dto_type }}  `json:"{{ field.field }}"`
-{% endif %}
-{% endfor %}
-{% if auth.rbac.enabled %}
-	Role  string  `json:"role"`
-	IsAdmin  bool  `json:"is_admin"`
 {% endif %}
 }
 

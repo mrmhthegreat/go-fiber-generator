@@ -1,0 +1,866 @@
+project: github.com/username/my_api
+session_enabled: true
+rbac_enabled: true
+summary:
+  total_routes: 97
+  api_routes: 59
+  web_routes: 35
+  websocket_routes: 3
+api:
+  auth:
+  - name: RegisterUser
+    method: POST
+    path: /api/auth/register
+    handler: RegisterUser
+    middleware: []
+    permissions: []
+    rate_limit: {}
+  - name: LoginUser
+    method: POST
+    path: /api/auth/login
+    handler: LoginUser
+    middleware: []
+    permissions: []
+    rate_limit: {}
+  other:
+  - name: ForgotPassword
+    method: POST
+    path: /api/auth/forgot-password
+    handler: ForgotPassword
+    middleware: []
+    permissions: []
+    rate_limit: {}
+  - name: ResetPassword
+    method: POST
+    path: /api/auth/reset-password
+    handler: ResetPassword
+    middleware: []
+    permissions: []
+    rate_limit: {}
+  - name: ChangePassword
+    method: POST
+    path: /api/user/change-password
+    handler: ChangePassword
+    middleware:
+    - auth
+    permissions: []
+    rate_limit: {}
+  - name: RefreshToken
+    method: POST
+    path: /api/auth/refresh-token
+    handler: RefreshToken
+    middleware: []
+    permissions: []
+    rate_limit: {}
+  - name: Logout
+    method: POST
+    path: /api/auth/logout
+    handler: Logout
+    middleware:
+    - auth
+    permissions: []
+    rate_limit: {}
+  - name: GoogleLogin
+    method: POST
+    path: /api/auth/google
+    handler: GoogleLogin
+    middleware: []
+    permissions: []
+    rate_limit: {}
+  - name: FacebookLogin
+    method: POST
+    path: /api/auth/facebook
+    handler: FacebookLogin
+    middleware: []
+    permissions: []
+    rate_limit: {}
+  - name: GenerateAdminToken
+    method: POST
+    path: /api/auth/generate_admin_token
+    handler: admin_token
+    middleware:
+    - auth
+    - admin
+    permissions: []
+    rate_limit: {}
+  - name: GenerateApiToken
+    method: POST
+    path: /api/auth/generate_api_token
+    handler: api_token
+    middleware:
+    - auth
+    permissions: []
+    rate_limit: {}
+  fcm:
+  - name: SendFCM
+    method: POST
+    path: /api/send-fcm
+    handler: FCMHandler.SendNotification
+    middleware: []
+    permissions: []
+    rate_limit: {}
+  - name: SubscribeToTopic
+    method: POST
+    path: /api/subscribe-to-topic
+    handler: FCMHandler.SubscribeToTopic
+    middleware: []
+    permissions: []
+    rate_limit: {}
+  imap:
+  - name: GetEmailsList
+    method: GET
+    path: /api/get-emails-list
+    handler: EmailHandler.GetEmailsList
+    middleware: []
+    permissions: []
+    rate_limit: {}
+  - name: GetEmailDetail
+    method: GET
+    path: /api/get-email-detail/:id
+    handler: EmailHandler.GetEmailDetail
+    middleware: []
+    permissions: []
+    rate_limit: {}
+  - name: SendEmail
+    method: POST
+    path: /api/send-email
+    handler: EmailHandler.ComposeEmail
+    middleware: []
+    permissions: []
+    rate_limit: {}
+  - name: MarkEmailRead
+    method: PATCH
+    path: /api/mark-email-read/:id
+    handler: EmailHandler.MarkEmailRead
+    middleware: []
+    permissions: []
+    rate_limit: {}
+  - name: RefreshEmails
+    method: POST
+    path: /api/refresh-emails
+    handler: EmailHandler.RefreshEmails
+    middleware: []
+    permissions: []
+    rate_limit: {}
+  rbac:
+  - name: GetRoles
+    method: GET
+    path: /api/rbac/roles
+    handler: RBACController.GetRoles
+    middleware: []
+    permissions: []
+    rate_limit: {}
+  - name: GetRolePermissions
+    method: GET
+    path: /api/rbac/roles/:id
+    handler: RBACController.GetRolePermissions
+    middleware: []
+    permissions: []
+    rate_limit: {}
+  - name: CreateRole
+    method: POST
+    path: /api/rbac/roles
+    handler: RBACController.CreateRole
+    middleware: []
+    permissions: []
+    rate_limit: {}
+  - name: UpdateRole
+    method: PUT
+    path: /api/rbac/roles/:id
+    handler: RBACController.UpdateRole
+    middleware: []
+    permissions: []
+    rate_limit: {}
+  - name: DeleteRole
+    method: DELETE
+    path: /api/rbac/roles/:id
+    handler: RBACController.DeleteRole
+    middleware: []
+    permissions: []
+    rate_limit: {}
+  - name: GetPermissions
+    method: GET
+    path: /api/rbac/permissions
+    handler: RBACController.GetPermissions
+    middleware: []
+    permissions: []
+    rate_limit: {}
+  - name: SyncPermissions
+    method: POST
+    path: /api/rbac/permissions/sync
+    handler: RBACController.SyncPermissions
+    middleware: []
+    permissions: []
+    rate_limit: {}
+  - name: GetUserPermissionOverrides
+    method: GET
+    path: /api/rbac/users/:userId/overrides
+    handler: RBACController.GetUserPermissionOverrides
+    middleware: []
+    permissions: []
+    rate_limit: {}
+  - name: CreateUserPermissionOverride
+    method: POST
+    path: /api/rbac/users/:userId/overrides
+    handler: RBACController.CreateUserPermissionOverride
+    middleware: []
+    permissions: []
+    rate_limit: {}
+  - name: UpdateUserPermissionOverrides
+    method: PUT
+    path: /api/rbac/users/:userId/overrides
+    handler: RBACController.UpdateUserPermissionOverrides
+    middleware: []
+    permissions: []
+    rate_limit: {}
+  - name: DeleteUserPermissionOverride
+    method: DELETE
+    path: /api/rbac/users/:userId/overrides/:permId
+    handler: RBACController.DeleteUserPermissionOverride
+    middleware: []
+    permissions: []
+    rate_limit: {}
+  - name: UpdateRolePermissions
+    method: PUT
+    path: /api/rbac/roles/:id/permissions/bulk
+    handler: RBACController.UpdateRolePermissions
+    middleware: []
+    permissions: []
+    rate_limit: {}
+  - name: GetUserRolePermissions
+    method: GET
+    path: /api/rbac/users/:userId/permissions/debug
+    handler: RBACController.GetUserRolePermissions
+    middleware: []
+    permissions: []
+    rate_limit: {}
+  - name: InvalidateUserCache
+    method: POST
+    path: /api/rbac/cache/invalidate/:userId
+    handler: RBACController.InvalidateUserCache
+    middleware: []
+    permissions: []
+    rate_limit: {}
+  - name: CheckPermission
+    method: GET
+    path: /api/rbac/check
+    handler: RBACController.CheckPermission
+    middleware: []
+    permissions: []
+    rate_limit: {}
+  - name: GetMyPermissions
+    method: GET
+    path: /api/rbac/me/permissions
+    handler: RBACController.GetMyPermissions
+    middleware: []
+    permissions: []
+    rate_limit: {}
+  - name: SearchUsers
+    method: GET
+    path: /api/rbac/users/search
+    handler: RBACController.SearchUsers
+    middleware: []
+    permissions: []
+    rate_limit: {}
+  chat:
+  - name: ListConversations
+    method: GET
+    path: /api/v1/chat/conversations
+    handler: ListConversations
+    middleware:
+    - auth
+    permissions: []
+    rate_limit: {}
+    description: List user conversations
+  - name: ListMessages
+    method: GET
+    path: /api/v1/chat/conversations/:id/messages
+    handler: ListMessages
+    middleware:
+    - auth
+    permissions: []
+    rate_limit: {}
+    description: Get messages in conversation
+  - name: SendMessage
+    method: POST
+    path: /api/v1/chat/conversations/:id/messages
+    handler: SendMessage
+    middleware:
+    - auth
+    permissions: []
+    rate_limit: {}
+    description: Send message to conversation
+  - name: MarkAsRead
+    method: POST
+    path: /api/v1/chat/conversations/:id/read
+    handler: MarkAsRead
+    middleware:
+    - auth
+    permissions: []
+    rate_limit: {}
+    description: Mark conversation as read
+  notification:
+  - name: ListNotifications
+    method: GET
+    path: /api/v1/notifications/list
+    handler: ListNotifications
+    middleware:
+    - auth
+    permissions: []
+    rate_limit: {}
+    description: List user notifications
+  - name: MarkNotificationRead
+    method: POST
+    path: /api/v1/notifications/:id/read
+    handler: MarkNotificationRead
+    middleware:
+    - auth
+    permissions: []
+    rate_limit: {}
+    description: Mark single notification as read
+  - name: BulkMarkNotificationsRead
+    method: POST
+    path: /api/v1/notifications/bulk-read
+    handler: BulkMarkNotificationsRead
+    middleware:
+    - auth
+    permissions: []
+    rate_limit: {}
+    description: Bulk mark notifications as read
+  - name: GetUnreadCount
+    method: GET
+    path: /api/v1/notifications/unread-count
+    handler: GetUnreadCount
+    middleware:
+    - auth
+    permissions: []
+    rate_limit: {}
+    description: Get unread notification count
+  - name: DeleteNotification
+    method: DELETE
+    path: /api/v1/notifications/:id
+    handler: DeleteNotification
+    middleware:
+    - auth
+    permissions: []
+    rate_limit: {}
+    description: Delete notification
+  - name: DeleteAllNotifications
+    method: DELETE
+    path: /api/v1/notifications/all
+    handler: DeleteAllNotifications
+    middleware:
+    - auth
+    permissions: []
+    rate_limit: {}
+    description: Delete all notifications
+  User:
+  - name: CreateUser
+    method: POST
+    path: /api/users
+    handler: CreateUser
+    middleware:
+    - auth
+    permissions: []
+    rate_limit: {}
+    description: Create new User
+  - name: GetUserByID
+    method: GET
+    path: /api/users/:id
+    handler: GetUserByID
+    middleware:
+    - auth
+    permissions: []
+    rate_limit: {}
+    description: Get User by ID
+  - name: UpdateUser
+    method: PATCH
+    path: /api/users/:id
+    handler: UpdateUser
+    middleware:
+    - auth
+    permissions: []
+    rate_limit: {}
+    description: Update User
+  - name: DeleteUser
+    method: DELETE
+    path: /api/users/:id
+    handler: DeleteUser
+    middleware:
+    - auth
+    permissions: []
+    rate_limit: {}
+    description: Delete User
+  - name: BatchDeleteUser
+    method: DELETE
+    path: /api/users/batch
+    handler: BatchDeleteUser
+    middleware:
+    - auth
+    permissions: []
+    rate_limit: {}
+    description: Batch delete Users
+  - name: GetActiveAuthors
+    method: GET
+    path: /api/users/authors
+    handler: GetActiveAuthors
+    middleware: []
+    permissions: []
+    rate_limit: {}
+    description: Get active authors with pagination
+  Post:
+  - name: CreatePost
+    method: POST
+    path: /api/posts
+    handler: CreatePost
+    middleware:
+    - auth
+    permissions: []
+    rate_limit:
+      enabled: false
+      name: post_rate_limit
+    description: Create new Post
+  - name: GetPostByID
+    method: GET
+    path: /api/posts/:id
+    handler: GetPostByID
+    middleware:
+    - auths
+    permissions: []
+    rate_limit:
+      enabled: false
+      name: post_rate_limit
+    description: Get Post by ID
+  - name: UpdatePost
+    method: PATCH
+    path: /api/posts/:id
+    handler: UpdatePost
+    middleware:
+    - auth
+    permissions: []
+    rate_limit:
+      enabled: false
+      name: post_rate_limit
+    description: Update Post
+  - name: DeletePost
+    method: DELETE
+    path: /api/posts/:id
+    handler: DeletePost
+    middleware:
+    - auth
+    permissions: []
+    rate_limit:
+      enabled: false
+      name: post_rate_limit
+    description: Delete Post
+  - name: GetBySlug
+    method: GET
+    path: /api/posts/:slug
+    handler: GetBySlug
+    middleware: []
+    permissions: []
+    rate_limit:
+      enabled: false
+      name: post_rate_limit
+    description: Get post by slug with author, category and tags
+  - name: GetPublishedPosts
+    method: GET
+    path: /api/posts/published
+    handler: GetPublishedPosts
+    middleware: []
+    permissions: []
+    rate_limit:
+      enabled: false
+      name: post_rate_limit
+    description: Get published posts with pagination and filters
+  - name: GetPostsByAuthor
+    method: GET
+    path: /api/users/:author_id/posts
+    handler: GetPostsByAuthor
+    middleware: []
+    permissions: []
+    rate_limit:
+      enabled: false
+      name: post_rate_limit
+    description: Get posts by a specific author
+  - name: GetUserPosts
+    method: GET
+    path: /api/users/:user_id/posts
+    handler: GetUserPosts
+    middleware:
+    - auth
+    permissions: []
+    rate_limit:
+      enabled: false
+      name: post_rate_limit
+    description: 'Custom getter: GetUserPosts'
+web:
+  other:
+  - name: ''
+    method: GET
+    path: /auth/login
+    handler: ''
+    middleware: []
+    permissions: []
+    rate_limit:
+      enabled: false
+      name: login_rate_limit
+  - name: HandleLogin
+    method: POST
+    path: /auth/login
+    handler: HandleLogin
+    middleware: []
+    permissions: []
+    rate_limit:
+      enabled: false
+      name: login_rate_limit
+  - name: ''
+    method: GET
+    path: /auth/signup
+    handler: ''
+    middleware: []
+    permissions: []
+    rate_limit:
+      enabled: false
+      name: signup_rate_limit
+  - name: HandleSignup
+    method: POST
+    path: /auth/signup
+    handler: HandleSignup
+    middleware: []
+    permissions: []
+    rate_limit:
+      enabled: false
+      name: signup_rate_limit
+  - name: ''
+    method: GET
+    path: /auth/logout
+    handler: ''
+    middleware: []
+    permissions: []
+    rate_limit:
+      enabled: false
+      name: logout_rate_limit
+  - name: ''
+    method: GET
+    path: /auth/verify
+    handler: ''
+    middleware:
+    - login
+    permissions: []
+    rate_limit:
+      enabled: false
+      name: verify_email_rate_limit
+  - name: HandleVerifyEmail
+    method: POST
+    path: /auth/verify
+    handler: HandleVerifyEmail
+    middleware:
+    - login
+    permissions: []
+    rate_limit:
+      enabled: false
+      name: verify_email_rate_limit
+  - name: ''
+    method: GET
+    path: /auth/forgot-password
+    handler: ''
+    middleware: []
+    permissions: []
+    rate_limit:
+      enabled: false
+      name: forgot_password_rate_limit
+  - name: HandleForgotPassword
+    method: POST
+    path: /auth/forgot-password
+    handler: HandleForgotPassword
+    middleware: []
+    permissions: []
+    rate_limit:
+      enabled: false
+      name: forgot_password_rate_limit
+  - name: ''
+    method: GET
+    path: /auth/reset-password
+    handler: ''
+    middleware: []
+    permissions: []
+    rate_limit:
+      enabled: false
+      name: reset_password_rate_limit
+  - name: GoogleLoginWeb
+    method: GET
+    path: /auth/google/login
+    handler: GoogleLoginWeb
+    middleware: []
+    permissions: []
+    rate_limit: {}
+  - name: GoogleCallbackWeb
+    method: GET
+    path: /auth/google/callback
+    handler: GoogleCallbackWeb
+    middleware: []
+    permissions: []
+    rate_limit: {}
+  - name: FacebookLoginWeb
+    method: GET
+    path: /auth/facebook/login
+    handler: FacebookLoginWeb
+    middleware: []
+    permissions: []
+    rate_limit: {}
+  - name: FacebookCallbackWeb
+    method: GET
+    path: /auth/facebook/callback
+    handler: FacebookCallbackWeb
+    middleware: []
+    permissions: []
+    rate_limit: {}
+  imap:
+  - name: GetInboxPage
+    method: GET
+    path: /api/get-inbox-page
+    handler: EmailHandler.GetInboxPage
+    middleware: []
+    permissions:
+    - post.view.user
+    rate_limit: {}
+  - name: GetSentEmails
+    method: GET
+    path: /api/get-sent-emails
+    handler: EmailHandler.GetSentPage
+    middleware: []
+    permissions:
+    - post.view.user
+    rate_limit: {}
+  - name: GetEmailsList
+    method: GET
+    path: /api/get-emails-list
+    handler: EmailHandler.GetEmailsList
+    middleware: []
+    permissions:
+    - post.view.user
+    rate_limit: {}
+  - name: GetEmailDetail
+    method: GET
+    path: /api/get-email-detail/:id
+    handler: EmailHandler.GetEmailDetail
+    middleware: []
+    permissions:
+    - post.view.user
+    rate_limit: {}
+  - name: SendEmail
+    method: POST
+    path: /api/send-email
+    handler: EmailHandler.ComposeEmail
+    middleware: []
+    permissions:
+    - post.view.user
+    rate_limit: {}
+  - name: MarkEmailRead
+    method: PATCH
+    path: /api/mark-email-read/:id
+    handler: EmailHandler.MarkEmailRead
+    middleware: []
+    permissions:
+    - post.view.user
+    rate_limit: {}
+  - name: RefreshEmails
+    method: POST
+    path: /api/refresh-emails
+    handler: EmailHandler.RefreshEmails
+    middleware: []
+    permissions:
+    - post.view.user
+    rate_limit: {}
+  rbac:
+  - name: ManageRolesPage
+    method: GET
+    path: /dashboard/rbac/roles
+    handler: RBACController.ShowRBACManagement
+    middleware: []
+    permissions:
+    - rbac.roles.manage
+    rate_limit: {}
+  - name: ManageOverridesPage
+    method: GET
+    path: /dashboard/rbac/overrides
+    handler: RBACController.ShowRBACManagement
+    middleware: []
+    permissions:
+    - rbac.overrides.manage
+    rate_limit: {}
+  chat:
+  - name: ChatListConversations
+    method: GET
+    path: /chat/conversations
+    handler: ChatListConversations
+    middleware:
+    - auth
+    permissions: []
+    rate_limit: {}
+    template: views/chat/conversations.html
+  - name: ChatListMessages
+    method: GET
+    path: /chat/conversations/:id/messages
+    handler: ChatListMessages
+    middleware:
+    - auth
+    permissions: []
+    rate_limit: {}
+    template: views/chat/messages.html
+  - name: ChatSendMessage
+    method: POST
+    path: /chat/send-message
+    handler: ChatSendMessage
+    middleware:
+    - auth
+    permissions:
+    - chat.send
+    rate_limit: {}
+  Post:
+  - name: ListPost
+    method: GET
+    path: /dashboard/posts
+    handler: ListPost
+    middleware:
+    - auth
+    - csrf
+    permissions:
+    - post.list
+    rate_limit:
+      enabled: false
+      name: post_rate_limit
+    template: index.html
+  - name: CreatePostPage
+    method: GET
+    path: /dashboard/posts/new
+    handler: CreatePostPage
+    middleware:
+    - auth
+    - csrf
+    permissions:
+    - post.create
+    rate_limit:
+      enabled: false
+      name: post_rate_limit
+    template: create.html
+  - name: CreatePost
+    method: POST
+    path: /dashboard/posts
+    handler: CreatePost
+    middleware:
+    - auth
+    - csrf
+    permissions:
+    - post.create
+    rate_limit:
+      enabled: false
+      name: post_rate_limit
+  - name: EditPostPage
+    method: GET
+    path: /dashboard/posts/:id/edit
+    handler: EditPostPage
+    middleware:
+    - auth
+    - csrf
+    permissions:
+    - post.edit
+    rate_limit:
+      enabled: false
+      name: post_rate_limit
+    template: edit.html
+  - name: UpdatePost
+    method: POST
+    path: /dashboard/posts/:id
+    handler: UpdatePost
+    middleware:
+    - auth
+    - csrf
+    permissions:
+    - post.edit
+    rate_limit:
+      enabled: false
+      name: post_rate_limit
+  - name: ShowPost
+    method: GET
+    path: /dashboard/posts/:id
+    handler: ShowPost
+    middleware:
+    - auth
+    - csrf
+    permissions:
+    - post.view
+    rate_limit:
+      enabled: false
+      name: post_rate_limit
+    template: show.html
+  - name: DeletePost
+    method: DELETE
+    path: /dashboard/posts/:id
+    handler: DeletePost
+    middleware:
+    - auth
+    - csrf
+    permissions:
+    - post.delete
+    rate_limit:
+      enabled: false
+      name: post_rate_limit
+  - name: GetUserPosts
+    method: GET
+    path: /dashboard/users/:user_id/posts
+    handler: GetUserPosts
+    middleware:
+    - auth
+    - csrf
+    permissions:
+    - post.view.user
+    rate_limit:
+      enabled: false
+      name: post_rate_limit
+    template: user_posts.html
+  - name: GetFeaturedPosts
+    method: GET
+    path: /dashboard/posts/featured
+    handler: GetFeaturedPosts
+    middleware:
+    - auth
+    - csrf
+    permissions:
+    - post.list
+    rate_limit:
+      enabled: false
+      name: post_rate_limit
+    template: featured_posts.html
+websocket:
+- name: ChatWebSocket
+  method: WS
+  path: /ws/chat
+  handler: ChatWebSocketHandler
+  middleware: []
+  permissions: []
+  rate_limit: {}
+  description: Chat-specific WebSocket
+  websocket_mode: dedicated
+  category: chat
+- name: UserWebSocket
+  method: WS
+  path: /ws/user
+  handler: UserWebSocketHandler
+  middleware: []
+  permissions: []
+  rate_limit: {}
+  description: User notifications WebSocket
+  websocket_mode: dedicated
+  category: notification
+- name: EventsWebSocket
+  method: WS
+  path: /ws/events
+  handler: EventsWebSocketHandler
+  middleware: []
+  permissions: []
+  rate_limit: {}
+  description: Events/updates WebSocket
+  websocket_mode: dedicated
+  category: websocket

@@ -75,7 +75,7 @@ def get_templates(config: dict, t: str, o: str) -> list[tuple[str, str]]:
     email = config['email']
     result =[]
     if email.get('enabled'):
-        result.append((f'{t}/pkg/pkg/email/sendMail.go.j2',f'{o}/pkg/pkg/email/sendMail.go',))
+        result.append((f'{t}/pkg/email/sendMail.go.j2', f'{o}/pkg/email/sendMail.go'))
 
     if not imap.get('enabled'):
         print("  ℹ️  IMAP disabled — skipping")

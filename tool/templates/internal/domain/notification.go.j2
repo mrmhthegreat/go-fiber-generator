@@ -81,7 +81,7 @@ type Notification struct {
 	UpdatedAt time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
 {% endif %}
 {% if config.notifications.model.get('soft_delete', true) %}
-	DeletedAt gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"deleted_at"`
 {% endif %}
 
 	// Relations

@@ -21,20 +21,6 @@ import (
 
 
 
-
-{% if config.session.enabled %}
-// GetSession retrieves session from Fiber context
-func GetSession(c *fiber.Ctx) (*session.Session, error) {
-sess, ok := c.Locals("session").(*session.Session)
-if !ok {
-return nil, fmt.Errorf("session not found in context")
-}
-return sess, nil
-}
-{% endif %}
-
-
-
 // GetFormValue safely gets form value
 func GetFormValue(form *multipart.Form, key string) string {
 if values, ok := form.Value[key]; ok && len(values) > 0 {

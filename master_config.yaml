@@ -1,68 +1,39 @@
-# =============================================================================
-# MASTER CONFIGURATION FILE
-# Combines: authenticaton_config.yaml + chat_noti_web.yaml +
-#           middleware_config.yaml + repo_model_config.yaml
-# Usage: python generator.py master_config.yaml
-# =============================================================================
-
 project:
   module: github.com/username/my_api
   user_model_name: User
   repository_name: UserRepository
-  # Professional folder structure (Go best practices)
   structure:
-    use_internal: true      # Use internal/ for private packages
-    use_pkg: true           # Use pkg/ for public packages
-    use_cmd: true           # Use cmd/ for executables
-    cmd_name: server        # cmd/server/main.go
-# ============================================
-# I18N CONFIGURATION
-# ============================================
+    use_internal: true
+    use_pkg: true
+    use_cmd: true
+    cmd_name: server
 i18n:
   enabled: true
-  languages: [en, fr, ar]
-
-# ============================================
-# TEMPLATE ENGINE (Web Handlers)
-# ============================================
+  languages:
+  - en
+  - fr
+  - ar
 template_engine:
-  enabled: false
+  enabled: true
   extension: .html
   reload: true
-  time_format: "02 Jan 15:04"
-# ============================================
-# STATIC FILES (Optional)
-# ============================================
+  time_format: 02 Jan 15:04
 static_files:
   enabled: true
   route: /static
-
-# ============================================
-# SERVER CONFIGURATION
-# ============================================
 server:
-  port: "3000"
-  default_port: "3000"
-  body_limit: "50 * 1024 * 1024" # 50MB
-  body_limit_description: "50MB"
+  port: '3000'
+  default_port: '3000'
+  body_limit: 50 * 1024 * 1024
+  body_limit_description: 50MB
   pass_locals_to_views: false
-  read_timeout: "10 * time.Second"
-  write_timeout: "10 * time.Second"
-
-
-# ============================================
-# FEATURES
-# ============================================
+  read_timeout: 10 * time.Second
+  write_timeout: 10 * time.Second
 features:
-  cron_jobs: true                 # Enables background cron job system
-  
-# ============================================
-# DATABASE CONFIGURATION
-# ============================================
+  cron_jobs: true
 database:
-  driver: postgres  # postgres, mysql, sqlite
-  url_env: DATABASE_URL # Used by config.yaml template
-  # Individual fields for future flexibility
+  driver: postgres
+  url_env: DATABASE_URL
   host_env: DATABASE_HOST
   port_env: DATABASE_PORT
   name_env: DATABASE_NAME
@@ -71,13 +42,9 @@ database:
   ssl_mode_env: DATABASE_SSL_MODE
   max_open_conns: 25
   max_idle_conns: 5
-  conn_max_lifetime: "5 * time.Minute"
+  conn_max_lifetime: 5 * time.Minute
   auto_migrate: true
   run_migrations: true
-
-# ============================================
-# REDIS CONFIGURATION
-# ============================================
 redis:
   enabled: true
   host_env: REDIS_ADDR
@@ -85,29 +52,25 @@ redis:
   db_env: REDIS_DB
   min_idle_conns: 5
   max_retries: 3
-  retry_delay: "2 * time.Second"
+  retry_delay: 2 * time.Second
   pool_size: 20
-  session_addr_env: REDIS_ADDR # For session storage
-# ============================================
-# SWAGGER / API DOCUMENTATION
-# ============================================
+  session_addr_env: REDIS_ADDR
 swagger:
   enabled: true
-  title: "My API"
-  description: "Professional Go Fiber API"
-  version: "1.0.0"
-  host: "localhost:3000"
-  base_path: "/api"
-  schemes: ["http", "https"]
+  title: My API
+  description: Professional Go Fiber API
+  version: 1.0.0
+  host: localhost:3000
+  base_path: /api
+  schemes:
+  - http
+  - https
   contact:
-    name: "API Support"
-    email: "support@example.com"
+    name: API Support
+    email: support@example.com
   license:
-    name: "MIT"
-    url: "https://opensource.org/licenses/MIT"
-# =============================================================================
-# EMAIL (SMTP)
-# =============================================================================
+    name: MIT
+    url: https://opensource.org/licenses/MIT
 email:
   enabled: true
   provider: smtp
@@ -115,10 +78,6 @@ email:
   smtp_port_env: SMTP_PORT
   smtp_user_env: SMTP_EMAIL
   smtp_password_env: SMTP_EMAIL_PASSWORD
-
-# =============================================================================
-# IMAP (Incoming Email)
-# =============================================================================
 imap:
   enabled: true
   host_env: IMAP_HOST
@@ -127,7 +86,7 @@ imap:
   password_env: IMAP_PASSWORD
   use_ssl: true
   mailbox: INBOX
-  fetch_interval: "5 * time.Minute"
+  fetch_interval: 5 * time.Minute
   mark_as_read: true
   max_emails_per_fetch: 50
   fetch_sent: true
@@ -157,8 +116,10 @@ imap:
       path: /refresh-emails
   web_handler:
     enabled: true
+    template: email/inbox.html
     middleware: []
-    permissions: [post.view.user]
+    permissions:
+    - post.view.user
     context:
       needs_user: true
       needs_csrf: true
@@ -173,42 +134,45 @@ imap:
     GetEmailsList:
       enabled: true
       middleware: []
-      permissions: [post.view.user]
+      permissions:
+      - post.view.user
       path: /get-emails-list
     GetEmailDetail:
       enabled: true
       middleware: []
-      permissions: [post.view.user]
+      permissions:
+      - post.view.user
       path: /get-email-detail/:id
     SendEmail:
       enabled: true
       middleware: []
-      permissions: [post.view.user]
+      permissions:
+      - post.view.user
       path: /send-email
     MarkEmailRead:
       enabled: true
       middleware: []
-      permissions: [post.view.user]
+      permissions:
+      - post.view.user
       path: /mark-email-read/:id
     RefreshEmails:
       enabled: true
       middleware: []
-      permissions: [post.view.user]
+      permissions:
+      - post.view.user
       path: /refresh-emails
     GetSentEmails:
       enabled: true
       middleware: []
-      permissions: [post.view.user]
+      permissions:
+      - post.view.user
       path: /get-sent-emails
     GetInboxPage:
       enabled: true
       middleware: []
-      permissions: [post.view.user]
+      permissions:
+      - post.view.user
       path: /get-inbox-page
-
-# =============================================================================
-# STORAGE
-# =============================================================================
 storage:
   enabled: true
   provider_env: STORAGE_PROVIDER
@@ -216,25 +180,11 @@ storage:
     url_env: STORAGE_SUPABASE_URL
     token_env: STORAGE_SUPABASE_TOKEN
     bucket_name_env: STORAGE_SUPABASE_BUCKET_NAME
-  # s3:
-  #   endpoint_env: STORAGE_S3_ENDPOINT
-  #   region_env: STORAGE_S3_REGION
-  #   bucket_env: STORAGE_S3_BUCKET
-  #   access_key_id_env: STORAGE_S3_ACCESS_KEY_ID
-  #   secret_access_key_env: STORAGE_S3_SECRET_ACCESS_KEY
-  #   use_ssl_env: STORAGE_S3_USE_SSL
-  # local:
-  #   upload_path_env: STORAGE_LOCAL_UPLOAD_PATH
-  #   base_url_env: STORAGE_LOCAL_BASE_URL
-
-# =============================================================================
-# FCM
-# =============================================================================
 fcm:
   enabled: true
   credentials_path_env: FCM_CREDENTIALS_PATH
-  save_to_database: true
   project_id_env: FCM_PROJECT_ID
+  save_to_database: false
   admin_topic_env: admin_default_stogne
   controller:
     enabled: true
@@ -249,9 +199,10 @@ fcm:
       middleware: []
       path: /subscribe-to-topic
   web_handler:
-    enabled: true
+    enabled: false
     middleware: []
-    permissions: [post.view.user]
+    permissions:
+    - post.view.user
     context:
       needs_user: true
       needs_csrf: true
@@ -267,34 +218,29 @@ fcm:
     GetNotificationPage:
       enabled: true
       middleware: []
-      permissions: [post.view.user]
+      permissions:
+      - post.view.user
       path: /get-notification-page
     SendFCM:
       enabled: true
       middleware: []
-      permissions: [post.view.user]
+      permissions:
+      - post.view.user
       path: /send-fcm
     SubscribeToTopic:
       enabled: true
       middleware: []
-      permissions: [post.view.user]
+      permissions:
+      - post.view.user
       path: /subscribe-to-topic
-
-# =============================================================================
-# SESSION
-# =============================================================================
 session:
   enabled: true
   secret_key_env: CHANGE_THIS_SESSION_SECRET
   cookies_secret_key_env: CHANGE_THIS_COOKIES_SECRET
   cookie_http_only: true
-  cookie_secure: false # set to true in production
-  expiration: "24 * time.Hour"
-  store_context_key: "session"
-
-# =============================================================================
-# HELPERS
-# =============================================================================
+  cookie_secure: false
+  expiration: 24 * time.Hour
+  store_context_key: session
 helpers:
   math_helpers: true
   string_helpers: true
@@ -302,265 +248,279 @@ helpers:
   time_helpers: true
   validation_helpers: true
 rbac:
+  enabled: true
+  service_name: RBACService
+  default_role: user
+  all_privileges: super_admin
+  model_field: Role
+  roles:
+  - name: admin
+    dashboard_path: /admin
+  - name: user
+    dashboard_path: /dashboard
+  - name: super_admin
+    dashboard_path: /super-admin
+  controller:
     enabled: true
-    service_name: "RBACService"
-    default_role: user
-    all_privileges: 'super_admin'
-    model_field: Role
-    roles:
-      - name: admin
-        dashboard_path: /admin
-      - name: user
-        dashboard_path: /dashboard
-      - name: super_admin
-        dashboard_path: /super-admin
-    controller:
+    base_path: /api/rbac
+    tag: RBAC Management
+    middleware: []
+    ListRoles:
       enabled: true
-      base_path: /api/rbac
-      tag: "RBAC Management"
+      path: /roles
       middleware: []
-      ListRoles:
-        enabled: true
-        path: /roles
-        middleware: []
-      GetRole:
-        enabled: true
-        path: /roles/:id
-        middleware: []
-      CreateRole:
-        enabled: true
-        path: /roles
-        middleware: []
-      UpdateRole:
-        enabled: true
-        path: /roles/:id
-        middleware: []
-      DeleteRole:
-        enabled: true
-        path: /roles/:id
-        middleware: []
-      ListPermissions:
-        enabled: true
-        path: /permissions
-        middleware: []
-      SyncPermissions:
-        enabled: true
-        path: /permissions/sync
-        middleware: []
-      GetUserOverrides:
-        enabled: true
-        path: /users/:userId/overrides
-        middleware: []
-      SetUserOverride:
-        enabled: true
-        path: /users/:userId/overrides
-        middleware: []
-      RemoveUserOverride:
-        enabled: true
-        path: /users/:userId/overrides/:permId
-        middleware: []
-      BulkUpdateRolePermissions:
-        enabled: true
-        path: /roles/:id/permissions/bulk
-        middleware: []
-      GetUserPermissions:
-        enabled: true
-        path: /users/:userId/permissions/debug
-        middleware: []
-      InvalidateCache:
-        enabled: true
-        path: /cache/invalidate/:userId
-        middleware: []
-      CheckPermission:
-        enabled: true
-        path: /check
-        middleware: []
-    web_handler:
+    GetRole:
       enabled: true
-      base_path: /dashboard/rbac
+      path: /roles/:id
       middleware: []
-      permissions: [rbac.roles.manage]
-      ManageRolesPage:
-        enabled: true
-        path: /roles
-        middleware: []
-        permissions: [rbac.roles.manage]
-      ManageOverridesPage:
-        enabled: true
-        path: /overrides
-        middleware: []
-        permissions: [rbac.overrides.manage]
-      ListRoles:
-        enabled: true
-        path: /roles
-        middleware: []
-        permissions: [rbac.roles.manage]
-      GetRole:
-        enabled: true
-        path: /roles/:id
-        middleware: []
-        permissions: [rbac.roles.manage]
-      CreateRole:
-        enabled: true
-        path: /roles
-        middleware: []
-        permissions: [rbac.roles.manage]
-      UpdateRole:
-        enabled: true
-        path: /roles/:id
-        middleware: []
-        permissions: [rbac.roles.manage]
-      DeleteRole:
-        enabled: true
-        path: /roles/:id
-        middleware: []
-        permissions: [rbac.roles.manage]
-      ListPermissions:
-        enabled: true
-        path: /permissions
-        middleware: []
-        permissions: [rbac.permissions.manage]
-      SyncPermissions:
-        enabled: true
-        path: /permissions/sync
-        middleware: []
-        permissions: [rbac.permissions.manage]
-      GetUserOverrides:
-        enabled: true
-        path: /users/:userId/overrides
-        middleware: []
-        permissions: [rbac.overrides.manage]
-      SetUserOverride:
-        enabled: true
-        path: /users/:userId/overrides
-        middleware: []
-        permissions: [rbac.overrides.manage]
-      RemoveUserOverride:
-        enabled: true
-        path: /users/:userId/overrides/:permId
-        middleware: []
-        permissions: [rbac.overrides.manage]
-      BulkUpdateRolePermissions:
-        enabled: true
-        path: /roles/:id/permissions/bulk
-        middleware: []
-        permissions: [rbac.roles.manage]
-      GetUserPermissions:
-        enabled: true
-        path: /users/:userId/permissions/debug
-        middleware: []
-        permissions: [rbac.permissions.manage]
-      InvalidateCache:
-        enabled: true
-        path: /cache/invalidate/:userId
-        middleware: []
-        permissions: [rbac.permissions.manage]
-      CheckPermission:
-        enabled: true
-        path: /check
-        middleware: []
-        permissions: [rbac.permissions.manage]
-
-# =============================================================================
-# AUTHENTICATION
-# =============================================================================
+    CreateRole:
+      enabled: true
+      path: /roles
+      middleware: []
+    UpdateRole:
+      enabled: true
+      path: /roles/:id
+      middleware: []
+    DeleteRole:
+      enabled: true
+      path: /roles/:id
+      middleware: []
+    ListPermissions:
+      enabled: true
+      path: /permissions
+      middleware: []
+    SyncPermissions:
+      enabled: true
+      path: /permissions/sync
+      middleware: []
+    GetUserOverrides:
+      enabled: true
+      path: /users/:userId/overrides
+      middleware: []
+    SetUserOverride:
+      enabled: true
+      path: /users/:userId/overrides
+      middleware: []
+    RemoveUserOverride:
+      enabled: true
+      path: /users/:userId/overrides/:permId
+      middleware: []
+    BulkUpdateRolePermissions:
+      enabled: true
+      path: /roles/:id/permissions/bulk
+      middleware: []
+    GetUserPermissions:
+      enabled: true
+      path: /users/:userId/permissions/debug
+      middleware: []
+    InvalidateCache:
+      enabled: true
+      path: /cache/invalidate/:userId
+      middleware: []
+    CheckPermission:
+      enabled: true
+      path: /check
+      middleware: []
+  web_handler:
+    enabled: true
+    base_path: /dashboard/rbac
+    template: admin/rbac
+    middleware: []
+    permissions:
+    - rbac.roles.manage
+    ManageRolesPage:
+      enabled: true
+      path: /roles
+      middleware: []
+      permissions:
+      - rbac.roles.manage
+    ManageOverridesPage:
+      enabled: true
+      path: /overrides
+      middleware: []
+      permissions:
+      - rbac.overrides.manage
+    ListRoles:
+      enabled: true
+      path: /roles
+      middleware: []
+      permissions:
+      - rbac.roles.manage
+    GetRole:
+      enabled: true
+      path: /roles/:id
+      middleware: []
+      permissions:
+      - rbac.roles.manage
+    CreateRole:
+      enabled: true
+      path: /roles
+      middleware: []
+      permissions:
+      - rbac.roles.manage
+    UpdateRole:
+      enabled: true
+      path: /roles/:id
+      middleware: []
+      permissions:
+      - rbac.roles.manage
+    DeleteRole:
+      enabled: true
+      path: /roles/:id
+      middleware: []
+      permissions:
+      - rbac.roles.manage
+    ListPermissions:
+      enabled: true
+      path: /permissions
+      middleware: []
+      permissions:
+      - rbac.permissions.manage
+    SyncPermissions:
+      enabled: true
+      path: /permissions/sync
+      middleware: []
+      permissions:
+      - rbac.permissions.manage
+    GetUserOverrides:
+      enabled: true
+      path: /users/:userId/overrides
+      middleware: []
+      permissions:
+      - rbac.overrides.manage
+    SetUserOverride:
+      enabled: true
+      path: /users/:userId/overrides
+      middleware: []
+      permissions:
+      - rbac.overrides.manage
+    RemoveUserOverride:
+      enabled: true
+      path: /users/:userId/overrides/:permId
+      middleware: []
+      permissions:
+      - rbac.overrides.manage
+    BulkUpdateRolePermissions:
+      enabled: true
+      path: /roles/:id/permissions/bulk
+      middleware: []
+      permissions:
+      - rbac.roles.manage
+    GetUserPermissions:
+      enabled: true
+      path: /users/:userId/permissions/debug
+      middleware: []
+      permissions:
+      - rbac.permissions.manage
+    InvalidateCache:
+      enabled: true
+      path: /cache/invalidate/:userId
+      middleware: []
+      permissions:
+      - rbac.permissions.manage
+    CheckPermission:
+      enabled: true
+      path: /check
+      middleware: []
+      permissions:
+      - rbac.permissions.manage
 authentication:
-  repo_var: authRepo
+  enabled: true
   session:
-    enabled: true
+    enabled: false
+    claims:
+    - name: role
+      type: string
   register_middleware: []
-
   jwt:
     enabled: true
     algorithm: HS256
     expiry_hours: 24
     secret_key_env: JWT_SECRET
     claims:
-      - { name: user_id, type: uint }
-      - { name: email, type: string }
-      - { name: role, type: string }
-      - { name: verified, type: bool }
-
+    - name: role
+      type: string
   identifier:
+    name_pool:
+    - fullname
     login_methods:
-      - field: email
+    - field: email
+      enabled: false
+      repository_method: GetUserByEmail
+      validation: required,email
+      error_message: invalid_email
+      rate_limit:
         enabled: false
-        repository_method: GetUserByEmail
-        validation: required,email
-        error_message: "invalid_email"
-        rate_limit:
-          enabled: false
-          name: email_login_rate_limit
-        middleware: []
-
-      - field: username
+        name: email_login_rate_limit
+      middleware: []
+    - field: username
+      enabled: false
+      repository_method: GetUserByUsername
+      validation: required,min=3,max=50
+      error_message: invalid_username
+      rate_limit:
         enabled: false
-        repository_method: GetUserByUsername
-        validation: required,min=3,max=50
-        error_message: "invalid_username"
-        rate_limit:
-          enabled: false
-          name: username_login_rate_limit
-        middleware: []
-
-      - field: email_or_username
-        enabled: true
-        repository_method: GetUserByEmailOrUsername
-        validation: required
-        error_message: "invalid_identifier"
-        json_field: identifier
-        dto_description: "Email or username"
-        rate_limit:
-          enabled: false
-          name: email_or_username_login_rate_limit
-        middleware: []
-
+        name: username_login_rate_limit
+      middleware: []
+    - field: email_or_username
+      enabled: true
+      repository_method: GetUserByEmailOrUsername
+      validation: required
+      error_message: invalid_identifier
+      json_field: identifier
+      dto_description: Email or username
+      rate_limit:
+        enabled: false
+        name: login_rate_limit
+      middleware: []
     register_fields:
-      - field: email
-        required: true
-        unique: true
-        validation: required,email
-        repository_check: GetUserByEmail
-        type: string
-        dto_type: string
-      - field: username
-        required: false
-        unique: true
-        validation: omitempty,min=3,max=50
-        repository_check: GetUserByUsername
-        type: "*string"
-        dto_type: "*string"
-      - field: fullname
-        required: true
-        unique: false
-        validation: required,min=2
-        type: string
-        dto_type: string
-      - field: phone
-        required: false
-        unique: true
-        validation: omitempty,e164
-        repository_check: GetUserByPhone
-        type: "*string"
-        dto_type: "*string"
-      - field: password
-        required: true
-        validation: required,min=8
-        type: string
-        dto_type: string
-        sensitive: true
-      - field: profile_image
-        required: false
-        file_upload: true
-        type: "*multipart.FileHeader"
-        dto_type: "*multipart.FileHeader"
-        form_field: profile_image
-        model_field: ProfileImage
-        max_size_mb: 5
-        allowed_types: [image/jpeg, image/png, image/webp]
-        storage_path: uploads/profiles
-        filename_pattern: "profile_{user_id}_{timestamp}"
-
+    - field: email
+      required: true
+      unique: true
+      validation: required,email
+      repository_check: GetUserByEmail
+      type: string
+      dto_type: string
+    - field: username
+      required: false
+      unique: true
+      validation: omitempty,min=3,max=50
+      repository_check: GetUserByUsername
+      type: '*string'
+      dto_type: '*string'
+    - field: fullname
+      required: true
+      unique: false
+      validation: required,min=2
+      type: string
+      dto_type: string
+    - field: phone
+      required: false
+      unique: true
+      validation: omitempty,e164
+      repository_check: GetUserByPhone
+      type: '*string'
+      dto_type: '*string'
+    - field: password
+      required: true
+      validation: required,min=8
+      type: string
+      dto_type: string
+      sensitive: true
+    - field: profile_image
+      required: false
+      file_upload: true
+      type: '*multipart.FileHeader'
+      dto_type: '*multipart.FileHeader'
+      form_field: profile_image
+      model_field: ProfileImage
+      max_size_mb: 5
+      allowed_types:
+      - image/jpeg
+      - image/png
+      - image/webp
+      storage_path: uploads/profiles
+      filename_pattern: profile_{user_id}_{timestamp}
   email_password:
     enabled: true
     bcrypt_cost: 14
@@ -570,30 +530,16 @@ authentication:
       require_lowercase: true
       require_number: true
       require_special: true
-    email_verification:
-      enabled: true
-      require_on_registration: true
-      otp_length: 6
-      otp_expiry: 10m
-      model_field: Verified
-      rate_limit:
-        enabled: false
-        name: email_verification_rate_limit
-      middleware: []
-      endpoints:
-        - verify_email
-        - resend_verification
     forgot_password:
       enabled: true
       otp_expiry: 10m
+      repository_method: GetUserByEmailOrUsernameForgot
+      email_template: templates/password_reset.html
       rate_limit:
         enabled: false
         name: forgot_password_rate_limit
       middleware: []
       identifier_field: email_or_username
-      endpoints:
-        - forgot_password
-        - reset_password
     change_password:
       enabled: true
       require_old_password: true
@@ -601,12 +547,16 @@ authentication:
         enabled: false
         name: change_password_rate_limit
       middleware: []
-      endpoints:
-        - change_password
-    endpoints:
-      - register
-      - login
-
+  email_verification:
+    enabled: true
+    require_on_registration: true
+    otp_length: 6
+    otp_expiry: 10m
+    email_template: templates/email_verification.html
+    rate_limit:
+      enabled: false
+      name: email_verification_rate_limit
+    middleware: []
   social_auth:
     google:
       enabled: true
@@ -616,12 +566,13 @@ authentication:
       state: random
       success_redirect: /dashboard
       field_mapping:
-        - { source: email, target: Email, required: true }
-        - { source: name, target: Fullname, required: false }
-        - { source: picture, target: ProfileImage, required: false }
-        - { source: id, target: GoogleID, required: true, unique: true }
+      - source: name
+        target: Fullname
+        required: false
+      - source: picture
+        target: ProfileImage
+        required: false
       repository_method: GetUserByGoogleID
-      model_field: GoogleID
       endpoints:
         api:
           enabled: true
@@ -639,11 +590,10 @@ authentication:
       state: random
       success_redirect: /dashboard
       field_mapping:
-        - { source: email, target: Email, required: true }
-        - { source: name, target: Fullname, required: false }
-        - { source: id, target: FacebookID, required: true, unique: true }
+      - source: name
+        target: Fullname
+        required: false
       repository_method: GetUserByFacebookID
-      model_field: FacebookID
       endpoints:
         api:
           enabled: true
@@ -653,61 +603,67 @@ authentication:
           enabled: true
           login_path: /auth/facebook/login
           callback_path: /auth/facebook/callback
-
   refresh_token:
     enabled: true
     expiry: 168h
     rotate_on_refresh: true
-    store_in_db: false
     rate_limit:
       enabled: false
       name: refresh_token_rate_limit
     middleware: []
-    endpoints:
-      - refresh_token
-
   logout:
     enabled: true
     clear_tokens: true
-    endpoints:
-      - logout
-
   app_check_tokens:
-    - name: admin_token
-      algorithm: HS512
-      secret_key_env: ADMIN_TOKEN_SECRET
-      expiry_hours: 720
-      endpoint: generate_admin_token
-      middleware: [auth, admin]
-      claims:
-        - { name: user_id, type: uint, source: input }
-        - { name: role, type: string, source: input }
-        - { name: permissions, type: "[]string", source: input }
-    - name: api_token
-      algorithm: HS256
-      secret_key_env: API_TOKEN_SECRET
-      expiry_hours: 8760
-      endpoint: generate_api_token
-      middleware: [auth]
-      claims:
-        - { name: app_id, type: string, source: config, config_key: APP_ID }
-        - { name: scope, type: string, source: input }
-        - { name: environment, type: string, source: config, config_key: ENVIRONMENT }
-
+  - name: admin_token
+    algorithm: HS512
+    secret_key_env: ADMIN_TOKEN_SECRET
+    expiry_hours: 720
+    endpoint: generate_admin_token
+    middleware:
+    - auth
+    - admin
+    claims:
+    - name: user_id
+      type: uint
+      source: input
+    - name: role
+      type: string
+      source: input
+    - name: permissions
+      type: '[]string'
+      source: input
+  - name: api_token
+    algorithm: HS256
+    secret_key_env: API_TOKEN_SECRET
+    expiry_hours: 8760
+    endpoint: generate_api_token
+    middleware:
+    - auth
+    claims:
+    - name: app_id
+      type: string
+      source: config
+      config_key: APP_ID
+    - name: scope
+      type: string
+      source: input
+    - name: environment
+      type: string
+      source: config
+      config_key: ENVIRONMENT
   web_auth:
     enabled: true
     endpoints:
       login:
         enabled: true
         path: /auth/login
-        handler: LoginPage
         rate_limit:
           enabled: false
           name: login_rate_limit
       signup:
         enabled: true
         path: /auth/signup
-        handler: SignupPage
         middleware: []
         rate_limit:
           enabled: false
@@ -715,372 +671,268 @@ authentication:
       logout:
         enabled: true
         path: /auth/logout
-        handler: HandleLogout
         rate_limit:
           enabled: false
           name: logout_rate_limit
       verify_email:
         enabled: true
         path: /auth/verify
-        handler: VerifyEmailPage
-        middleware: [login]
+        middleware:
+        - login
         rate_limit:
           enabled: false
           name: verify_email_rate_limit
       forgot_password:
         enabled: true
         path: /auth/forgot-password
-        handler: ForgotPasswordPage
         rate_limit:
           enabled: false
           name: forgot_password_rate_limit
       reset_password:
         enabled: true
         path: /auth/reset-password
-        handler: HandleResetPassword
         rate_limit:
           enabled: false
           name: reset_password_rate_limit
-    social_auth:
-      google:
-        enabled: true
-      facebook:
-        enabled: true
-
-  
-# =============================================================================
-# MIDDLEWARE
-# =============================================================================
 middleware:
-  # Maintenance mode configuration
-
   maintenance:
     enabled: true
     mode_key_env: MAINTENANCE_MODE
     exclude_paths:
-      - /under-maintenance
-      - /static/
-      - /health
+    - /under-maintenance
+    - /static/
+    - /health
     redirect_path: /under-maintenance
-    api_error_code: "service_unavailable_maintenance"
-  # Database injection
-
+    api_error_code: service_unavailable_maintenance
   database:
     enabled: true
-    context_key: "db"
-  # ============================================
-  # GLOBAL MIDDLEWARE
-  # ============================================
-  
+    context_key: db
   cors:
     enabled: true
-    allow_origins: "*"
-    allow_headers: "Origin, Content-Type, Accept, Authorization"
-    allow_methods: "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+    allow_origins: '*'
+    allow_headers: Origin, Content-Type, Accept, Authorization
+    allow_methods: GET, POST, PUT, DELETE, OPTIONS, PATCH
     allow_credentials: true
-
   compression:
     enabled: true
     level: best_speed
-
   logging:
     enabled: true
     log_body: false
-
   csrf:
     enabled: true
     header: X-CSRFToken
     form_field: csrf_token
     cookie_name: csrf_
     same_site: Lax
-    expiration: "1 * time.Hour"
+    expiration: 1 * time.Hour
     context_key: csrf
-  # Global rate limiting
   rate_limit:
     enabled: true
-
-  # RBAC - Only enable if you have RBAC service
   rbac:
     enabled: true
-  # Dashboard - Only enable if you have:
-  #   - RBC Enable
-  #   - helpers.GetDashboardBasePath() function
   dashboard:
     enabled: true
-
-  # Web authentication
   web_auth:
     enabled: true
-    # Email verification - Only enable if you have:
-    #   - User model with: Email, Verified fields
-    #   - cache.GetUser() function
     email_verification_enabled: false
-    # Session keys
     session_keys:
-      authenticated: "authenticated"
-      user_id: "user_id"
-    # Redirect paths
+      authenticated: authenticated
+      user_id: user_id
     redirects:
-      login: "/login"
-      verify_email: "/auth/verify"
-      server_error: "/server-error"
-    # Paths excluded from verification check
+      login: /login
+      verify_email: /auth/verify
+      server_error: /server-error
     verify_exclude_paths:
-      - /auth/verify
-      - /auth/logout
-      - /auth/resend-verification
- # ============================================
-  # CONTEXT KEYS (Customize to match your naming)
-  # ============================================
-  
+    - /auth/verify
+    - /auth/logout
+    - /auth/resend-verification
   locals:
-    user_id: "user_id"
-    email: "email"
-    session: "session"
-    verified: "verified"
-    app_id: "app_id"
-    is_admin: "is_admin"
-    role: "role"
-  # ============================================
-  # MIDDLEWARE DEFINITIONS
-  # ============================================
-  
+    user_id: user_id
+    email: email
+    session: session
+    verified: verified
+    app_id: app_id
+    is_admin: is_admin
+    role: role
   definitions:
-    # ======================================
-    # SESSION AUTHENTICATION
-    # ======================================
-    
-    - name: web_session
-      type: session_auth
-      session_key: authenticated
-      redirect_on_fail: /login
-      description: "Session-based auth for web routes"
-    # ======================================
-    # JWT AUTHENTICATION
-    # Claims go inside each JWT definition!
-    # ======================================
-    
-    # Simple JWT with one claim
-    - name: simple_jwt
-      type: jwt
-      header_name: Authorization
+  - name: web_session
+    type: session_auth
+    session_key: authenticated
+    redirect_on_fail: /login
+    description: Session-based auth for web routes
+  - name: simple_jwt
+    type: jwt
+    header_name: Authorization
+    scheme: Bearer
+    secret_key_env: JWT_SECRET
+    algorithm: HS256
+    claims:
+    - name: user_id
+      type: uint
+      required: true
+    description: Simple JWT with user_id
+  - name: user_auth
+    type: jwt
+    header_name: Authorization
+    scheme: Bearer
+    secret_key_env: JWT_SECRET
+    algorithm: HS256
+    claims:
+    - name: user_id
+      type: uint
+      required: true
+    - name: email
+      type: string
+      required: true
+    - name: role
+      type: string
+      required: false
+    description: Full user JWT with typed claims
+  - name: secure_api
+    type: jwt
+    header_name: X-Auth-Token
+    scheme: Token
+    secret_key_env: JWT_SECRET_SECURE
+    algorithm: HS512
+    claims:
+    - name: user_id
+      type: uint
+      required: true
+    - name: tier
+      type: string
+      required: true
+    - name: is_premium
+      type: bool
+      required: false
+    description: High security API with HS512
+  - name: advanced_jwt
+    type: jwt
+    header_name: Authorization
+    scheme: Bearer
+    secret_key_env: JWT_SECRET
+    algorithm: HS256
+    claims:
+    - name: user_id
+      type: uint
+      required: true
+      context_key: current_user_id
+    - name: email
+      type: string
+      required: true
+    - name: balance
+      type: float64
+      required: false
+    - name: is_admin
+      type: bool
+      required: false
+    - name: roles
+      required: false
+    - name: metadata
+      required: false
+    description: Advanced JWT with many claim types
+  - name: flexible_jwt
+    type: jwt
+    header_name: Authorization
+    scheme: Bearer
+    secret_key_env: JWT_SECRET
+    description: Flexible JWT that extracts all claims
+  - name: api_key
+    type: api_key
+    header: X-API-Key
+    secret_key_env: API_KEY
+    description: API key authentication
+  - name: partner_key
+    type: api_key
+    header: X-Partner-Key
+    secret_key_env: PARTNER_API_KEY
+    description: Partner API key
+  - name: ip_rate_limit
+    type: rate_limit
+    max_requests: 100
+    window: 1m
+    key_generator: ip
+    description: IP-based rate limiting
+  - name: user_rate_limit
+    type: rate_limit
+    max_requests: 60
+    window: 1m
+    key_generator: user_id
+    description: User-based rate limiting
+  - name: api_key_rate_limit
+    type: rate_limit
+    max_requests: 1000
+    window: 1h
+    key_generator: api_key
+    description: High limit for API keys
+  - name: mobile_headers
+    type: header_check
+    description: Validate mobile app headers
+    required_headers:
+    - name: X-App-Version
+    - name: X-Platform
+    - name: X-Device-ID
+  - name: api_version
+    type: header_check
+    description: Validate API version
+    required_headers:
+    - name: X-API-Version
+      value: v2
+  - name: secure_endpoint
+    type: combined
+    description: API key + JWT
+    components:
+    - type: api_key
+      header: X-API-Key
+      secret_key_env: API_KEY
+    - type: jwt
+      header: Authorization
       scheme: Bearer
       secret_key_env: JWT_SECRET
-      algorithm: HS256
-      claims:
-        - name: user_id
-          type: uint
-          required: true
-      description: "Simple JWT with user_id"
-    # JWT with multiple typed claims
-
-    - name: user_auth
-      type: jwt
-      header_name: Authorization
+      claims_required:
+      - user_id
+  - name: multi_factor
+    type: combined
+    description: Multi-factor authentication
+    components:
+    - type: api_key
+      header: X-API-Key
+      secret_key_env: API_KEY
+    - type: signature
+      header: X-Request-Signature
+      algorithm: hmac_sha256
+      secret_key_env: SIGN_SECRET
+      timestamp_header: X-Timestamp
+      timestamp_window: 5m
+      signature_fields:
+      - X-Timestamp
+      - X-API-Key
+    - type: jwt
+      header: Authorization
       scheme: Bearer
       secret_key_env: JWT_SECRET
-      algorithm: HS256
-      claims:
-        - name: user_id
-          type: uint
-          required: true
-        - name: email
-          type: string
-          required: true
-        - name: role
-          type: string
-          required: false
-      description: "Full user JWT"
-    # High security JWT with HS512
-    - name: secure_api
-      type: jwt
-      header_name: X-Auth-Token
-      scheme: Token
-      secret_key_env: JWT_SECRET_SECURE
       algorithm: HS512
       claims:
-        - name: user_id
-          type: uint
-          required: true
-        
-        - name: tier
-          type: string
-          required: true
-        
-        - name: is_premium
-          type: bool
-          required: false
-      description: "High security API with HS512"
-       # Complex claims with different types
-    - name: advanced_jwt
-      type: jwt
-      header_name: Authorization
-      scheme: Bearer
-      secret_key_env: JWT_SECRET
-      algorithm: HS256
-      claims:
-        - name: user_id
-          type: uint
-          required: true
-          context_key: "current_user_id"  # Custom context key
-        
-        - name: email
-          type: string
-          required: true
-        
-        - name: balance
-          type: float64
-          required: false
-        
-        - name: is_admin
-          type: bool
-          required: false
-        
-        - name: roles
-          # No type = stores as-is (array, object, etc.)
-          required: false
-        
-        - name: metadata
-          # Can be any JSON structure
-          required: false
-      description: "Advanced JWT with many claim types"
-
-    # Flexible JWT - extracts ALL claims
-    - name: flexible_jwt
-      type: jwt
-      header_name: Authorization
-      scheme: Bearer
-      secret_key_env: JWT_SECRET
-      # No claims specified = extracts all claims from token
-      description: "Flexible JWT that extracts all claims"
-    # ======================================
-    # API KEY AUTHENTICATION
-    # ======================================
-    
-    - name: api_key
-      type: api_key
-      header: X-API-Key
-      secret_key_env: "API_KEY"
-      description: "API key authentication"
-    - name: partner_key
-      type: api_key
-      header: X-Partner-Key
-      secret_key_env: PARTNER_API_KEY
-      description: "Partner API key"
-    # ======================================
-    # RATE LIMITING
-    # ======================================
-    
-    - name: ip_rate_limit
-      type: rate_limit
-      max_requests: 100
-      window: 1m
-      key_generator: ip
-      description: "IP-based rate limiting"
-
-    - name: user_rate_limit
-      type: rate_limit
-      max_requests: 60
-      window: 1m
-      key_generator: user_id
-      description: "User-based rate limiting"
-    - name: api_key_rate_limit
-      type: rate_limit
-      max_requests: 1000
-      window: 1h
-      key_generator: api_key
-      description: "High limit for API keys"
-
-    # ======================================
-    # HEADER VALIDATION
-    # ======================================
-    
-    - name: mobile_headers
-      type: header_check
-      description: "Validate mobile app headers"
-      required_headers:
-        - name: X-App-Version
-        - name: X-Platform
-        - name: X-Device-ID
-
-    - name: api_version
-      type: header_check
-      description: "Validate API version"
-      required_headers:
-        - name: X-API-Version
-          value: "v2"
- 
-    # ======================================
-    # COMBINED AUTHENTICATION
-    # ======================================
-    
-    - name: secure_endpoint
-      type: combined
-      description: "API key + JWT"
-      components:
-        - type: api_key
-          header: X-API-Key
-          secret_key_env: API_KEY
-        
-        - type: jwt
-          header: Authorization
-          scheme: Bearer
-          secret_key_env: JWT_SECRET
-          claims_required: [user_id]  # Legacy format works in components
-
-    - name: multi_factor
-      type: combined
-      description: "Multi-factor authentication"
-      components:
-        - type: api_key
-          header: X-API-Key
-          secret_key_env: API_KEY
-        
-        - type: signature
-          header: X-Request-Signature
-          algorithm: hmac_sha256
-          secret_key_env: SIGN_SECRET
-          timestamp_header: X-Timestamp
-          timestamp_window: 5m
-          signature_fields: [X-Timestamp, X-API-Key]
-        
-        - type: jwt
-          header: Authorization
-          scheme: Bearer
-          secret_key_env: JWT_SECRET
-          algorithm: HS512     # ← Now supported!
-          claims:              # ← New format with types
-            - name: user_id
-              type: uint       # ← Optional but recommended
-              required: true
-            - name: email
-              type: string
-              required: true
-  
-  # ======================================
-  # CUSTOM MIDDLEWARES
-  # ======================================
+      - name: user_id
+        type: uint
+        required: true
+      - name: email
+        type: string
+        required: true
   custom:
-    - name: request_id
-      type: custom
-      handler: middleware.RequestIDMiddleware
-      description: "Adds unique request ID"
-
-# =============================================================================
-# WEBSOCKET
-# =============================================================================
+  - name: request_id
+    type: custom
+    handler: middleware.RequestIDMiddleware
+    description: Adds unique request ID
 websocket:
   enabled: true
-  handler_type: dedicated  # unified | dedicated
+  handler_type: dedicated
   path: /ws
-
   authentication:
     method: jwt
     jwt:
       secret_key_env: JWT_SECRET
-      algorithm: HS256 # HS256 | HS384 | HS512 | RS256 | RS384 | RS512 | ES256 | ES384 | ES512
-      # Claims configuration - Define which claims to extract
-
+      algorithm: HS256
       claims:
         user_id:
           claim_name: user_id
@@ -1096,12 +948,12 @@ websocket:
           required: false
       extraction:
         header: Authorization
-        header_prefix: "Bearer "
+        header_prefix: 'Bearer '
         query_param: token
-        cookie_name: ""
+        cookie_name: ''
     app_token:
       enabled: true
-      secret_key_env: APP_TOKEN
+      secret_key: APP_TOKEN
       header_name: X-App-Token
       query_param: app_token
       required: false
@@ -1110,10 +962,6 @@ websocket:
       validation_function: ValidateSession
     custom:
       function_name: CustomAuthHandler
-  # ──────────────────────────────────────────────────────────────────────────
-  # Connection Configuration
-  # ──────────────────────────────────────────────────────────────────────────
-  
   connection:
     read_buffer_size: 1024
     write_buffer_size: 1024
@@ -1123,283 +971,282 @@ websocket:
     pong_wait: 60
     ping_period: 54
     max_message_size: 512
-  # ──────────────────────────────────────────────────────────────────────────
-  # Presence Tracking - OPTIONAL
-  # ──────────────────────────────────────────────────────────────────────────
- 
   presence:
     enabled: true
     broadcast_on_connect: true
     broadcast_on_disconnect: true
     visibility: all
     custom_visibility_function: CheckPresenceVisibility
-    # Presence events
     events:
-      - name: user_online
-        broadcast_to: [admins, friends]
-        persist: false
-      - name: user_offline
-        broadcast_to: [admins]
-        persist: false
-  # ──────────────────────────────────────────────────────────────────────────
-  # Hub Configuration - Connection Pools
-  # ──────────────────────────────────────────────────────────────────────────
-  
+    - name: user_online
+      broadcast_to:
+      - admins
+      - friends
+      persist: false
+    - name: user_offline
+      broadcast_to:
+      - admins
+      persist: false
   hub:
     pools:
-      - name: admins
-        enabled: true
-        key_by: connection
-        auto_register: false
-        description: "Admin connections for support chat"
-      - name: users
-        enabled: true
-        key_by: user_id
-        auto_register: true
-        description: "Regular user connections"
-      - name: game_rooms
-        enabled: false
-        key_by: room_id
-        auto_register: false
-        description: "Game room connections"
-    # Broadcast Channels
-    
+    - name: admins
+      enabled: true
+      key_by: connection
+      auto_register: false
+      description: Admin connections for support chat
+    - name: users
+      enabled: true
+      key_by: user_id
+      auto_register: true
+      description: Regular user connections
+    - name: game_rooms
+      enabled: false
+      key_by: room_id
+      auto_register: false
+      description: Game room connections
     channels:
-      - name: broadcastAdmin
-        enabled: true
-        buffer_size: 100
-        drop_on_full: true # Drop messages if buffer full?
-        description: "Broadcast to all admins"
-      - name: broadcastUser
-        enabled: true
-        buffer_size: 100
-        drop_on_full: true
-        description: "Broadcast to specific users"
-      - name: broadcastStatus
-        enabled: true
-        buffer_size: 50
-        drop_on_full: false
-        description: "Presence status updates"
-      - name: broadcastNotify
-        enabled: true
-        buffer_size: 200
-        drop_on_full: true
-        description: "Notification broadcasts"
-  # ──────────────────────────────────────────────────────────────────────────
-  # Events Configuration - Define ANY Events
-  # ──────────────────────────────────────────────────────────────────────────
- 
+    - name: broadcastAdmin
+      enabled: true
+      buffer_size: 100
+      drop_on_full: true
+      description: Broadcast to all admins
+    - name: broadcastUser
+      enabled: true
+      buffer_size: 100
+      drop_on_full: true
+      description: Broadcast to specific users
+    - name: broadcastStatus
+      enabled: true
+      buffer_size: 50
+      drop_on_full: false
+      description: Presence status updates
+    - name: broadcastNotify
+      enabled: true
+      buffer_size: 200
+      drop_on_full: true
+      description: Notification broadcasts
   events:
-    - name: message_sent
+  - name: message_sent
+    enabled: true
+    handler_type: chat_message
+    broadcast_to:
+    - conversation
+    persist: true
+    requires_auth: true
+    rate_limit:
+      enabled: false
+      max_per_minute: 60
+    throttle:
+      enabled: false
+      delay_ms: 100
+  - name: game_move
+    enabled: true
+    handler_type: custom
+    custom_handler: handleGameMove
+    broadcast_to:
+    - room
+    persist: false
+    requires_auth: true
+    rate_limit:
       enabled: true
-      handler_type: chat_message
-      broadcast_to: [conversation]
-      persist: true
-      requires_auth: true
-      rate_limit:
-        enabled: false
-        max_per_minute: 60
-      throttle:
-        enabled: false
-        delay_ms: 100
-    - name: game_move
+      max_per_minute: 120
+  - name: metric_update
+    enabled: true
+    handler_type: custom
+    custom_handler: handleMetricUpdate
+    broadcast_to:
+    - all
+    persist: false
+    requires_auth: true
+  - name: location_update
+    enabled: true
+    handler_type: custom
+    custom_handler: handleLocationUpdate
+    broadcast_to:
+    - custom
+    custom_broadcast_function: BroadcastToNearby
+    persist: false
+    requires_auth: true
+    throttle:
       enabled: true
-      handler_type: custom
-      custom_handler: handleGameMove
-      broadcast_to: [room]
-      persist: false
-      requires_auth: true
-      rate_limit:
-        enabled: true
-        max_per_minute: 120
-    # Custom game event example
-    
-    - name: metric_update
-      enabled: true
-      handler_type: custom
-      custom_handler: handleMetricUpdate
-      broadcast_to: [all]
-      persist: false
-      requires_auth: true
-    # Dashboard metric update example
-    
-    - name: location_update
-      enabled: true
-      handler_type: custom
-      custom_handler: handleLocationUpdate
-      broadcast_to: [custom]
-      custom_broadcast_function: BroadcastToNearby
-      persist: false
-      requires_auth: true
-      throttle:
-        enabled: true
-        delay_ms: 500
-  # ──────────────────────────────────────────────────────────────────────────
-  # Rooms/Channels Support (Optional)
-  # ──────────────────────────────────────────────────────────────────────────
- 
+      delay_ms: 500
   rooms:
     enabled: false
     auto_join:
       enabled: false
-      pattern: "user_{user_id}"
+      pattern: user_{user_id}
     custom_rooms:
-      - name: lobby
-        auto_join: true
-      - name: game_{game_id}
-        auto_join: false
-
-# =============================================================================
-# CHAT
-# =============================================================================
+    - name: lobby
+      auto_join: true
+    - name: game_{game_id}
+      auto_join: false
 chat:
-  enabled: true
-  # ──────────────────────────────────────────────────────────────────────────
-  # Chat Modes - Enable/Disable Features
-  # ──────────────────────────────────────────────────────────────────────────
+  enabled: false
   modes:
-    support: false  # Admin-to-user support chat
-    user_to_user: true  # User-to-user messaging (OPTIONAL!)
-    group: false  # Group chat (future feature)
-  # ──────────────────────────────────────────────────────────────────────────
-  # Models Configuration - Define ANY Fields
-  # ──────────────────────────────────────────────────────────────────────────
- 
+    support: false
+    user_to_user: true
+    group: false
   models:
     conversation:
       enabled: true
       timestamps: true
       soft_delete: true
       fields:
-        - name: id
-          type: uint
-          primary_key: true
-          auto_increment: true
-          json_tag: id
-        - name: user_id
-          type: uint
-          required: true
-          index: true
-          json_tag: user_id
-          description: "Primary user in conversation"
-        - name: receiver_id
-          type: "*uint"
-          index: true
-          json_tag: receiver_id
-          description: "For user-to-user chat"
-        - name: status
-          type: string
-          gorm_type: varchar(20)
-          default: open
-          json_tag: status
-          validation:
-            enum: [open, closed, archived]
-        - name: conv_type
-          type: string
-          gorm_type: varchar(20)
-          default: chat
-          json_tag: conv_type
-          validation:
-            enum: [chat, support, group]
-        - name: is_read_only
-          type: bool
-          default: false
-          json_tag: is_read_only
-        - name: last_message
-          type: string
-          gorm_type: text
-          json_tag: last_message
-          required: false
-        - name: priority
-          type: string
-          gorm_type: varchar(10)
-          default: normal
-          json_tag: priority
-          validation:
-            enum: [low, normal, high, urgent]
-        - name: metadata
-          type: "*string"
-          gorm_type: json
-          json_tag: metadata
-        - name: tags
-          type: "*string"
-          gorm_type: json
-          json_tag: tags
+      - name: id
+        type: uint
+        primary_key: true
+        auto_increment: true
+        json_tag: id
+      - name: user_id
+        type: uint
+        required: true
+        index: true
+        json_tag: user_id
+        description: Primary user in conversation
+      - name: receiver_id
+        type: '*uint'
+        index: true
+        json_tag: receiver_id
+        description: For user-to-user chat (optional)
+      - name: status
+        type: string
+        gorm_type: varchar(20)
+        default: open
+        json_tag: status
+        validation:
+          enum:
+          - open
+          - closed
+          - archived
+      - name: conv_type
+        type: string
+        gorm_type: varchar(20)
+        default: chat
+        json_tag: conv_type
+        validation:
+          enum:
+          - chat
+          - support
+          - group
+      - name: is_read_only
+        type: bool
+        default: false
+        json_tag: is_read_only
+      - name: last_message
+        type: string
+        gorm_type: text
+        json_tag: last_message
+        required: false
+      - name: priority
+        type: string
+        gorm_type: varchar(10)
+        default: normal
+        json_tag: priority
+        validation:
+          enum:
+          - low
+          - normal
+          - high
+          - urgent
+      - name: metadata
+        type: '*string'
+        gorm_type: json
+        json_tag: metadata
+        description: Custom JSON metadata
+      - name: tags
+        type: '*string'
+        gorm_type: json
+        json_tag: tags
+        description: Tags for categorization
       relations:
-        - name: User
-          model: User
-          foreign_key: UserID
-          preload: true
-          has_many: false
-        - name: Receiver
-          model: User
-          foreign_key: ReceiverID
-          preload: true
-          has_many: false
-        - name: Messages
-          model: Message
-          foreign_key: ConversationID
-          preload: false
-          has_many: true
+      - name: User
+        model: User
+        foreign_key: UserID
+        preload: true
+        has_many: false
+      - name: Receiver
+        model: User
+        foreign_key: ReceiverID
+        preload: true
+        has_many: false
+      - name: Messages
+        model: Message
+        foreign_key: ConversationID
+        preload: false
+        has_many: true
       indexes:
-        - name: idx_user_receiver
-          fields: [user_id, receiver_id]
-          unique: false
-        - name: idx_status_type
-          fields: [status, conv_type]
-          unique: false
+      - name: idx_user_receiver
+        fields:
+        - user_id
+        - receiver_id
+        unique: false
+      - name: idx_status_type
+        fields:
+        - status
+        - conv_type
+        unique: false
     message:
       enabled: true
       timestamps: true
       soft_delete: true
       fields:
-        - name: id
-          type: uint
-          primary_key: true
-          auto_increment: true
-        - name: conversation_id
-          type: uint
-          required: true
-          index: true
-        - name: sender_id
-          type: uint
-          required: true
-          index: true
-        - name: sender_type
-          type: string
-          gorm_type: varchar(20)
-          default: user
-          validation:
-            enum: [user, admin, system]
-        - name: content
-          type: string
-          gorm_type: text
-          required: true
-        - name: is_read
-          type: bool
-          default: false
-        - name: search_data
-          type: "*string"
-          gorm_type: json
-        - name: attachments
-          type: "*string"
-          gorm_type: json
-        - name: reply_to_id
-          type: "*uint"
-          index: true
+      - name: id
+        type: uint
+        primary_key: true
+        auto_increment: true
+      - name: conversation_id
+        type: uint
+        required: true
+        index: true
+      - name: sender_id
+        type: uint
+        required: true
+        index: true
+      - name: sender_type
+        type: string
+        gorm_type: varchar(20)
+        default: user
+        validation:
+          enum:
+          - user
+          - admin
+          - system
+      - name: content
+        type: string
+        gorm_type: text
+        required: true
+      - name: is_read
+        type: bool
+        default: false
+      - name: search_data
+        type: '*string'
+        gorm_type: json
+        description: Search/location data for support
+      - name: attachments
+        type: '*string'
+        gorm_type: json
+        description: File attachments metadata
+      - name: reply_to_id
+        type: '*uint'
+        index: true
+        description: For threaded replies
       relations:
-        - name: Conversation
-          model: Conversation
-          foreign_key: ConversationID
-          preload: false
-        - name: Sender
-          model: User
-          foreign_key: SenderID
-          preload: true
+      - name: Conversation
+        model: Conversation
+        foreign_key: ConversationID
+        preload: false
+      - name: Sender
+        model: User
+        foreign_key: SenderID
+        preload: true
   repository:
     search_fields:
-      conversation: [status, conv_type, last_message]
-      message: [content]
+      conversation:
+      - status
+      - conv_type
+      - last_message
+      message:
+      - content
     default_sort:
       conversation:
         field: updated_at
@@ -1407,15 +1254,14 @@ chat:
       message:
         field: created_at
         order: asc
-    # Pagination
     pagination:
       default_limit: 20
       max_limit: 100
     custom_methods:
-      - name: FindActiveConversations
-        description: "Find all active conversations"
-      - name: FindUnreadMessages
-        description: "Find unread messages for user"
+    - name: FindActiveConversations
+      description: Find all active conversations
+    - name: FindUnreadMessages
+      description: Find unread messages for user
   controller:
     enabled: true
     base_path: /api/v1/chat
@@ -1424,22 +1270,26 @@ chat:
         enabled: true
         path: /conversations
         method: GET
-        middleware: ["auth"]
+        middleware:
+        - auth
       list_messages:
         enabled: true
         path: /conversations/:id/messages
         method: GET
-        middleware: ["auth"]
+        middleware:
+        - auth
       send_message:
         enabled: true
         path: /conversations/:id/messages
         method: POST
-        middleware: ["auth"]
+        middleware:
+        - auth
       mark_as_read:
         enabled: true
         path: /conversations/:id/read
         method: POST
-        middleware: ["auth"]
+        middleware:
+        - auth
     validation:
       message:
         content:
@@ -1452,8 +1302,10 @@ chat:
   web_handler:
     enabled: true
     base_path: /chat
+    template_dir: views/chat
     permission: chat.view
-    middleware: ["auth"]
+    middleware:
+    - auth
     context:
       needs_user: true
       needs_csrf: true
@@ -1468,111 +1320,135 @@ chat:
       enabled: true
       path: /send-message
       method: POST
-      permission: [chat.send]
-      middleware: ["auth"]
+      permission:
+      - chat.send
+      middleware:
+      - auth
     list_conversations:
       enabled: true
       path: /conversations
       method: GET
-      permission: [chat.view]
-      middleware: ["auth"]
+      permission:
+      - chat.view
+      middleware:
+      - auth
     list_messages:
       enabled: true
       path: /conversations/:id/messages
       method: GET
-      permission: [chat.view]
-      middleware: ["auth"]
+      permission:
+      - chat.view
+      middleware:
+      - auth
     mark_as_read:
       enabled: true
       path: /conversations/:id/read
       method: POST
-      permission: [chat.view]
-      middleware: ["auth"]
+      permission:
+      - chat.view
+      middleware:
+      - auth
     close_conversation:
       enabled: true
       path: /conversations/:id/close
       method: POST
-      permission: [chat.view]
-      middleware: ["auth"]
+      permission:
+      - chat.view
+      middleware:
+      - auth
     serach_user:
       enabled: true
       path: /search-user
       method: GET
-      permission: [chat.view]
-      middleware: ["auth"]
+      permission:
+      - chat.view
+      middleware:
+      - auth
   websocket:
     enabled: false
     path: /ws/chat
     admin_path: /ws/admin/chat
-
-# =============================================================================
-# NOTIFICATIONS
-# =============================================================================
 notifications:
   enabled: true
   model:
     timestamps: true
     soft_delete: true
     fields:
-      - name: id
-        type: uint
-        primary_key: true
-        auto_increment: true
-      - name: user_id
-        type: uint
-        required: true
-        index: true
-      - name: title
-        type: string
-        gorm_type: varchar(200)
-        required: true
-      - name: message
-        type: string
-        gorm_type: text
-        required: true
-      - name: type
-        type: string
-        gorm_type: varchar(50)
-        required: true
-        validation:
-          enum: [info, warning, error, success, chat, order, system]
-      - name: priority
-        type: string
-        gorm_type: varchar(10)
-        default: normal
-        validation:
-          enum: [low, normal, high, urgent]
-      - name: reference_id
-        type: "*uint"
-        index: true
-      - name: reference_type
-        type: "*string"
-        gorm_type: varchar(50)
-      - name: is_read
-        type: bool
-        default: false
-      - name: action_url
-        type: "*string"
-        gorm_type: varchar(500)
-      - name: metadata
-        type: "*string"
-        gorm_type: json
+    - name: id
+      type: uint
+      primary_key: true
+      auto_increment: true
+    - name: user_id
+      type: uint
+      required: true
+      index: true
+    - name: title
+      type: string
+      gorm_type: varchar(200)
+      required: true
+    - name: message
+      type: string
+      gorm_type: text
+      required: true
+    - name: type
+      type: string
+      gorm_type: varchar(50)
+      required: true
+      validation:
+        enum:
+        - info
+        - warning
+        - error
+        - success
+        - chat
+        - order
+        - system
+    - name: priority
+      type: string
+      gorm_type: varchar(10)
+      default: normal
+      validation:
+        enum:
+        - low
+        - normal
+        - high
+        - urgent
+    - name: reference_id
+      type: '*uint'
+      index: true
+      description: ID of related entity (order, conversation, etc)
+    - name: reference_type
+      type: '*string'
+      gorm_type: varchar(50)
+      description: Type of related entity
+    - name: is_read
+      type: bool
+      default: false
+    - name: action_url
+      type: '*string'
+      gorm_type: varchar(500)
+      description: URL to navigate on click
+    - name: metadata
+      type: '*string'
+      gorm_type: json
+      description: Additional custom data
     relations:
-      - name: User
-        model: User
-        foreign_key: UserID
-        preload: false
+    - name: User
+      model: User
+      foreign_key: UserID
+      preload: false
   repository:
     batch_operations: true
     custom_methods:
-      - name: MarkAllAsRead
-        description: "Mark all notifications as read for user"
-      - name: DeleteOldNotifications
-        description: "Delete notifications older than X days"
+    - name: MarkAllAsRead
+      description: Mark all notifications as read for user
+    - name: DeleteOldNotifications
+      description: Delete notifications older than X days
   controller:
     enabled: true
     base_path: /api/v1/notifications
-    middleware: ["auth"]
+    middleware:
+    - auth
     endpoints:
       list:
         enabled: true
@@ -1604,1764 +1480,1663 @@ notifications:
   websocket:
     enabled: false
   push:
-    enabled: true
-    triggers:
-      - event: notification_created
-        condition: user_offline
-        custom_condition_function: ""
-      - event: message_sent
-        condition: user_offline
-        custom_condition_function: ""
-  triggers:
-    - event: message_sent
-      condition: receiver_offline
-      notification:
-        type: chat
-        title_template: "New message from {sender_name}"
-        message_template: "{message_content}"
-        reference_type: conversation
-        reference_id_field: conversation_id
-    - event: order_created
-      condition: receiver_offline
-      notification:
-        type: order
-        title_template: "New order from {sender_name}"
-        message_template: "{message_content}"
-        reference_type: order
-        reference_id_field: order_id
-
-# =============================================================================
-# MODELS (repo_model_config.yaml)
-# =============================================================================
-# Enhanced Model Configuration with DTOs and Responses
-# This demonstrates the new features for dynamic create/update and responses
-
+    enabled: false
 models:
-  # ==========================================
-  # USER MODEL - Enhanced with DTOs and Responses
-  # ==========================================
-  - name: User
-    table_name: users
-    soft_delete:
-      enabled: true
-      include_hard_delete: true
-      include_restore: true
-    timestamps: true
-
-    file_upload_defaults:
-      storage_path: uploads/posts
-      max_size_mb: 5
-      allowed_types: [image/jpeg, image/png, image/webp]
-      required: false
-    
-    # Repository features
+- name: User
+  table_name: users
+  soft_delete:
+    enabled: true
+    include_hard_delete: true
+    include_restore: true
+  timestamps: true
+  file_upload_defaults:
+    storage_path: uploads/posts
+    max_size_mb: 5
+    allowed_types:
+    - image/jpeg
+    - image/png
+    - image/webp
+    required: false
+  pagination: true
+  filters:
+  - id
+  - email
+  - username
+  - role
+  - verified
+  - is_active
+  - search
+  sort_by:
+  - created_at
+  - updated_at
+  - fullname
+  - email
+  - username
+  - post_count
+  search_fields:
+  - fullname
+  - email
+  - username
+  - bio
+  default_sort_field: created_at
+  default_sort_order: desc
+  fields:
+  - name: ID
+    type: uint
+    gorm: primaryKey;autoIncrement
+    json: id
+  - name: Username
+    type: string
+    gorm: unique;not null;index
+    json: username
+    validate: required,min=3,max=50,alphanum
+  - name: Email
+    type: string
+    gorm: unique;not null;index
+    json: email
+    validate: required,email
+  - name: Password
+    type: string
+    gorm: not null
+    json: '-'
+  - name: Fullname
+    type: string
+    gorm: not null
+    json: fullname
+    validate: required,min=2,max=100
+  - name: Bio
+    type: '*string'
+    gorm: type:text;null
+    json: bio
+  - name: Avatar
+    type: string
+    gorm: default:'https://api.dicebear.com/7.x/avataaars/svg'
+    json: avatar
+  - name: Role
+    type: string
+    gorm: type:varchar(20);default:'user'
+    json: role
+    validate: oneof=user author editor admin
+  - name: Verified
+    type: bool
+    gorm: default:false
+    json: verified
+  - name: IsActive
+    type: bool
+    gorm: default:true
+    json: is_active
+  - name: PostCount
+    type: int
+    gorm: default:0
+    json: post_count
+  - name: FollowerCount
+    type: int
+    gorm: default:0
+    json: follower_count
+  relations:
+  - name: Posts
+    type: has_many
+    model: Post
+    foreign_key: AuthorID
+  create_dto:
+    enabled: true
+    fields:
+    - Username
+    - Email
+    - Password
+    - Fullname
+    - Bio
+    - Avatar
+    - Role
+    custom_fields: []
+  update_dto:
+    enabled: true
+    partial: true
+    fields:
+    - Username
+    - Email
+    - Fullname
+    - Bio
+    - Avatar
+    - Role
+    - IsActive
+    - Verified
+    custom_fields: []
+  dtos:
+  - name: RegisterUserRequest
+    type: create
+    enabled: true
+    fields:
+    - Username
+    - Email
+    - Password
+    - Fullname
+    custom_fields:
+    - name: ConfirmPassword
+      type: string
+      json: confirm_password
+      validate: required,eqfield=Password
+    file_fields: {}
+  - name: CreateUserByAdminRequest
+    type: create
+    enabled: true
+    fields:
+    - Username
+    - Email
+    - Password
+    - Fullname
+    - Avatar
+    - Bio
+    file_fields:
+      Avatar: file
+  - name: UpdateProfileRequest
+    type: update
+    partial: true
+    enabled: true
+    fields:
+    - Fullname
+    - Avatar
+    - Bio
+    file_fields:
+      Avatar: string
+  - name: UpdateAvatarRequest
+    type: update
+    partial: false
+    enabled: true
+    fields:
+    - Avatar
+    file_fields:
+      Avatar: file
+  - name: AdminUpdateUserRequest
+    type: update
+    partial: true
+    enabled: true
+    fields:
+    - Username
+    - Email
+    - Fullname
+    - Bio
+    custom_fields:
+    - name: Role
+      type: string
+      json: role
+      validate: omitempty,oneof=user admin moderator
+    - name: IsActive
+      type: bool
+      json: is_active
+  list_response:
+    enabled: true
+    fields:
+    - name: ID
+      type: uint
+      json_name: id
+      from_field: ID
+    - name: Username
+      type: string
+      json_name: username
+      from_field: Username
+    - name: Fullname
+      type: string
+      json_name: fullname
+      from_field: Fullname
+    - name: Avatar
+      type: string
+      json_name: avatar
+      from_field: Avatar
+    - name: Role
+      type: string
+      json_name: role
+      from_field: Role
+    - name: PostCount
+      type: int
+      json_name: post_count
+      from_field: PostCount
+    - name: FollowerCount
+      type: int
+      json_name: follower_count
+      from_field: FollowerCount
+    - name: CreatedAt
+      type: time.Time
+      json_name: created_at
+      from_field: CreatedAt
+    include_relations: []
+  detail_response:
+    enabled: true
+    fields:
+    - name: ID
+      type: uint
+      json_name: id
+      from_field: ID
+    - name: Username
+      type: string
+      json_name: username
+      from_field: Username
+    - name: Email
+      type: string
+      json_name: email
+      from_field: Email
+    - name: Fullname
+      type: string
+      json_name: fullname
+      from_field: Fullname
+    - name: Bio
+      type: '*string'
+      json_name: bio
+      from_field: Bio
+      omitempty: true
+    - name: Avatar
+      type: string
+      json_name: avatar
+      from_field: Avatar
+    - name: Role
+      type: string
+      json_name: role
+      from_field: Role
+    - name: Verified
+      type: bool
+      json_name: verified
+      from_field: Verified
+    - name: IsActive
+      type: bool
+      json_name: is_active
+      from_field: IsActive
+    - name: PostCount
+      type: int
+      json_name: post_count
+      from_field: PostCount
+    - name: FollowerCount
+      type: int
+      json_name: follower_count
+      from_field: FollowerCount
+    - name: CreatedAt
+      type: time.Time
+      json_name: created_at
+      from_field: CreatedAt
+    - name: UpdatedAt
+      type: time.Time
+      json_name: updated_at
+      from_field: UpdatedAt
+    include_relations:
+    - name: Posts
+      response_type: nested_list
+      response_struct: PostListItem
+      json_name: posts
+  controller:
+    enabled: true
+    base_path: /api/users
+    middleware:
+    - auth
+    tag: Users
+    crud_settings:
+      create:
+        enabled: true
+        method: POST
+        dto: CreateUserByAdminRequest
+        response: detail
+        ownership:
+          enabled: false
+        validation:
+          use_validator: true
+      get:
+        enabled: true
+        response: detail
+        ownership:
+          enabled: false
+      update:
+        enabled: true
+        method: PATCH
+        dto: AdminUpdateUserRequest
+        response: detail
+        ownership:
+          enabled: false
+        validation:
+          use_validator: true
+      delete:
+        enabled: true
+        hard_delete: false
+        ownership:
+          enabled: false
+      batch_delete:
+        enabled: true
+        ownership_check: false
+        hard_delete: false
+  custom_getters:
+  - name: GetByEmail
+    fields:
+    - email
+    field_types:
+    - string
+    unique: true
+    response_type: detail
+    preloads:
+    - name: Posts
+      select_fields:
+      - id
+      - title
+      - slug
+      - status
+      - published_at
+      order_by: published_at DESC
+      limit: 10
+  - name: GetByUsername
+    fields:
+    - username
+    field_types:
+    - string
+    unique: true
+    response_type: detail
+  - name: GetActiveAuthors
+    fields: []
+    field_types: []
+    unique: false
     pagination: true
-    filters: [id, email, username, role, verified, is_active, search]
-    sort_by: [created_at, updated_at, fullname, email, username, post_count]
-    search_fields: [fullname, email, username, bio]
-    default_sort_field: created_at
+    response_type: list
+    filters:
+    - role
+    - verified
+    - search
+    sort_by:
+    - post_count
+    - follower_count
+    - created_at
+    default_sort_field: post_count
     default_sort_order: desc
-    
+    controller:
+      enabled: true
+      path: /api/users/authors
+      method: GET
+      middleware: []
+      description: Get active authors with pagination
+      query_params:
+      - name: role
+        type: string
+        default: author
+      - name: verified
+        type: bool
+- name: Post
+  table_name: posts
+  soft_delete: true
+  timestamps: true
+  pagination: true
+  filters:
+  - id
+  - author_id
+  - category_id
+  - status
+  - featured
+  - search
+  sort_by:
+  - created_at
+  - updated_at
+  - published_at
+  - view_count
+  - like_count
+  search_fields:
+  - title
+  - excerpt
+  - content
+  fields:
+  - name: ID
+    type: uint
+    gorm: primaryKey;autoIncrement
+    json: id
+  - name: Title
+    type: string
+    gorm: not null;index
+    json: title
+    validate: required,min=5,max=200
+  - name: Slug
+    type: string
+    gorm: unique;not null;index
+    json: slug
+    validate: required,slug
+  - name: Excerpt
+    type: '*string'
+    gorm: type:text;null
+    json: excerpt
+  - name: Content
+    type: string
+    gorm: type:text;not null
+    json: content
+    validate: required
+  - name: FeaturedImage
+    type: '*string'
+    gorm: 'null'
+    json: featured_image
+  - name: AuthorID
+    type: uint
+    gorm: not null;index
+    json: author_id
+  - name: CategoryID
+    type: '*uint'
+    gorm: null;index
+    json: category_id
+  - name: Status
+    type: string
+    gorm: type:varchar(20);default:'draft'
+    json: status
+    validate: oneof=draft published archived
+  - name: Featured
+    type: bool
+    gorm: default:false;index
+    json: featured
+  - name: PublishedAt
+    type: '*time.Time'
+    gorm: index
+    json: published_at
+  - name: ViewCount
+    type: int
+    gorm: default:0
+    json: view_count
+  - name: LikeCount
+    type: int
+    gorm: default:0
+    json: like_count
+  - name: CommentCount
+    type: int
+    gorm: default:0
+    json: comment_count
+  relations:
+  - name: Author
+    type: belongs_to
+    model: User
+    foreign_key: AuthorID
+  - name: Category
+    type: belongs_to
+    model: Category
+    foreign_key: CategoryID
+  - name: Comments
+    type: has_many
+    model: Comment
+    foreign_key: PostID
+  - name: Tags
+    type: many_to_many
+    model: Tag
+    join_table: post_tags
+  dtos:
+  - name: CreateDraftRequest
+    type: create
     fields:
-      - name: ID
-        type: uint
-        gorm: "primaryKey;autoIncrement"
-        json: "id"
-      
-      - name: Username
-        type: string
-        gorm: "unique;not null;index"
-        json: "username"
-        validate: "required,min=3,max=50,alphanum"
-      
-      - name: Email
-        type: string
-        gorm: "unique;not null;index"
-        json: "email"
-        validate: "required,email"
-      
-      - name: Password
-        type: string
-        gorm: "not null"
-        json: "-"
-      
-      - name: Fullname
-        type: string
-        gorm: "not null"
-        json: "fullname"
-        validate: "required,min=2,max=100"
-      
-      - name: Bio
-        type: "*string"
-        gorm: "type:text;null"
-        json: "bio"
-      
-      - name: Avatar
-        type: string
-        gorm: "default:'https://api.dicebear.com/7.x/avataaars/svg'"
-        json: "avatar"
-      
-      - name: Role
-        type: string
-        gorm: "type:varchar(20);default:'user'"
-        json: "role"
-        validate: "oneof=user author editor admin"
-      
-      - name: Verified
-        type: bool
-        gorm: "default:false"
-        json: "verified"
-      
-      - name: IsActive
-        type: bool
-        gorm: "default:true"
-        json: "is_active"
-      
-      - name: PostCount
-        type: int
-        gorm: "default:0"
-        json: "post_count"
-      
-      - name: FollowerCount
-        type: int
-        gorm: "default:0"
-        json: "follower_count"
-    
-    relations:
+    - Title
+    - Content
+    file_fields: {}
+  - name: CreatePostRequest
+    type: create
+    fields:
+    - Title
+    - Content
+    - FeaturedImage
+    - Status
+    file_fields:
+      FeaturedImage: file
+  - name: CreatePostWithURLRequest
+    type: create
+    fields:
+    - Title
+    - Content
+    - FeaturedImage
+    - Status
+    file_fields:
+      FeaturedImage: string
+  - name: UpdateContentRequest
+    type: update
+    partial: true
+    fields:
+    - Title
+    - Content
+  - name: UpdateFeaturedImageRequest
+    type: update
+    partial: false
+    fields:
+    - FeaturedImage
+    file_fields:
+      FeaturedImage: file
+  - name: PublishPostRequest
+    type: update
+    partial: true
+    fields:
+    - Status
+    custom_fields:
+    - name: PublishAt
+      type: '*time.Time'
+      json: publish_at
+      validate: omitempty
+  list_response:
+    enabled: true
+    fields:
+    - name: ID
+      type: uint
+      json_name: id
+      from_field: ID
+    - name: Title
+      type: string
+      json_name: title
+      from_field: Title
+    - name: Slug
+      type: string
+      json_name: slug
+      from_field: Slug
+    - name: Excerpt
+      type: '*string'
+      json_name: excerpt
+      from_field: Excerpt
+      omitempty: true
+    - name: FeaturedImage
+      type: '*string'
+      json_name: featured_image
+      from_field: FeaturedImage
+      omitempty: true
+    - name: Status
+      type: string
+      json_name: status
+      from_field: Status
+    - name: Featured
+      type: bool
+      json_name: featured
+      from_field: Featured
+    - name: ViewCount
+      type: int
+      json_name: view_count
+      from_field: ViewCount
+    - name: LikeCount
+      type: int
+      json_name: like_count
+      from_field: LikeCount
+    - name: PublishedAt
+      type: '*time.Time'
+      json_name: published_at
+      from_field: PublishedAt
+      omitempty: true
+    - name: CreatedAt
+      type: time.Time
+      json_name: created_at
+      from_field: CreatedAt
+    include_relations:
+    - name: Author
+      response_type: nested_detail
+      response_struct: UserListItem
+      json_name: author
+      foreign_key: AuthorID
+    - name: Category
+      response_type: nested_detail
+      response_struct: CategoryListItem
+      json_name: category
+      foreign_key: CategoryID
+  detail_response:
+    enabled: true
+    fields:
+    - name: ID
+      type: uint
+      json_name: id
+      from_field: ID
+    - name: Title
+      type: string
+      json_name: title
+      from_field: Title
+    - name: Slug
+      type: string
+      json_name: slug
+      from_field: Slug
+    - name: Excerpt
+      type: '*string'
+      json_name: excerpt
+      from_field: Excerpt
+      omitempty: true
+    - name: Content
+      type: string
+      json_name: content
+      from_field: Content
+    - name: FeaturedImage
+      type: '*string'
+      json_name: featured_image
+      from_field: FeaturedImage
+      omitempty: true
+    - name: Status
+      type: string
+      json_name: status
+      from_field: Status
+    - name: Featured
+      type: bool
+      json_name: featured
+      from_field: Featured
+    - name: ViewCount
+      type: int
+      json_name: view_count
+      from_field: ViewCount
+    - name: LikeCount
+      type: int
+      json_name: like_count
+      from_field: LikeCount
+    - name: CommentCount
+      type: int
+      json_name: comment_count
+      from_field: CommentCount
+    - name: PublishedAt
+      type: '*time.Time'
+      json_name: published_at
+      from_field: PublishedAt
+      omitempty: true
+    - name: CreatedAt
+      type: time.Time
+      json_name: created_at
+      from_field: CreatedAt
+    - name: UpdatedAt
+      type: time.Time
+      json_name: updated_at
+      from_field: UpdatedAt
+    include_relations:
+    - name: Author
+      response_type: nested_detail
+      response_struct: UserListItem
+      json_name: author
+      foreign_key: AuthorID
+    - name: Category
+      response_type: nested_detail
+      response_struct: CategoryListItem
+      json_name: category
+      foreign_key: CategoryID
+    - name: Comments
+      response_type: nested_list
+      response_struct: CommentListItem
+      json_name: comments
+    - name: Tags
+      response_type: nested_list
+      response_struct: TagListItem
+      json_name: tags
+  custom_getters:
+  - name: GetBySlug
+    fields:
+    - slug
+    field_types:
+    - string
+    unique: true
+    response_type: detail
+    preloads:
+    - name: Author
+      select_fields:
+      - id
+      - username
+      - fullname
+      - avatar
+      nested_relations:
       - name: Posts
-        type: has_many
-        model: Post
-        foreign_key: AuthorID
-    
-     # ==========================================
-    # Multiple DTOs - Define as many as you need!
-    # ==========================================
-
-    # ==========================================
-    # DTO Configuration - Specify fields for create/update
-    # ==========================================
-    create_dto:
-      enabled: true
-      fields:
-        - Username
-        - Email
-        - Password
-        - Fullname
-        - Bio        # Optional fields are automatically made pointers
-        - Avatar
-        - Role
-      custom_fields: []  # Add fields not in model if needed
-    
-    update_dto:
-      enabled: true
-      partial: true  # All fields optional (wrapped in pointers)
-      fields:
-        - Username
-        - Email
-        - Fullname
-        - Bio
-        - Avatar
-        - Role
-        - IsActive
-        - Verified
-      custom_fields: []
-    dtos:
-      # 1. Registration DTO - User signs up
-      - name: RegisterUserRequest
-        type: create
-        enabled: true
-        fields:
-          - Username
-          - Email
-          - Password
-          - Fullname
-        custom_fields:
-          - name: ConfirmPassword
-            type: string
-            json: confirm_password
-            validate: "required,eqfield=Password"
-        file_fields: {}
-      
-      # 2. Create by Admin DTO - Admin creates user with avatar upload
-      - name: CreateUserByAdminRequest
-        type: create
-        enabled: true
-        fields:
-          - Username
-          - Email
-          - Password
-          - Fullname
-          - Avatar
-          - Bio
-        file_fields:
-          Avatar: file  # This field becomes *multipart.FileHeader
-      
-      # 3. Update Profile DTO - User updates their profile (string URL)
-      - name: UpdateProfileRequest
-        type: update
-        partial: true
-        enabled: true
-        fields:
-          - Fullname
-          - Avatar  # String URL (uploaded to frontend, stored in S3/CDN)
-          - Bio
-        file_fields:
-          Avatar: string  # String URL, not file upload
-      
-      # 4. Update Avatar DTO - Upload new avatar file
-      - name: UpdateAvatarRequest
-        type: update
-        partial: false  # Not partial - avatar is required
-        enabled: true
-        fields:
-          - Avatar
-        file_fields:
-          Avatar: file  # File upload to backend
-      
-      # 5. Admin Update DTO - Admin updates user
-      - name: AdminUpdateUserRequest
-        type: update
-        partial: true
-        enabled: true
-        fields:
-          - Username
-          - Email
-          - Fullname
-          - Bio
-        custom_fields:
-          - name: Role
-            type: string
-            json: role
-            validate: "omitempty,oneof=user admin moderator"
-          - name: IsActive
-            type: bool
-            json: is_active
-
-    
-    # ==========================================
-    # Response Configuration
-    # ==========================================
-    list_response:
-      enabled: true
-      fields:
-        - name: ID
-          type: uint
-          json_name: id
-          from_field: ID
-        - name: Username
-          type: string
-          json_name: username
-          from_field: Username
-        - name: Fullname
-          type: string
-          json_name: fullname
-          from_field: Fullname
-        - name: Avatar
-          type: string
-          json_name: avatar
-          from_field: Avatar
-        - name: Role
-          type: string
-          json_name: role
-          from_field: Role
-        - name: PostCount
-          type: int
-          json_name: post_count
-          from_field: PostCount
-        - name: FollowerCount
-          type: int
-          json_name: follower_count
-          from_field: FollowerCount
-        - name: CreatedAt
-          type: time.Time
-          json_name: created_at
-          from_field: CreatedAt
-      include_relations: []
-    
-    detail_response:
-      enabled: true
-      fields:
-        - name: ID
-          type: uint
-          json_name: id
-          from_field: ID
-        - name: Username
-          type: string
-          json_name: username
-          from_field: Username
-        - name: Email
-          type: string
-          json_name: email
-          from_field: Email
-        - name: Fullname
-          type: string
-          json_name: fullname
-          from_field: Fullname
-        - name: Bio
-          type: "*string"
-          json_name: bio
-          from_field: Bio
-          omitempty: true
-        - name: Avatar
-          type: string
-          json_name: avatar
-          from_field: Avatar
-        - name: Role
-          type: string
-          json_name: role
-          from_field: Role
-        - name: Verified
-          type: bool
-          json_name: verified
-          from_field: Verified
-        - name: IsActive
-          type: bool
-          json_name: is_active
-          from_field: IsActive
-        - name: PostCount
-          type: int
-          json_name: post_count
-          from_field: PostCount
-        - name: FollowerCount
-          type: int
-          json_name: follower_count
-          from_field: FollowerCount
-        - name: CreatedAt
-          type: time.Time
-          json_name: created_at
-          from_field: CreatedAt
-        - name: UpdatedAt
-          type: time.Time
-          json_name: updated_at
-          from_field: UpdatedAt
-      include_relations:
-        - name: Posts
-          response_type: nested_list
-          response_struct: PostListItem
-          json_name: posts
-    
-    # ==========================================
-    # Controller Configuration
-    # ==========================================
+        select_fields:
+        - id
+        - title
+        - slug
+        order_by: created_at DESC
+        limit: 5
+    - name: Category
+      select_fields:
+      - id
+      - name
+      - slug
+    - name: Tags
+      select_fields:
+      - id
+      - name
+      - slug
+      order_by: name ASC
     controller:
       enabled: true
-      base_path: /api/users
-      middleware: [auth]
-      tag: Users
-      crud_settings:
-        create:
-          enabled: true
-          method: POST
-          dto: CreateUserByAdminRequest   # which DTO to use
-          response: detail                # detail | list | success | CustomStructName
-          ownership:
-            enabled: false
-          validation:
-            use_validator: true
-        get:
-          enabled: true
-          response: detail
-          ownership:
-            enabled: false
-        update:
-          enabled: true
-          method: PATCH
-          dto: AdminUpdateUserRequest
-          response: detail
-          ownership:
-            enabled: false
-          validation:
-            use_validator: true
-        delete:
-          enabled: true
-          hard_delete: false
-          ownership:
-            enabled: false
-        batch_delete:
-          enabled: true
-          ownership_check: false
-          hard_delete: false
-
-    # Custom getter controller settings — add 'controller:' block inside each getter
-    custom_getters:
-      - name: GetByEmail
-        fields: [email]
-        field_types: [string]
-        unique: true
-        response_type: detail  # Uses detail_response
-        preloads:
-          - name: Posts
-            select_fields: [id, title, slug, status, published_at]
-            order_by: "published_at DESC"
-            limit: 10
-      
-      - name: GetByUsername
-        fields: [username]
-        field_types: [string]
-        unique: true
-        response_type: detail
-      
-      - name: GetActiveAuthors
-        fields: []
-        field_types: []
-        unique: false
-        pagination: true
-        response_type: list  # Uses list_response
-        filters: [role, verified, search]
-        sort_by: [post_count, follower_count, created_at]
-        default_sort_field: post_count
-        default_sort_order: desc
-        controller:
-          enabled: true
-          path: /api/users/authors
-          method: GET
-          middleware: []
-          description: "Get active authors with pagination"
-          query_params:
-            - name: role
-              type: string
-              default: "author"
-            - name: verified
-              type: bool
-
-  # ==========================================
-  # POST MODEL - With nested responses
-  # ==========================================
-  - name: Post
-    table_name: posts
-    soft_delete: true
-    timestamps: true
-    
-    pagination: true
-    filters: [id, author_id, category_id, status, featured, search]
-    sort_by: [created_at, updated_at, published_at, view_count, like_count]
-    search_fields: [title, excerpt, content]
-    
+      path: /api/posts/:slug
+      method: GET
+      middleware: []
+      description: Get post by slug with author, category and tags
+  - name: GetBySlugWithComments
     fields:
-      - name: ID
-        type: uint
-        gorm: "primaryKey;autoIncrement"
-        json: "id"
-      
-      - name: Title
-        type: string
-        gorm: "not null;index"
-        json: "title"
-        validate: "required,min=5,max=200"
-      
-      - name: Slug
-        type: string
-        gorm: "unique;not null;index"
-        json: "slug"
-        validate: "required,slug"
-      
-      - name: Excerpt
-        type: "*string"
-        gorm: "type:text;null"
-        json: "excerpt"
-      
-      - name: Content
-        type: string
-        gorm: "type:text;not null"
-        json: "content"
-        validate: "required"
-      
-      - name: FeaturedImage
-        type: "*string"
-        gorm: "null"
-        json: "featured_image"
-      
-      - name: AuthorID
-        type: uint
-        gorm: "not null;index"
-        json: "author_id"
-      
-      - name: CategoryID
-        type: "*uint"
-        gorm: "null;index"
-        json: "category_id"
-      
-      - name: Status
-        type: string
-        gorm: "type:varchar(20);default:'draft'"
-        json: "status"
-        validate: "oneof=draft published archived"
-      
-      - name: Featured
-        type: bool
-        gorm: "default:false;index"
-        json: "featured"
-      
-      - name: PublishedAt
-        type: "*time.Time"
-        gorm: "index"
-        json: "published_at"
-      
-      - name: ViewCount
-        type: int
-        gorm: "default:0"
-        json: "view_count"
-      
-      - name: LikeCount
-        type: int
-        gorm: "default:0"
-        json: "like_count"
-      
-      - name: CommentCount
-        type: int
-        gorm: "default:0"
-        json: "comment_count"
-    
-    relations:
-      - name: Author
-        type: belongs_to
-        model: User
-        foreign_key: AuthorID
-      
-      - name: Category
-        type: belongs_to
-        model: Category
-        foreign_key: CategoryID
-      
-      - name: Comments
-        type: has_many
-        model: Comment
-        foreign_key: PostID
-      
-      - name: Tags
-        type: many_to_many
-        model: Tag
-        join_table: post_tags
-    
-    dtos:
-      # 1. Quick Draft DTO - Just title and content
-      - name: CreateDraftRequest
-        type: create
-        fields:
-          - Title
-          - Content
-        file_fields: {}
-      
-      # 2. Full Post DTO - With image upload
-      - name: CreatePostRequest
-        type: create
-        fields:
-          - Title
-          - Content
-          - FeaturedImage
-          - Status
-        file_fields:
-          FeaturedImage: file  # Upload image file
-      
-      # 3. Post with URL DTO - Image already uploaded to CDN
-      - name: CreatePostWithURLRequest
-        type: create
-        fields:
-          - Title
-          - Content
-          - FeaturedImage  # Image URL from frontend
-          - Status
-        file_fields:
-          FeaturedImage: string  # String URL
-      
-      # 4. Update Content Only
-      - name: UpdateContentRequest
-        type: update
-        partial: true
-        fields:
-          - Title
-          - Content
-      
-      # 5. Update Featured Image (file upload)
-      - name: UpdateFeaturedImageRequest
-        type: update
-        partial: false
-        fields:
-          - FeaturedImage
-        file_fields:
-          FeaturedImage: file
-      
-      # 6. Publish Post
-      - name: PublishPostRequest
-        type: update
-        partial: true
-        fields:
-          - Status
-        custom_fields:
-          - name: PublishAt
-            type: "*time.Time"
-            json: publish_at
-            validate: "omitempty"
-
-    # List response - minimal info
-    list_response:
-      enabled: true
-      fields:
-        - name: ID
-          type: uint
-          json_name: id
-          from_field: ID
-        - name: Title
-          type: string
-          json_name: title
-          from_field: Title
-        - name: Slug
-          type: string
-          json_name: slug
-          from_field: Slug
-        - name: Excerpt
-          type: "*string"
-          json_name: excerpt
-          from_field: Excerpt
-          omitempty: true
-        - name: FeaturedImage
-          type: "*string"
-          json_name: featured_image
-          from_field: FeaturedImage
-          omitempty: true
-        - name: Status
-          type: string
-          json_name: status
-          from_field: Status
-        - name: Featured
-          type: bool
-          json_name: featured
-          from_field: Featured
-        - name: ViewCount
-          type: int
-          json_name: view_count
-          from_field: ViewCount
-        - name: LikeCount
-          type: int
-          json_name: like_count
-          from_field: LikeCount
-        - name: PublishedAt
-          type: "*time.Time"
-          json_name: published_at
-          from_field: PublishedAt
-          omitempty: true
-        - name: CreatedAt
-          type: time.Time
-          json_name: created_at
-          from_field: CreatedAt
-      include_relations:
-        - name: Author
-          response_type: nested_detail
-          response_struct: UserListItem
-          json_name: author
-          foreign_key: AuthorID
-        - name: Category
-          response_type: nested_detail
-          response_struct: CategoryListItem
-          json_name: category
-          foreign_key: CategoryID
-    
-    # Detail response - full info with relations
-    detail_response:
-      enabled: true
-      fields:
-        - name: ID
-          type: uint
-          json_name: id
-          from_field: ID
-        - name: Title
-          type: string
-          json_name: title
-          from_field: Title
-        - name: Slug
-          type: string
-          json_name: slug
-          from_field: Slug
-        - name: Excerpt
-          type: "*string"
-          json_name: excerpt
-          from_field: Excerpt
-          omitempty: true
-        - name: Content
-          type: string
-          json_name: content
-          from_field: Content
-        - name: FeaturedImage
-          type: "*string"
-          json_name: featured_image
-          from_field: FeaturedImage
-          omitempty: true
-        - name: Status
-          type: string
-          json_name: status
-          from_field: Status
-        - name: Featured
-          type: bool
-          json_name: featured
-          from_field: Featured
-        - name: ViewCount
-          type: int
-          json_name: view_count
-          from_field: ViewCount
-        - name: LikeCount
-          type: int
-          json_name: like_count
-          from_field: LikeCount
-        - name: CommentCount
-          type: int
-          json_name: comment_count
-          from_field: CommentCount
-        - name: PublishedAt
-          type: "*time.Time"
-          json_name: published_at
-          from_field: PublishedAt
-          omitempty: true
-        - name: CreatedAt
-          type: time.Time
-          json_name: created_at
-          from_field: CreatedAt
-        - name: UpdatedAt
-          type: time.Time
-          json_name: updated_at
-          from_field: UpdatedAt
-      include_relations:
-        - name: Author
-          response_type: nested_detail
-          response_struct: UserListItem
-          json_name: author
-          foreign_key: AuthorID
-        - name: Category
-          response_type: nested_detail
-          response_struct: CategoryListItem
-          json_name: category
-          foreign_key: CategoryID
-        - name: Comments
-          response_type: nested_list
-          response_struct: CommentListItem
-          json_name: comments
-        - name: Tags
-          response_type: nested_list
-          response_struct: TagListItem
-          json_name: tags
-    
-    custom_getters:
-      - name: GetBySlug
-        fields: [slug]
-        field_types: [string]
-        unique: true
-        response_type: detail
-        preloads:
-          - name: Author
-            select_fields: [id, username, fullname, avatar]
-            nested_relations:
-              - name: Posts
-                select_fields: [id, title, slug]
-                order_by: "created_at DESC"
-                limit: 5
-          - name: Category
-            select_fields: [id, name, slug]
-          - name: Tags
-            select_fields: [id, name, slug]
-            order_by: "name ASC"
-        controller:
-          enabled: true
-          path: /api/posts/:slug
-          method: GET
-          middleware: []
-          description: "Get post by slug with author, category and tags"
-
-      - name: GetBySlugWithComments
-        fields: [slug]
-        field_types: [string]
-        unique: true
-        response_type: detail
-        preloads:
-          - name: Author
-            select_fields: [id, username, fullname, avatar]
-          - name: Comments
-            order_by: "created_at DESC"
-            limit: 20
-        controller:
-          enabled: false   # disabled — use GetBySlug instead
-
-      - name: GetFewFieldPosts
-        fields: []
-        field_types: []
-        unique: false
-        pagination: true
-        response_type: list
-        filters: [author_id, category_id, featured, search]
-        sort_by: [published_at, view_count, like_count]
-        default_sort_field: published_at
-        default_sort_order: desc
-        select_fields:
-          - Title
-          - Slug
-        controller:
-          enabled: false   # internal use only
-
-      - name: GetPublishedPosts
-        fields: []
-        field_types: []
-        unique: false
-        pagination: true
-        response_type: list
-        filters: [author_id, category_id, featured, search]
-        sort_by: [published_at, view_count, like_count]
-        default_sort_field: published_at
-        default_sort_order: desc
-        select_fields:
-          - ID
-          - Title
-        preloads:
-          - name: Author
-            select_fields: [id, username, fullname, avatar]
-          - name: Category
-            select_fields: [id, name, slug, color]
-            order_by: "name ASC"
-        controller:
-          enabled: true
-          path: /api/posts/published
-          method: GET
-          middleware: []
-          description: "Get published posts with pagination and filters"
-          query_params:
-            - name: status
-              type: enum
-              values: ["draft", "published", "archived"]
-              default: "published"
-            - name: featured
-              type: bool
-            - name: created_from
-              type: date
-              format: "2006-01-02"
-            - name: created_to
-              type: date
-              format: "2006-01-02"
-
-      - name: GetPostsByAuthor
-        fields: [author_id]
-        field_types: [uint]
-        unique: false
-        pagination: true
-        response_type: list
-        filters: [status, category_id]
-        sort_by: [published_at, view_count]
-        default_sort_field: published_at
-        default_sort_order: desc
-        controller:
-          enabled: true
-          rate_limit:
-            enabled: false
-            name: post_rate_limit
-          path: /api/users/:author_id/posts
-          method: GET
-          middleware: []
-          description: "Get posts by a specific author"
-          ownership:
-            enabled: false
-      - name: GetUserPosts
-        fields: [AuthorID]
-        unique: false
-        pagination: true
-        
-        # API Controller
-        controller:
-          enabled: true
-          path: /api/users/:user_id/posts
-          response: list
-        
-        # Web Handler
-        web_handler:
-          enabled: true
-          handler_type: page
-          path: /dashboard/users/:user_id/posts
-          
-          permissions: [post.view.user]
-          
-          path_params:
-            - name: user_id
-              type: uint
-          
-          query_params:
-            - name: status
-              type: string
-              default: "published"
-          
-          context:
-            needs_user: true
-            needs_csrf: true
-            needs_perms: true
-            needs_dashbase: true
-            user_config:                      # ✅ Feature 2
-              use_repo: true
-              repo_name: userRepo
-              method: GetByID
-            custom_data:
-              - name: author
-                var: author
-                repo: User
-                method: GetByID
-                args: [user_id]
-                marshal: false
-              - name: posts
-                var: posts
-                repo: Post
-                method: GetUserPosts
-                args: [user_id, opts]
-                marshal: true
-      
-      - name: GetFeaturedPosts
-        fields: [Featured]
-        unique: false
-        pagination: true
-        
-        web_handler:
-          enabled: true
-          handler_type: page
-          path: /dashboard/posts/featured
-          
-          permissions: [post.list]
-          middleware: [auth, csrf]
-          rate_limit:
-            enabled: false
-            name: post_rate_limit
-          context:
-            needs_user: true
-            needs_csrf: true
-            needs_perms: true
-            needs_dashbase: true
-            user_config:                      # ✅ Feature 2
-              use_repo: true
-              repo_name: userRepo
-              method: GetByID
-            custom_data:
-              - name: posts
-                var: posts
-                repo: Post
-                method: GetFeaturedPosts
-                args: [opts]
-                marshal: true
-    # ==========================================
-    # Controller Configuration
-    # ==========================================
+    - slug
+    field_types:
+    - string
+    unique: true
+    response_type: detail
+    preloads:
+    - name: Author
+      select_fields:
+      - id
+      - username
+      - fullname
+      - avatar
+    - name: Comments
+      order_by: created_at DESC
+      limit: 20
+    controller:
+      enabled: false
+  - name: GetFewFieldPosts
+    fields: []
+    field_types: []
+    unique: false
+    pagination: true
+    response_type: list
+    filters:
+    - author_id
+    - category_id
+    - featured
+    - search
+    sort_by:
+    - published_at
+    - view_count
+    - like_count
+    default_sort_field: published_at
+    default_sort_order: desc
+    select_fields:
+    - Title
+    - Slug
+    controller:
+      enabled: false
+  - name: GetPublishedPosts
+    fields: []
+    field_types: []
+    unique: false
+    pagination: true
+    response_type: list
+    filters:
+    - author_id
+    - category_id
+    - featured
+    - search
+    sort_by:
+    - published_at
+    - view_count
+    - like_count
+    default_sort_field: published_at
+    default_sort_order: desc
+    select_fields:
+    - ID
+    - Title
+    preloads:
+    - name: Author
+      select_fields:
+      - id
+      - username
+      - fullname
+      - avatar
+    - name: Category
+      select_fields:
+      - id
+      - name
+      - slug
+      - color
+      order_by: name ASC
     controller:
       enabled: true
-      base_path: /api/posts
-      middleware: [auth]
+      path: /api/posts/published
+      method: GET
+      middleware: []
+      description: Get published posts with pagination and filters
+      query_params:
+      - name: status
+        type: enum
+        values:
+        - draft
+        - published
+        - archived
+        default: published
+      - name: featured
+        type: bool
+      - name: created_from
+        type: date
+        format: '2006-01-02'
+      - name: created_to
+        type: date
+        format: '2006-01-02'
+  - name: GetPostsByAuthor
+    fields:
+    - author_id
+    field_types:
+    - uint
+    unique: false
+    pagination: true
+    response_type: list
+    filters:
+    - status
+    - category_id
+    sort_by:
+    - published_at
+    - view_count
+    default_sort_field: published_at
+    default_sort_order: desc
+    controller:
+      enabled: true
       rate_limit:
         enabled: false
         name: post_rate_limit
-        
-      tag: Posts
-      crud_settings:
-
-        create:
-          enabled: true
-          method: POST
-          dto: CreatePostRequest
-          response:
-            struct: PostDetailResponse
-            converter: ToPostDetailResponse
-          ownership:
-            enabled: true
-            verify: field          # fetch first, compare field → simple
-            field: author_id       # model.AuthorID must equal userID
-          auto_fields:
-            - name: author_id
-              source: context      # set from JWT user_id
-          validation:
-            use_validator: true
-
-        get:
-          enabled: true
-          # Which repo method to call and what to pass it
-          repo_method: GetByID
-          middleware: [auths]
-
-          params:
-            - name: id
-              type: uint
-              source: path         # from :id URL segment
-          response:
-            struct: PostDetailResponse
-            converter: ToPostDetailResponse
-          ownership:
-            enabled: false         # public endpoint — no ownership check
-
-        update:
-          enabled: true
-          method: PATCH
-          dto: UpdateContentRequest
-          rate_limit:
-            enabled: false
-            name: post_rate_limit
-          # Ownership via a dedicated repo method that takes both user_id and post_id.
-          # The method returns ErrRecordNotFound if the post doesn't belong to the user —
-          # no extra field comparison needed (verify: param).
-          repo_method: GetByUserAndID   # repo.GetByUserAndID(userID, id)
-          params:
-            - name: user_id
-              type: uint
-              source: claim        # from JWT Locals("user_id")
-            - name: id
-              type: uint
-              source: path         # from :id URL segment
-          response:
-            struct: PostDetailResponse
-            converter: ToPostDetailResponse
-          ownership:
-            enabled: true
-            verify: param          # repo already enforces ownership via GetByUserAndID
-          validation:
-            use_validator: true
-
-        delete:
-          enabled: true
-          hard_delete: false
-          repo_method: GetByUserAndID   # same ownership-aware fetch
-          params:
-            - name: user_id
-              type: uint
-              source: claim
-            - name: id
-              type: uint
-              source: path
-          ownership:
-            enabled: true
-            verify: param          # repo enforces it
-
-        batch_delete:
-          enabled: false
+      path: /api/users/:author_id/posts
+      method: GET
+      middleware: []
+      description: Get posts by a specific author
+      ownership:
+        enabled: false
+  - name: GetUserPosts
+    fields:
+    - AuthorID
+    unique: false
+    pagination: true
+    controller:
+      enabled: true
+      path: /api/users/:user_id/posts
+      response: list
     web_handler:
       enabled: true
-      base_path: /dashboard/posts
-      middleware: [auth, csrf]
-      auth_redirect: /login
+      handler_type: page
+      path: /dashboard/users/:user_id/posts
+      template: user_posts.html
+      permissions:
+      - post.view.user
+      path_params:
+      - name: user_id
+        type: uint
+      query_params:
+      - name: status
+        type: string
+        default: published
+      context:
+        needs_user: true
+        needs_csrf: true
+        needs_perms: true
+        needs_dashbase: true
+        user_config:
+          use_repo: true
+          repo_name: userRepo
+          method: GetByID
+        custom_data:
+        - name: author
+          var: author
+          repo: User
+          method: GetByID
+          args:
+          - user_id
+          marshal: false
+        - name: posts
+          var: posts
+          repo: Post
+          method: GetUserPosts
+          args:
+          - user_id
+          - opts
+          marshal: true
+  - name: GetFeaturedPosts
+    fields:
+    - Featured
+    unique: false
+    pagination: true
+    web_handler:
+      enabled: true
+      handler_type: page
+      path: /dashboard/posts/featured
+      template: featured_posts.html
+      permissions:
+      - post.list
+      middleware:
+      - auth
+      - csrf
       rate_limit:
         enabled: false
         name: post_rate_limit
-      # RBAC configuration
-      rbac:
+      context:
+        needs_user: true
+        needs_csrf: true
+        needs_perms: true
+        needs_dashbase: true
+        user_config:
+          use_repo: true
+          repo_name: userRepo
+          method: GetByID
+        custom_data:
+        - name: posts
+          var: posts
+          repo: Post
+          method: GetFeaturedPosts
+          args:
+          - opts
+          marshal: true
+  controller:
+    enabled: true
+    base_path: /api/posts
+    middleware:
+    - auth
+    rate_limit:
+      enabled: false
+      name: post_rate_limit
+    tag: Posts
+    crud_settings:
+      create:
         enabled: true
-        service_var: rbacService
-      
-      crud_settings:
-        # CREATE PAGE - Show create form
-        create_page:
+        method: POST
+        dto: CreatePostRequest
+        response:
+          struct: PostDetailResponse
+          converter: ToPostDetailResponse
+        ownership:
           enabled: true
-          handler_type: page
-          method: GET
-          path: /new
-          rate_limit:
-            enabled: false
-            name: post_rate_limit
-          middleware: [auth, csrf]
-          permissions: [post.create]
-          
-          context:
-            needs_user: true
-            needs_csrf: true
-            needs_perms: true
-            needs_dashbase: true
-            needs_translations: true
-            base_translations: PostBase
-            extra_translations: [CommonTranslations]
-            user_config:                      # ✅ Feature 2
-              use_repo: true
-              repo_name: userRepo
-              method: GetByID
-            custom_data:
-              - name: categories
-                var: categories
-                repo: Category
-                method: GetAll
-                args: []
-                marshal: true
-              - name: tags
-                var: tags
-                repo: Tag
-                method: GetAll
-                args: []
-                marshal: true
-        
-        # CREATE ACTION - Handle form submission
-        create:
+          verify: field
+          field: author_id
+        auto_fields:
+        - name: author_id
+          source: context
+        validation:
+          use_validator: true
+      get:
+        enabled: true
+        repo_method: GetByID
+        middleware:
+        - auths
+        params:
+        - name: id
+          type: uint
+          source: path
+        response:
+          struct: PostDetailResponse
+          converter: ToPostDetailResponse
+        ownership:
+          enabled: false
+      update:
+        enabled: true
+        method: PATCH
+        dto: UpdateContentRequest
+        rate_limit:
+          enabled: false
+          name: post_rate_limit
+        repo_method: GetByUserAndID
+        params:
+        - name: user_id
+          type: uint
+          source: claim
+        - name: id
+          type: uint
+          source: path
+        response:
+          struct: PostDetailResponse
+          converter: ToPostDetailResponse
+        ownership:
           enabled: true
-          handler_type: action
-          method: POST
-          path: ""
-          dto: CreatePostRequest
-          
-          return_type: redirect
-          redirect_on_success: /dashboard/posts
-          
-          permissions: [post.create]
-          
-          # File uploads auto-detected from DTO
-          # Or override here if needed
-          file_uploads:
-            - field: FeaturedImage
-              form_field: featured_image
-              storage_path: uploads/posts
-              max_size_mb: 5
-              allowed_types: [image/jpeg, image/png, image/webp]
-              required: false
-          ownership:
-            enabled: true
-            field: AuthorID
-            auto_fill: user_id
-        
-        # EDIT PAGE - Show edit form
-        edit_page:
+          verify: param
+        validation:
+          use_validator: true
+      delete:
+        enabled: true
+        hard_delete: false
+        repo_method: GetByUserAndID
+        params:
+        - name: user_id
+          type: uint
+          source: claim
+        - name: id
+          type: uint
+          source: path
+        ownership:
           enabled: true
-          handler_type: page
-          method: GET
-          path: /:id/edit
-          
-          permissions: [post.edit]
-          
-          path_params:
-            - name: id
-              type: uint
-          
-          context:
-            needs_user: true
-            needs_csrf: true
-            needs_perms: true
-            needs_dashbase: true
-            needs_translations: true
-            base_translations: PostBase
-            user_config:                      # ✅ Feature 2
-              use_repo: true
-              repo_name: userRepo
-              method: GetByID
-            custom_data:
-              - name: post
-                var: post
-                repo: Post
-                method: GetByID
-                args: [id]
-                marshal: false
-              - name: categories
-                var: categories
-                repo: Category
-                method: GetAll
-                args: []
-                marshal: true
-              - name: tags
-                var: tags
-                repo: Tag
-                method: GetAll
-                args: []
-                marshal: true
-          
-          ownership:
-            enabled: true
-            field: AuthorID
-            verify: field
-        
-        # UPDATE ACTION - Handle form submission
-        update:
+          verify: param
+      batch_delete:
+        enabled: false
+  web_handler:
+    enabled: true
+    base_path: /dashboard/posts
+    middleware:
+    - auth
+    - csrf
+    package_name: handlers
+    auth_redirect: /login
+    template_base: views/posts
+    rate_limit:
+      enabled: false
+      name: post_rate_limit
+    rbac:
+      enabled: true
+    crud_settings:
+      create_page:
+        enabled: true
+        handler_type: page
+        method: GET
+        path: /new
+        template: create.html
+        rate_limit:
+          enabled: false
+          name: post_rate_limit
+        middleware:
+        - auth
+        - csrf
+        permissions:
+        - post.create
+        context:
+          needs_user: true
+          needs_csrf: true
+          needs_perms: true
+          needs_dashbase: true
+          needs_translations: true
+          base_translations: PostBase
+          extra_translations:
+          - CommonTranslations
+          user_config:
+            use_repo: true
+            repo_name: userRepo
+            method: GetByID
+          custom_data:
+          - name: categories
+            var: categories
+            repo: Category
+            method: GetAll
+            args: []
+            marshal: true
+          - name: tags
+            var: tags
+            repo: Tag
+            method: GetAll
+            args: []
+            marshal: true
+      create:
+        enabled: true
+        handler_type: action
+        method: POST
+        path: ''
+        dto: CreatePostRequest
+        return_type: redirect
+        redirect_on_success: /dashboard/posts
+        permissions:
+        - post.create
+        file_uploads:
+        - field: FeaturedImage
+          form_field: featured_image
+          storage_path: uploads/posts
+          max_size_mb: 5
+          allowed_types:
+          - image/jpeg
+          - image/png
+          - image/webp
+          required: false
+        ownership:
           enabled: true
-          handler_type: action
-          method: POST
-          path: /:id
-          dto: UpdatePostRequest
-          
-          return_type: hx_redirect
-          hx_redirect: "{dashBase}/posts/:id"
-          
-          permissions: [post.edit]
-          track_changes: true  # Enable update diff tracking
-          
-          path_params:
-            - name: id
-              type: uint
-          
-          ownership:
-            enabled: true
-            verify: param
-            repo_method: GetByUserAndID
-        
-        # GET - Show single post
-        get:
+          field: AuthorID
+          auto_fill: user_id
+      edit_page:
+        enabled: true
+        handler_type: page
+        method: GET
+        path: /:id/edit
+        template: edit.html
+        permissions:
+        - post.edit
+        path_params:
+        - name: id
+          type: uint
+        context:
+          needs_user: true
+          needs_csrf: true
+          needs_perms: true
+          needs_dashbase: true
+          needs_translations: true
+          base_translations: PostBase
+          user_config:
+            use_repo: true
+            repo_name: userRepo
+            method: GetByID
+          custom_data:
+          - name: post
+            var: post
+            repo: Post
+            method: GetByID
+            args:
+            - id
+            marshal: false
+          - name: categories
+            var: categories
+            repo: Category
+            method: GetAll
+            args: []
+            marshal: true
+          - name: tags
+            var: tags
+            repo: Tag
+            method: GetAll
+            args: []
+            marshal: true
+        ownership:
           enabled: true
-          handler_type: page
-          method: GET
-          path: /:id
-          
-          permissions: [post.view]
-          
-          path_params:
-            - name: id
-              type: uint
-          
-          context:
-            needs_user: true
-            needs_csrf: true
-            needs_perms: true
-            needs_dashbase: true
-            user_config:                      # ✅ Feature 2
-              use_repo: true
-              repo_name: userRepo
-              method: GetByID
-            custom_data:
-              - name: post
-                var: post
-                repo: Post
-                method: GetByID
-                args: [id]
-                marshal: false
-              - name: comments
-                var: comments
-                repo: Comment
-                method: GetByPostID
-                args: [id]
-                marshal: true
-                rbac_perm: comment.view
-        
-        # LIST - Show all posts
-        list:
+          field: AuthorID
+          verify: field
+      update:
+        enabled: true
+        handler_type: action
+        method: POST
+        path: /:id
+        dto: UpdatePostRequest
+        return_type: hx_redirect
+        hx_redirect: '{dashBase}/posts/:id'
+        permissions:
+        - post.edit
+        track_changes: true
+        path_params:
+        - name: id
+          type: uint
+        ownership:
           enabled: true
-          handler_type: page
-          method: GET
-          path: ""
-          
-          permissions: [post.list]
-          pagination: true
-          
-          query_params:
-            - name: search
-              type: string
-              default: ""
-            - name: status
-              type: string
-              default: "published"
-            - name: category_id
-              type: uint
-              default: 0
-          
-          context:
-            needs_user: true
-            needs_csrf: true
-            needs_perms: true
-            needs_dashbase: true
-            needs_translations: true
-            user_config:                      # ✅ Feature 2
-              use_repo: true
-              repo_name: userRepo
-              method: GetByID
-            base_translations: PostBase
-            custom_data:
-              - name: posts
-                var: posts
-                repo: Post
-                method: List
-                args: [opts]
-                marshal: true
-              - name: categories
-                var: categories
-                repo: Category
-                method: GetAll
-                args: []
-                marshal: true
-        
-        # DELETE
-        delete:
+          verify: param
+          repo_method: GetByUserAndID
+      get:
+        enabled: true
+        handler_type: page
+        method: GET
+        path: /:id
+        template: show.html
+        permissions:
+        - post.view
+        path_params:
+        - name: id
+          type: uint
+        context:
+          needs_user: true
+          needs_csrf: true
+          needs_perms: true
+          needs_dashbase: true
+          user_config:
+            use_repo: true
+            repo_name: userRepo
+            method: GetByID
+          custom_data:
+          - name: post
+            var: post
+            repo: Post
+            method: GetByID
+            args:
+            - id
+            marshal: false
+          - name: comments
+            var: comments
+            repo: Comment
+            method: GetByPostID
+            args:
+            - id
+            marshal: true
+            rbac_perm: comment.view
+      list:
+        enabled: true
+        handler_type: page
+        method: GET
+        path: ''
+        template: index.html
+        permissions:
+        - post.list
+        pagination: true
+        query_params:
+        - name: search
+          type: string
+          default: ''
+        - name: status
+          type: string
+          default: published
+        - name: category_id
+          type: uint
+          default: 0
+        context:
+          needs_user: true
+          needs_csrf: true
+          needs_perms: true
+          needs_dashbase: true
+          needs_translations: true
+          user_config:
+            use_repo: true
+            repo_name: userRepo
+            method: GetByID
+          base_translations: PostBase
+          custom_data:
+          - name: posts
+            var: posts
+            repo: Post
+            method: List
+            args:
+            - opts
+            marshal: true
+          - name: categories
+            var: categories
+            repo: Category
+            method: GetAll
+            args: []
+            marshal: true
+      delete:
+        enabled: true
+        handler_type: action
+        method: DELETE
+        path: /:id
+        return_type: json
+        permissions:
+        - post.delete
+        path_params:
+        - name: id
+          type: uint
+        ownership:
           enabled: true
-          handler_type: action
-          method: DELETE
-          path: /:id
-          
-          return_type: json
-          
-          permissions: [post.delete]
-          
-          path_params:
-            - name: id
-              type: uint
-          
-          ownership:
-            enabled: true
-            field: AuthorID
-            verify: field
-   
-    batch_operations:
-      - name: BulkUpdateStatus
-        update_fields: [status, updated_at]
-      
-      - name: BulkFeature
-        update_fields: [featured, updated_at]
-
-  # ==========================================
-  # CATEGORY MODEL - Minimal example
-  # ==========================================
-  - name: Category
-    table_name: categories
-    soft_delete: true
-    timestamps: true
-    
-    pagination: true
-    filters: [id, parent_id, is_active]
-    sort_by: [name, order]
-    
+          field: AuthorID
+          verify: field
+  batch_operations:
+  - name: BulkUpdateStatus
+    update_fields:
+    - status
+    - updated_at
+  - name: BulkFeature
+    update_fields:
+    - featured
+    - updated_at
+- name: Category
+  table_name: categories
+  soft_delete: true
+  timestamps: true
+  pagination: true
+  filters:
+  - id
+  - parent_id
+  - is_active
+  sort_by:
+  - name
+  - order
+  fields:
+  - name: ID
+    type: uint
+    gorm: primaryKey;autoIncrement
+    json: id
+  - name: Name
+    type: string
+    gorm: unique;not null
+    json: name
+    validate: required,min=2,max=100
+  - name: Slug
+    type: string
+    gorm: unique;not null
+    json: slug
+  - name: Color
+    type: string
+    gorm: default:'#6366f1'
+    json: color
+  - name: Order
+    type: int
+    gorm: default:0
+    json: order
+  - name: IsActive
+    type: bool
+    gorm: default:true
+    json: is_active
+  - name: PostCount
+    type: int
+    gorm: default:0
+    json: post_count
+  create_dto:
+    enabled: true
     fields:
-      - name: ID
-        type: uint
-        gorm: "primaryKey;autoIncrement"
-        json: "id"
-      
-      - name: Name
-        type: string
-        gorm: "unique;not null"
-        json: "name"
-        validate: "required,min=2,max=100"
-      
-      - name: Slug
-        type: string
-        gorm: "unique;not null"
-        json: "slug"
-      
-      - name: Color
-        type: string
-        gorm: "default:'#6366f1'"
-        json: "color"
-      
-      - name: Order
-        type: int
-        gorm: "default:0"
-        json: "order"
-      
-      - name: IsActive
-        type: bool
-        gorm: "default:true"
-        json: "is_active"
-      
-      - name: PostCount
-        type: int
-        gorm: "default:0"
-        json: "post_count"
-    
-    create_dto:
-      enabled: true
-      fields: [Name, Slug, Color, Order, IsActive]
-    
-    update_dto:
-      enabled: true
-      partial: true
-      fields: [Name, Slug, Color, Order, IsActive]
-    
-    list_response:
-      enabled: true
-      fields:
-        - name: ID
-          type: uint
-          json_name: id
-          from_field: ID
-        - name: Name
-          type: string
-          json_name: name
-          from_field: Name
-        - name: Slug
-          type: string
-          json_name: slug
-          from_field: Slug
-        - name: Color
-          type: string
-          json_name: color
-          from_field: Color
-        - name: PostCount
-          type: int
-          json_name: post_count
-          from_field: PostCount
-    
-    detail_response:
-      enabled: true
-      fields:
-        - name: ID
-          type: uint
-          json_name: id
-          from_field: ID
-        - name: Name
-          type: string
-          json_name: name
-          from_field: Name
-        - name: Slug
-          type: string
-          json_name: slug
-          from_field: Slug
-        - name: Color
-          type: string
-          json_name: color
-          from_field: Color
-        - name: Order
-          type: int
-          json_name: order
-          from_field: Order
-        - name: IsActive
-          type: bool
-          json_name: is_active
-          from_field: IsActive
-        - name: PostCount
-          type: int
-          json_name: post_count
-          from_field: PostCount
-        - name: CreatedAt
-          type: time.Time
-          json_name: created_at
-          from_field: CreatedAt
-        - name: UpdatedAt
-          type: time.Time
-          json_name: updated_at
-          from_field: UpdatedAt
-
-  # ==========================================
-  # TAG MODEL - Simple example
-  # ==========================================
-  - name: Tag
-    table_name: tags
-    timestamps: true
-    
+    - Name
+    - Slug
+    - Color
+    - Order
+    - IsActive
+  update_dto:
+    enabled: true
+    partial: true
     fields:
-      - name: ID
-        type: uint
-        gorm: "primaryKey;autoIncrement"
-        json: "id"
-      
-      - name: Name
-        type: string
-        gorm: "unique;not null"
-        json: "name"
-      
-      - name: Slug
-        type: string
-        gorm: "unique;not null"
-        json: "slug"
-    
-    relations:
-      - name: Posts
-        type: many_to_many
-        model: Post
-        join_table: post_tags
-    
-    create_dto:
-      enabled: true
-      fields: [Name, Slug]
-    
-    update_dto:
-      enabled: true
-      partial: true
-      fields: [Name, Slug]
-    
-    list_response:
-      enabled: true
-      fields:
-        - name: ID
-          type: uint
-          json_name: id
-          from_field: ID
-        - name: Name
-          type: string
-          json_name: name
-          from_field: Name
-        - name: Slug
-          type: string
-          json_name: slug
-          from_field: Slug
-
-  # ==========================================
-  # COMMENT MODEL
-  # ==========================================
-  - name: Comment
-    table_name: comments
-    soft_delete: true
-    timestamps: true
-    
-    pagination: true
-    filters: [post_id, user_id, status, parent_id]
-    sort_by: [created_at, like_count]
-    
+    - Name
+    - Slug
+    - Color
+    - Order
+    - IsActive
+  list_response:
+    enabled: true
     fields:
-      - name: ID
-        type: uint
-        gorm: "primaryKey;autoIncrement"
-        json: "id"
-      
-      - name: PostID
-        type: uint
-        gorm: "not null;index"
-        json: "post_id"
-      
-      - name: UserID
-        type: uint
-        gorm: "not null;index"
-        json: "user_id"
-      
-      - name: ParentID
-        type: "*uint"
-        gorm: "null;index"
-        json: "parent_id"
-      
-      - name: Content
-        type: string
-        gorm: "type:text;not null"
-        json: "content"
-        validate: "required,min=1"
-      
-      - name: Status
-        type: string
-        gorm: "type:varchar(20);default:'pending'"
-        json: "status"
-        validate: "oneof=pending approved rejected spam"
-      
-      - name: LikeCount
-        type: int
-        gorm: "default:0"
-        json: "like_count"
-    
-    relations:
-      - name: Post
-        type: belongs_to
-        model: Post
-        foreign_key: PostID
-      
-      - name: User
-        type: belongs_to
-        model: User
-        foreign_key: UserID
-      
-      - name: Parent
-        type: belongs_to
-        model: Comment
-        foreign_key: ParentID
-      
-      - name: Replies
-        type: has_many
-        model: Comment
-        foreign_key: ParentID
-    
-    create_dto:
-      enabled: true
-      fields: [PostID, ParentID, Content]
-    
-    update_dto:
-      enabled: true
-      partial: true
-      fields: [Content, Status]
-    
-    list_response:
-      enabled: true
-      fields:
-        - name: ID
-          type: uint
-          json_name: id
-          from_field: ID
-        - name: Content
-          type: string
-          json_name: content
-          from_field: Content
-        - name: Status
-          type: string
-          json_name: status
-          from_field: Status
-        - name: LikeCount
-          type: int
-          json_name: like_count
-          from_field: LikeCount
-        - name: CreatedAt
-          type: time.Time
-          json_name: created_at
-          from_field: CreatedAt
-      include_relations:
-        - name: User
-          response_type: nested_detail
-          response_struct: UserListItem
-          json_name: user
-          foreign_key: UserID
-    
-    detail_response:
-      enabled: true
-      fields:
-        - name: ID
-          type: uint
-          json_name: id
-          from_field: ID
-        - name: PostID
-          type: uint
-          json_name: post_id
-          from_field: PostID
-        - name: Content
-          type: string
-          json_name: content
-          from_field: Content
-        - name: Status
-          type: string
-          json_name: status
-          from_field: Status
-        - name: LikeCount
-          type: int
-          json_name: like_count
-          from_field: LikeCount
-        - name: CreatedAt
-          type: time.Time
-          json_name: created_at
-          from_field: CreatedAt
-        - name: UpdatedAt
-          type: time.Time
-          json_name: updated_at
-          from_field: UpdatedAt
-      include_relations:
-        - name: User
-          response_type: nested_detail
-          response_struct: UserListItem
-          json_name: user
-          foreign_key: UserID
-        - name: Replies
-          response_type: nested_list
-          response_struct: CommentListItem
-          json_name: replies
-
-   # ==========================================
- 
-  # ==========================================
-  # MEDIA MODEL - File upload heavy model
-  # ==========================================
-  - name: Media
-    table_name: media
-    timestamps: true
-    
+    - name: ID
+      type: uint
+      json_name: id
+      from_field: ID
+    - name: Name
+      type: string
+      json_name: name
+      from_field: Name
+    - name: Slug
+      type: string
+      json_name: slug
+      from_field: Slug
+    - name: Color
+      type: string
+      json_name: color
+      from_field: Color
+    - name: PostCount
+      type: int
+      json_name: post_count
+      from_field: PostCount
+  detail_response:
+    enabled: true
     fields:
-      - name: ID
-        type: uint
-        gorm: "primaryKey"
-        json: "id"
-      
-      - name: Filename
-        type: string
-        gorm: "not null"
-        json: "filename"
-      
-      - name: FilePath
-        type: string
-        gorm: "not null"
-        json: "file_path"
-      
-      - name: MimeType
-        type: string
-        gorm: "not null"
-        json: "mime_type"
-      
-      - name: Size
-        type: int64
-        gorm: "not null"
-        json: "size"
-      
-      - name: AltText
-        type: "*string"
-        json: "alt_text"
-      
-      - name: UserID
-        type: uint
-        gorm: "not null"
-        json: "user_id"
-    
-    dtos:
-      # Upload media file
-      - name: UploadMediaRequest
-        type: create
-        fields:
-          - Filename  # Will be file upload
-          - AltText
-        file_fields:
-          Filename: file  # This is the actual file
-        custom_fields:
-          - name: File
-            type: "*multipart.FileHeader"
-            json: "-"  # Use form:"file" in actual struct
-      
-      # Update metadata (no file)
-      - name: UpdateMediaMetadataRequest
-        type: update
-        partial: true
-        fields:
-          - AltText
-          - FilePath  # Could update the path
-        file_fields:
-          FilePath: string  # String, not file
-
-
-  # PRODUCT MODEL - Images array example
-  # ==========================================
-  - name: Product
-    table_name: products
-    timestamps: true
-    
+    - name: ID
+      type: uint
+      json_name: id
+      from_field: ID
+    - name: Name
+      type: string
+      json_name: name
+      from_field: Name
+    - name: Slug
+      type: string
+      json_name: slug
+      from_field: Slug
+    - name: Color
+      type: string
+      json_name: color
+      from_field: Color
+    - name: Order
+      type: int
+      json_name: order
+      from_field: Order
+    - name: IsActive
+      type: bool
+      json_name: is_active
+      from_field: IsActive
+    - name: PostCount
+      type: int
+      json_name: post_count
+      from_field: PostCount
+    - name: CreatedAt
+      type: time.Time
+      json_name: created_at
+      from_field: CreatedAt
+    - name: UpdatedAt
+      type: time.Time
+      json_name: updated_at
+      from_field: UpdatedAt
+- name: Tag
+  table_name: tags
+  timestamps: true
+  fields:
+  - name: ID
+    type: uint
+    gorm: primaryKey;autoIncrement
+    json: id
+  - name: Name
+    type: string
+    gorm: unique;not null
+    json: name
+  - name: Slug
+    type: string
+    gorm: unique;not null
+    json: slug
+  relations:
+  - name: Posts
+    type: many_to_many
+    model: Post
+    join_table: post_tags
+  create_dto:
+    enabled: true
     fields:
-      - name: ID
-        type: uint
-        gorm: "primaryKey"
-        json: "id"
-      
-      - name: Name
-        type: string
-        gorm: "not null"
-        json: "name"
-        validate: "required"
-      
-      - name: Description
-        type: string
-        gorm: "type:text"
-        json: "description"
-      
-      - name: MainImage
-        type: string
-        json: "main_image"
-      
-      - name: Price
-        type: float64
-        gorm: "not null"
-        json: "price"
-        validate: "required,gt=0"
-    
-    dtos:
-      # Create with main image file
-      - name: CreateProductRequest
-        type: create
-        fields:
-          - Name
-          - Description
-          - MainImage
-          - Price
-        file_fields:
-          MainImage: file
-      
-      # Create with image URL
-      - name: CreateProductWithURLRequest
-        type: create
-        fields:
-          - Name
-          - Description
-          - MainImage
-          - Price
-        file_fields:
-          MainImage: string
-      
-      # Update main image only
-      - name: UpdateProductImageRequest
-        type: update
-        partial: false
-        fields:
-          - MainImage
-        file_fields:
-          MainImage: file
-      
-      # Complex update with multiple images
-      - name: UpdateProductImagesRequest
-        type: update
-        partial: true
-        fields:
-          - MainImage
-        file_fields:
-          MainImage: file
-        custom_fields:
-          # For handling JSON array of images
-          - name: AdditionalImages
-            type: "[]UpdateProductImageInput"
-            json: additional_images
-
+    - Name
+    - Slug
+  update_dto:
+    enabled: true
+    partial: true
+    fields:
+    - Name
+    - Slug
+  list_response:
+    enabled: true
+    fields:
+    - name: ID
+      type: uint
+      json_name: id
+      from_field: ID
+    - name: Name
+      type: string
+      json_name: name
+      from_field: Name
+    - name: Slug
+      type: string
+      json_name: slug
+      from_field: Slug
+- name: Comment
+  table_name: comments
+  soft_delete: true
+  timestamps: true
+  pagination: true
+  filters:
+  - post_id
+  - user_id
+  - status
+  - parent_id
+  sort_by:
+  - created_at
+  - like_count
+  fields:
+  - name: ID
+    type: uint
+    gorm: primaryKey;autoIncrement
+    json: id
+  - name: PostID
+    type: uint
+    gorm: not null;index
+    json: post_id
+  - name: UserID
+    type: uint
+    gorm: not null;index
+    json: user_id
+  - name: ParentID
+    type: '*uint'
+    gorm: null;index
+    json: parent_id
+  - name: Content
+    type: string
+    gorm: type:text;not null
+    json: content
+    validate: required,min=1
+  - name: Status
+    type: string
+    gorm: type:varchar(20);default:'pending'
+    json: status
+    validate: oneof=pending approved rejected spam
+  - name: LikeCount
+    type: int
+    gorm: default:0
+    json: like_count
+  relations:
+  - name: Post
+    type: belongs_to
+    model: Post
+    foreign_key: PostID
+  - name: User
+    type: belongs_to
+    model: User
+    foreign_key: UserID
+  - name: Parent
+    type: belongs_to
+    model: Comment
+    foreign_key: ParentID
+  - name: Replies
+    type: has_many
+    model: Comment
+    foreign_key: ParentID
+  create_dto:
+    enabled: true
+    fields:
+    - PostID
+    - ParentID
+    - Content
+  update_dto:
+    enabled: true
+    partial: true
+    fields:
+    - Content
+    - Status
+  list_response:
+    enabled: true
+    fields:
+    - name: ID
+      type: uint
+      json_name: id
+      from_field: ID
+    - name: Content
+      type: string
+      json_name: content
+      from_field: Content
+    - name: Status
+      type: string
+      json_name: status
+      from_field: Status
+    - name: LikeCount
+      type: int
+      json_name: like_count
+      from_field: LikeCount
+    - name: CreatedAt
+      type: time.Time
+      json_name: created_at
+      from_field: CreatedAt
+    include_relations:
+    - name: User
+      response_type: nested_detail
+      response_struct: UserListItem
+      json_name: user
+      foreign_key: UserID
+  detail_response:
+    enabled: true
+    fields:
+    - name: ID
+      type: uint
+      json_name: id
+      from_field: ID
+    - name: PostID
+      type: uint
+      json_name: post_id
+      from_field: PostID
+    - name: Content
+      type: string
+      json_name: content
+      from_field: Content
+    - name: Status
+      type: string
+      json_name: status
+      from_field: Status
+    - name: LikeCount
+      type: int
+      json_name: like_count
+      from_field: LikeCount
+    - name: CreatedAt
+      type: time.Time
+      json_name: created_at
+      from_field: CreatedAt
+    - name: UpdatedAt
+      type: time.Time
+      json_name: updated_at
+      from_field: UpdatedAt
+    include_relations:
+    - name: User
+      response_type: nested_detail
+      response_struct: UserListItem
+      json_name: user
+      foreign_key: UserID
+    - name: Replies
+      response_type: nested_list
+      response_struct: CommentListItem
+      json_name: replies
+- name: Media
+  table_name: media
+  timestamps: true
+  fields:
+  - name: ID
+    type: uint
+    gorm: primaryKey
+    json: id
+  - name: Filename
+    type: string
+    gorm: not null
+    json: filename
+  - name: FilePath
+    type: string
+    gorm: not null
+    json: file_path
+  - name: MimeType
+    type: string
+    gorm: not null
+    json: mime_type
+  - name: Size
+    type: int64
+    gorm: not null
+    json: size
+  - name: AltText
+    type: '*string'
+    json: alt_text
+  - name: UserID
+    type: uint
+    gorm: not null
+    json: user_id
+  dtos:
+  - name: UploadMediaRequest
+    type: create
+    fields:
+    - Filename
+    - AltText
+    file_fields:
+      Filename: file
+    custom_fields:
+    - name: File
+      type: '*multipart.FileHeader'
+      json: '-'
+  - name: UpdateMediaMetadataRequest
+    type: update
+    partial: true
+    fields:
+    - AltText
+    - FilePath
+    file_fields:
+      FilePath: string
+- name: Product
+  table_name: products
+  timestamps: true
+  fields:
+  - name: ID
+    type: uint
+    gorm: primaryKey
+    json: id
+  - name: Name
+    type: string
+    gorm: not null
+    json: name
+    validate: required
+  - name: Description
+    type: string
+    gorm: type:text
+    json: description
+  - name: MainImage
+    type: string
+    json: main_image
+  - name: Price
+    type: float64
+    gorm: not null
+    json: price
+    validate: required,gt=0
+  dtos:
+  - name: CreateProductRequest
+    type: create
+    fields:
+    - Name
+    - Description
+    - MainImage
+    - Price
+    file_fields:
+      MainImage: file
+  - name: CreateProductWithURLRequest
+    type: create
+    fields:
+    - Name
+    - Description
+    - MainImage
+    - Price
+    file_fields:
+      MainImage: string
+  - name: UpdateProductImageRequest
+    type: update
+    partial: false
+    fields:
+    - MainImage
+    file_fields:
+      MainImage: file
+  - name: UpdateProductImagesRequest
+    type: update
+    partial: true
+    fields:
+    - MainImage
+    file_fields:
+      MainImage: file
+    custom_fields:
+    - name: AdditionalImages
+      type: '[]UpdateProductImageInput'
+      json: additional_images

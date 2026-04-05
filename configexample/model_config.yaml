@@ -1010,7 +1010,6 @@ models:
       # RBAC configuration
       rbac:
         enabled: true
-        service_var: rbacService
       
       crud_settings:
         # CREATE PAGE - Show create form

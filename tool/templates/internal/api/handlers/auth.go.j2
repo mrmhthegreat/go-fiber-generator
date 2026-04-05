@@ -3,6 +3,7 @@ package handlers
 import (
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 
 	"github.com/go-playground/validator/v10"
@@ -22,17 +23,27 @@ import (
 	dtopkg "{{ config.project.module }}/pkg/dto"
 )
 
+
+
+type AuthHandler struct {
+}
+
+// NewAuthHandler creates a new AuthHandler
+func NewAuthHandler() *AuthHandler {
+return &AuthHandler{}
+}
+
 {% set auth = config.authentication %}
 {% set identifier = auth.identifier %}
 {% set has_file_uploads = config._has_file_uploads %}
 {% set file_upload_fields = config._file_upload_fields %}
 {% set enabled_login = config._enabled_login_method %}
-{% set repo_var = auth.get('repo_var', 'authRepo') %}
+{% set repo_var = 'authRepo' %}
 
 {% if auth.email_password.enabled %}
 // RegisterUser handles user registration.
 // @Summary Register a new user
-// @Description Register a new user{% if auth.email_password.email_verification.enabled %} and send verification email{% endif %}
+// @Description Register a new user{% if auth.email_verification.enabled %} and send verification email{% endif %}
 // @Tags Authentication
 {% if has_file_uploads %}
 // @Accept multipart/form-data
@@ -63,7 +74,7 @@ import (
 // @Failure 409 {object} resppkg.ErrorResponse "User already exists"
 // @Failure 500 {object} resppkg.ErrorResponse "Internal server error"
 // @Router /api/auth/register [post]
-func RegisterUser(c *fiber.Ctx) error {
+func (h *AuthHandler) RegisterUser(c *fiber.Ctx) error {
 {% if has_file_uploads %}
 	// Parse multipart form
 	var input dtopkg.RegisterUserInput
@@ -106,8 +117,11 @@ func RegisterUser(c *fiber.Ctx) error {
 		return errorspkg.SendError(c, fiber.StatusBadRequest, "weak_password", err.Error())
 	}
 {% endif %}
-
-	{{ repo_var }} := utilspkg.Get{{ config.project.repository_name }}(c)
+	dbConn := utilspkg.GetDB(c)
+	if dbConn == nil {
+		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
+	}
+	{{ repo_var }} := dbConn.Auth
 	if {{ repo_var }} == nil {
 		log.Println("Repository not available")
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "db_connection_failed")
@@ -118,12 +132,12 @@ func RegisterUser(c *fiber.Ctx) error {
 {% if field.get('unique', False) and field.get('repository_check') and not field.get('file_upload', False) %}
 {% if field.dto_type.startswith('*') %}
 	if input.{{ field.field | title }} != nil {
-		if _, err := {{ repo_var }}.{{ field.repository_check }}(*input.{{ field.field | title }}); err == nil {
+		if _, err := {{ repo_var }}.{{ field.repository_check }}(*input.{{ field.field | title }}, "id"); err == nil {
 			return errorspkg.SendError(c, fiber.StatusConflict, "{{ field.field }}_already_exists")
 		}
 	}
 {% else %}
-	if _, err := {{ repo_var }}.{{ field.repository_check }}(input.{{ field.field | title }}); err == nil {
+	if _, err := {{ repo_var }}.{{ field.repository_check }}(input.{{ field.field | title }}, "id"); err == nil {
 		return errorspkg.SendError(c, fiber.StatusConflict, "{{ field.field }}_already_exists")
 	}
 {% endif %}
@@ -186,11 +200,11 @@ func RegisterUser(c *fiber.Ctx) error {
 		{{ field.model_field }}: {{ field.field }}Path,
 {% endfor %}
 {% endif %}
-{% if auth.email_password.email_verification.enabled %}
-		{{ auth.email_password.email_verification.model_field }}: false,
+{% if auth.email_verification.enabled %}
+		Verified: false,
 {% endif %}
 {% if config.rbac.enabled %}
-		{{ config.rbac.model_field }}: "{{ config.rbac.default_role | default('user') }}",
+		Role: "{{ config.rbac.default_role | default('user') }}",
 {% endif %}
 		AuthProvider: "local",
 	}
@@ -201,14 +215,13 @@ func RegisterUser(c *fiber.Ctx) error {
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "internal_server_error")
 	}
 
-{% if auth.email_password.email_verification.enabled %}
+{% if auth.email_verification.enabled %}
 	// Generate and send OTP
 	otp := authpkg.GenerateOTP()
 	authpkg.StoreOTP(u.Email, otp)
 	go func() {
-		err := emailpkg.SendEmail(u.Email, "Email Verification", "{{ auth.email_password.email_verification.email_template }}", fiber.Map{
+		err := emailpkg.SendEmail(u.Email, "Email Verification", "{{ auth.email_verification.email_template }}", fiber.Map{
 			"code": otp,
-			"name": u.Fullname,
 		})
 		if err != nil {
 			log.Printf("Error sending email: %v", err)
@@ -217,14 +230,34 @@ func RegisterUser(c *fiber.Ctx) error {
 {% endif %}
 
 	// Generate tokens
-	token, err := jwtpkg.GenerateJWT(u.ID, u.Fullname, u.Email, {% if auth.email_password.email_verification.enabled %}false{% else %}true{% endif %})
+	jwtPayload := jwtpkg.TokenPayload{
+		UserID: u.ID,
+{% set use_email = config.authentication.email_password.enabled or config.authentication.social_auth.google.enabled or config.authentication.social_auth.facebook.enabled %}
+{% if use_email %}
+		Email:  u.Email,
+{% endif %}
+{% if config.rbac.enabled %}
+		Role:   u.Role,
+{% endif %}
+{% if auth.email_verification.enabled %}
+		Verified: false,
+{% endif %}
+{% for c in config.authentication.jwt.claims %}
+{% if c.name not in ['user_id', 'email', 'role', 'verified'] %}
+{% set field_name = c.name | replace('_', ' ') | title | replace(' ', '') %}
+		{{ field_name }}: u.{{ field_name }},
+{% endif %}
+{% endfor %}
+	}
+
+	token, err := jwtpkg.GenerateJWT(jwtPayload)
 	if err != nil {
 		log.Printf("Error generating JWT: %v", err)
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "token_generation_failed")
 	}
 
 {% if auth.refresh_token.enabled %}
-	refreshToken, err := jwtpkg.GenerateRefreshJWT(u.ID, u.Fullname, u.Email, {% if auth.email_password.email_verification.enabled %}false{% else %}true{% endif %})
+	refreshToken, err := jwtpkg.GenerateRefreshJWT(jwtPayload)
 	if err != nil {
 		log.Printf("Error generating refresh token: %v", err)
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "token_generation_failed")
@@ -236,18 +269,10 @@ func RegisterUser(c *fiber.Ctx) error {
 {% if auth.refresh_token.enabled %}
 		RefreshToken: refreshToken,
 {% endif %}
-{% if auth.email_password.email_verification.enabled %}
+{% if auth.email_verification.enabled %}
 		Verified: false,
-		Message: "registration_successful_verify_email",
 {% endif %}
-		User: &dtopkg.dtopkg.UserResponse{
-			ID: u.ID,
-{% for field in identifier.register_fields %}
-{% if not field.get('sensitive', False) and not field.get('file_upload', False) %}
-			{{ field.field | title }}: u.{{ field.field | title }},
-{% endif %}
-{% endfor %}
-		},
+	
 	})
 }
 
@@ -264,7 +289,7 @@ func RegisterUser(c *fiber.Ctx) error {
 // @Failure 403 {object} resppkg.ErrorResponse "Email not verified"
 // @Failure 500 {object} resppkg.ErrorResponse "Internal server error"
 // @Router /api/auth/login [post]
-func LoginUser(c *fiber.Ctx) error {
+func (h *AuthHandler) LoginUser(c *fiber.Ctx) error {
 	var input dtopkg.LoginUserInput
 	if err := c.BodyParser(&input); err != nil {
 		return errorspkg.SendError(c, fiber.StatusBadRequest, "invalid_json")
@@ -274,18 +299,38 @@ func LoginUser(c *fiber.Ctx) error {
 	if err := validator.Struct(&input); err != nil {
 		return errorspkg.SendError(c, fiber.StatusBadRequest, "validation_failed", err.Error())
 	}
-
-	{{ repo_var }} := utilspkg.Get{{ config.project.repository_name }}(c)
+	dbConn := utilspkg.GetDB(c)
+	if dbConn == nil {
+		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
+	}
+	{{ repo_var }} := dbConn.Auth
 	if {{ repo_var }} == nil {
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "db_connection_failed")
 	}
 
 	// Find user
 {% if enabled_login %}
+{% set login_fields = ['"id"', '"password"', '"auth_provider"'] %}
+{% if auth.email_verification.enabled %}
+	{% set _ = login_fields.append('"verified"') %}
+{% endif %}
+{% if config.rbac.enabled %}
+	{% set _ = login_fields.append('"role"') %}
+{% endif %}
+{% for c in config.authentication.jwt.claims %}
+	{% if c.name not in ['user_id', 'role', 'is_verified', 'authenticated', 'exp', 'iat', 'type', 'verified'] %}
+		{% set _ = login_fields.append('"' ~ c.name ~ '"') %}
+	{% endif %}
+{% endfor %}
+{% for field in identifier.register_fields %}
+{% if not field.get('sensitive', False) and not field.get('file_upload', False) %}
+	{% set _ = login_fields.append('"' ~ field.field | lower ~ '"') %}
+{% endif %}
+{% endfor %}
 {% if enabled_login.get('json_field') %}
-	user, err := {{ repo_var }}.{{ enabled_login.repository_method }}(input.{{ enabled_login.json_field | title }})
+	user, err := {{ repo_var }}.{{ enabled_login.repository_method }}(input.{{ enabled_login.json_field | title }}, {{ login_fields | join(', ') }})
 {% else %}
-	user, err := {{ repo_var }}.{{ enabled_login.repository_method }}(input.{{ enabled_login.field | title }})
+	user, err := {{ repo_var }}.{{ enabled_login.repository_method }}(input.{{ enabled_login.field | title }}, {{ login_fields | join(', ') }})
 {% endif %}
 	if err != nil {
 		return errorspkg.SendError(c, fiber.StatusUnauthorized, "invalid_credentials")
@@ -299,44 +344,69 @@ func LoginUser(c *fiber.Ctx) error {
 		return errorspkg.SendError(c, fiber.StatusUnauthorized, "invalid_credentials")
 	}
 
-{% if auth.email_password.email_verification.enabled %}
-	// Check if email is verified
-	if !user.{{ auth.email_password.email_verification.model_field }} {
-		return errorspkg.SendError(c, fiber.StatusForbidden, "email_not_verified")
-	}
-{% endif %}
+
 
 	// Generate tokens
-	token, err := jwtpkg.GenerateJWT(user.ID, user.Fullname, user.Email, {% if auth.email_password.email_verification.enabled %}user.{{ auth.email_password.email_verification.model_field }}{% else %}true{% endif %})
+	jwtPayload := jwtpkg.TokenPayload{
+		UserID: user.ID,
+{% set use_email = config.authentication.email_password.enabled or config.authentication.social_auth.google.enabled or config.authentication.social_auth.facebook.enabled %}
+{% if use_email %}
+		Email:  user.Email,
+{% endif %}
+{% if config.rbac.enabled %}
+		Role:   user.Role,
+{% endif %}
+{% if auth.email_verification.enabled %}
+		Verified: user.Verified,
+{% endif %}
+{% for c in config.authentication.jwt.claims %}
+{% if c.name not in ['user_id', 'email', 'role', 'verified'] %}
+{% set field_name = c.name | replace('_', ' ') | title | replace(' ', '') %}
+		{{ field_name }}: user.{{ field_name }},
+{% endif %}
+{% endfor %}
+	}
+
+	token, err := jwtpkg.GenerateJWT(jwtPayload)
 	if err != nil {
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "token_generation_failed")
 	}
 
 {% if auth.refresh_token.enabled %}
-	refreshToken, err := jwtpkg.GenerateRefreshJWT(user.ID, user.Fullname, user.Email, {% if auth.email_password.email_verification.enabled %}user.{{ auth.email_password.email_verification.model_field }}{% else %}true{% endif %})
+	refreshToken, err := jwtpkg.GenerateRefreshJWT(jwtPayload)
 	if err != nil {
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "token_generation_failed")
 	}
 {% endif %}
+{% if auth.email_verification.enabled %}
+	// Check if email is verified
+	if !user.Verified {
+		return c.Status( fiber.StatusForbidden).JSON(dtopkg.AuthUserResponse{
+		Token: token,
+{% if auth.refresh_token.enabled %}
+		RefreshToken: refreshToken,
+{% endif %}
+		Verified: false,
+	}
+	,)
+	}
+{% endif %}
+
 
 	return c.JSON(dtopkg.AuthUserResponse{
 		Token: token,
 {% if auth.refresh_token.enabled %}
 		RefreshToken: refreshToken,
 {% endif %}
-		User: &dtopkg.dtopkg.UserResponse{
-			ID:       user.ID,
-			Email:    user.Email,
-			Fullname: user.Fullname,
-{% if config.rbac.enabled %}
-			Role:     user.{{ config.rbac.model_field }},
+{% if auth.email_verification.enabled %}
+		Verified: true,
 {% endif %}
-		},
+		
 	})
 }
 {% endif %}
 
-{% if auth.email_password.email_verification.enabled %}
+{% if auth.email_verification.enabled %}
 // VerifyEmail handles email verification with OTP.
 // @Summary Verify email
 // @Description Verify user email with OTP code
@@ -349,24 +419,47 @@ func LoginUser(c *fiber.Ctx) error {
 // @Failure 400 {object} resppkg.ErrorResponse "Invalid or expired OTP"
 // @Failure 500 {object} resppkg.ErrorResponse "Internal server error"
 // @Router /api/user/verify-email [post]
-func VerifyEmail(c *fiber.Ctx) error {
+func (h *AuthHandler) VerifyEmail(c *fiber.Ctx) error {
 	var input dtopkg.VerifyEmailInput
 	if err := c.BodyParser(&input); err != nil {
 		return errorspkg.SendError(c, fiber.StatusBadRequest, "invalid_json")
 	}
 
-	userEmail := c.Locals("email").(string)
 
-	if !authpkg.VerifyOTP(userEmail, input.OTP) {
-		return errorspkg.SendError(c, fiber.StatusBadRequest, "invalid_or_expired_otp")
+
+	userID := c.Locals('user_id'). (uint)
+
+	if userID == 0 {
+		return errorspkg.SendError(c, fiber.StatusUnauthorized, "unauthorized")
 	}
 
-	{{ repo_var }} := utilspkg.Get{{ config.project.repository_name }}(c)
+	dbConn := utilspkg.GetDB(c)
+	if dbConn == nil {
+		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
+	}
+
+	{{ repo_var }} := dbConn.Auth
 	if {{ repo_var }} == nil {
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "db_connection_failed")
 	}
 
-	if err := {{ repo_var }}.UpdateUserVerification(userEmail, true); err != nil {
+
+	user, err := {{ repo_var }}.GetByID(userID, "id", "email", "verified")
+	if err != nil {
+		return errorspkg.SendError(c, fiber.StatusNotFound, "user_not_found")
+	}
+
+	if user.Verified {
+		return errorspkg.SendError(c, fiber.StatusBadRequest, "email_already_verified")
+	}
+
+
+	if !authpkg.VerifyOTP(user.Email, input.OTP) {
+		return errorspkg.SendError(c, fiber.StatusBadRequest, "invalid_or_expired_otp")
+	}
+
+	
+	if err := {{ repo_var }}.UpdateUserVerification(user.Email, true); err != nil {
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "verification_failed")
 	}
 
@@ -387,23 +480,34 @@ func VerifyEmail(c *fiber.Ctx) error {
 // @Failure 404 {object} resppkg.ErrorResponse "User not found"
 // @Failure 500 {object} resppkg.ErrorResponse "Internal server error"
 // @Router /api/user/resend-verification [post]
-func ResendVerification(c *fiber.Ctx) error {
+func (h *AuthHandler) ResendVerification(c *fiber.Ctx) error {
 	var input dtopkg.ResendVerificationInput
 	if err := c.BodyParser(&input); err != nil {
 		return errorspkg.SendError(c, fiber.StatusBadRequest, "invalid_json")
 	}
 
-	{{ repo_var }} := utilspkg.Get{{ config.project.repository_name }}(c)
+	userID := c.Locals('user_id'). (uint)
+	if userID == 0 {
+		return errorspkg.SendError(c, fiber.StatusUnauthorized, "unauthorized")
+	}
+
+	dbConn := utilspkg.GetDB(c)
+	if dbConn == nil {
+		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
+	}
+
+	{{ repo_var }} := dbConn.Auth
 	if {{ repo_var }} == nil {
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "db_connection_failed")
 	}
 
-	user, err := {{ repo_var }}.GetUserByEmail(input.Email)
+
+	user, err := {{ repo_var }}.GetByID(userID, "id", "email", "verified")
 	if err != nil {
 		return errorspkg.SendError(c, fiber.StatusNotFound, "user_not_found")
 	}
 
-	if user.{{ auth.email_password.email_verification.model_field }} {
+	if user.Verified {
 		return errorspkg.SendError(c, fiber.StatusBadRequest, "email_already_verified")
 	}
 
@@ -411,9 +515,8 @@ func ResendVerification(c *fiber.Ctx) error {
 	otp := authpkg.GenerateOTP()
 	authpkg.StoreOTP(user.Email, otp)
 	go func() {
-		err := emailpkg.SendEmail(user.Email, "Email Verification", "{{ auth.email_password.email_verification.email_template }}", fiber.Map{
+		err := emailpkg.SendEmail(user.Email, "Email Verification", "{{ auth.email_verification.email_template }}", fiber.Map{
 			"code": otp,
-			"name": user.Fullname,
 		})
 		if err != nil {
 			log.Printf("Error sending email: %v", err)
@@ -438,24 +541,31 @@ func ResendVerification(c *fiber.Ctx) error {
 // @Failure 400 {object} resppkg.ErrorResponse "Invalid input"
 // @Failure 500 {object} resppkg.ErrorResponse "Internal server error"
 // @Router /api/auth/forgot-password [post]
-func ForgotPassword(c *fiber.Ctx) error {
+func (h *AuthHandler) ForgotPassword(c *fiber.Ctx) error {
 	var input dtopkg.ForgotPasswordInput
 	if err := c.BodyParser(&input); err != nil {
 		return errorspkg.SendError(c, fiber.StatusBadRequest, "invalid_json")
 	}
+	dbConn := utilspkg.GetDB(c)
+	if dbConn == nil {
+		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
+	}
 
-	{{ repo_var }} := utilspkg.Get{{ config.project.repository_name }}(c)
+	{{ repo_var }} := dbConn.Auth
 	if {{ repo_var }} == nil {
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "db_connection_failed")
 	}
 
-{% if auth.email_password.forgot_password.identifier_field == 'email' %}
-	user, err := {{ repo_var }}.GetUserByEmail(input.Email)
-{% elif auth.email_password.forgot_password.identifier_field == 'username' %}
-	user, err := {{ repo_var }}.GetUserByUsername(input.Username)
-{% elif auth.email_password.forgot_password.identifier_field == 'email_or_username' %}
-	user, err := {{ repo_var }}.GetUserByEmailOrUsername(input.Identifier)
-{% endif %}
+	{% set forgot_fields = ['"email"'] %}
+	{% if auth.email_password.forgot_password.identifier_field == 'email' %}
+		user, err := {{ repo_var }}.{{auth.email_password.forgot_password.repository_method}}(input.Email, {{ forgot_fields | join(', ') }})
+	{% elif auth.email_password.forgot_password.identifier_field == 'username' %}
+		user, err := {{ repo_var }}.{{auth.email_password.forgot_password.repository_method}}(input.Username, {{ forgot_fields | join(', ') }})
+	{% elif auth.email_password.forgot_password.identifier_field == 'email_or_username' %}
+		user, err := {{ repo_var }}.{{auth.email_password.forgot_password.repository_method}}(input.Identifier, {{ forgot_fields | join(', ') }})
+	{% endif %}
+
+
 	if err != nil {
 		// Don't reveal if user exists
 		return c.JSON(resppkg.SuccessResponse{
@@ -469,7 +579,6 @@ func ForgotPassword(c *fiber.Ctx) error {
 	go func() {
 		err := emailpkg.SendEmail(user.Email, "Password Reset", "{{ auth.email_password.forgot_password.email_template }}", fiber.Map{
 			"code": otp,
-			"name": user.Fullname,
 		})
 		if err != nil {
 			log.Printf("Error sending password reset email: %v", err)
@@ -492,25 +601,29 @@ func ForgotPassword(c *fiber.Ctx) error {
 // @Failure 400 {object} resppkg.ErrorResponse "Invalid OTP or weak password"
 // @Failure 500 {object} resppkg.ErrorResponse "Internal server error"
 // @Router /api/auth/reset-password [post]
-func ResetPassword(c *fiber.Ctx) error {
+func (h *AuthHandler) ResetPassword(c *fiber.Ctx) error {
 	var input dtopkg.ResetPasswordInput
 	if err := c.BodyParser(&input); err != nil {
 		return errorspkg.SendError(c, fiber.StatusBadRequest, "invalid_json")
 	}
+	dbConn := utilspkg.GetDB(c)
+	if dbConn == nil {
+		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
+	}
 
-	{{ repo_var }} := utilspkg.Get{{ config.project.repository_name }}(c)
+	{{ repo_var }} := dbConn.Auth
 	if {{ repo_var }} == nil {
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "db_connection_failed")
 	}
 
 	// Get user
-{% if auth.email_password.forgot_password.identifier_field == 'email' %}
-	user, err := {{ repo_var }}.GetUserByEmail(input.Email)
-{% elif auth.email_password.forgot_password.identifier_field == 'username' %}
-	user, err := {{ repo_var }}.GetUserByUsername(input.Username)
-{% elif auth.email_password.forgot_password.identifier_field == 'email_or_username' %}
-	user, err := {{ repo_var }}.GetUserByEmailOrUsername(input.Identifier)
-{% endif %}
+	{% if auth.email_password.forgot_password.identifier_field == 'email' %}
+		user, err := {{ repo_var }}.{{auth.email_password.forgot_password.repository_method}}(input.Email, "id", "email")
+	{% elif auth.email_password.forgot_password.identifier_field == 'username' %}
+		user, err := {{ repo_var }}.{{auth.email_password.forgot_password.repository_method}}(input.Username, "id", "email")
+	{% elif auth.email_password.forgot_password.identifier_field == 'email_or_username' %}
+		user, err := {{ repo_var }}.{{auth.email_password.forgot_password.repository_method}}(input.Identifier, "id", "email")
+	{% endif %}
 	if err != nil {
 		return errorspkg.SendError(c, fiber.StatusBadRequest, "invalid_credentials")
 	}
@@ -529,11 +642,9 @@ func ResetPassword(c *fiber.Ctx) error {
 	if err != nil {
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "password_hash_failed")
 	}
-
-	if err := {{ repo_var }}.UpdateUserPassword(user.Email, hashedPassword); err != nil {
+	if err := {{ repo_var }}.UpdateUserPassword(user.ID, hashedPassword); err != nil {
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "password_update_failed")
 	}
-
 	return c.JSON(resppkg.SuccessResponse{
 		Message: "password_reset_successfully",
 	})
@@ -554,7 +665,7 @@ func ResetPassword(c *fiber.Ctx) error {
 // @Failure 401 {object} resppkg.ErrorResponse "Unauthorized or incorrect old password"
 // @Failure 500 {object} resppkg.ErrorResponse "Internal server error"
 // @Router /api/user/change-password [post]
-func ChangePassword(c *fiber.Ctx) error {
+func (h *AuthHandler) ChangePassword(c *fiber.Ctx) error {
 	var input dtopkg.ChangePasswordInput
 	if err := c.BodyParser(&input); err != nil {
 		return errorspkg.SendError(c, fiber.StatusBadRequest, "invalid_input")
@@ -565,20 +676,33 @@ func ChangePassword(c *fiber.Ctx) error {
 		return errorspkg.SendError(c, fiber.StatusBadRequest, "validation_failed", err.Error())
 	}
 
-{% if auth.email_password.password_validation %}
-	if err := authpkg.ValidatePassword(input.NewPassword); err != nil {
-		return errorspkg.SendError(c, fiber.StatusBadRequest, "weak_password", err.Error())
+	{% if auth.email_password.password_validation %}
+		if err := authpkg.ValidatePassword(input.NewPassword); err != nil {
+			return errorspkg.SendError(c, fiber.StatusBadRequest, "weak_password", err.Error())
+		}
+	{% endif %}
+
+	userID := c.Locals('user_id'). (uint)
+
+	if userID == 0 {
+		return errorspkg.SendError(c, fiber.StatusUnauthorized, "unauthorized")
 	}
-{% endif %}
 
-	userEmail := c.Locals("email").(string)
+	dbConn := utilspkg.GetDB(c)
+	if dbConn == nil {
+		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
+	}
 
-	{{ repo_var }} := utilspkg.Get{{ config.project.repository_name }}(c)
+	{{ repo_var }} := dbConn.Auth
 	if {{ repo_var }} == nil {
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "db_connection_failed")
 	}
 
-	userData, err := {{ repo_var }}.GetUserByEmail(userEmail)
+{% if auth.email_password.change_password.require_old_password %}
+	userData, err := {{ repo_var }}.GetByID(userID, "id", "password")
+{% else %}
+	userData, err := {{ repo_var }}.GetByID(userID, "id")
+{% endif %}
 	if err != nil {
 		return errorspkg.SendError(c, fiber.StatusNotFound, "user_not_found")
 	}
@@ -594,7 +718,7 @@ func ChangePassword(c *fiber.Ctx) error {
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "password_hash_failed")
 	}
 
-	if err := {{ repo_var }}.UpdateUserPassword(userEmail, hashedPassword); err != nil {
+	if err := {{ repo_var }}.UpdateUserPassword(userData.ID, hashedPassword); err != nil {
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "password_update_failed")
 	}
 
@@ -616,7 +740,7 @@ func ChangePassword(c *fiber.Ctx) error {
 // @Failure 400 {object} resppkg.ErrorResponse "Invalid token"
 // @Failure 500 {object} resppkg.ErrorResponse "Internal server error"
 // @Router /api/auth/refresh-token [post]
-func RefreshToken(c *fiber.Ctx) error {
+func (h *AuthHandler) RefreshToken(c *fiber.Ctx) error {
 	var input dtopkg.RefreshTokenInput
 	if err := c.BodyParser(&input); err != nil {
 		return errorspkg.SendError(c, fiber.StatusBadRequest, "invalid_json")
@@ -627,14 +751,60 @@ func RefreshToken(c *fiber.Ctx) error {
 		return errorspkg.SendError(c, fiber.StatusUnauthorized, "invalid_refresh_token")
 	}
 
+	jwtPayload := jwtpkg.TokenPayload{
+		UserID: userID,
+	}
+{% set use_email = config.authentication.email_password.enabled or config.authentication.social_auth.google.enabled or config.authentication.social_auth.facebook.enabled %}
+{% if use_email %}
+	if val, ok := claims["email"]; ok {
+		if str, ok := val.(string); ok {
+			jwtPayload.Email = str
+		}
+	}
+{% endif %}
+{% if config.rbac.enabled %}
+	if val, ok := claims["role"]; ok {
+		if str, ok := val.(string); ok {
+			jwtPayload.Role = str
+		}
+	}
+{% endif %}
+{% if config.authentication.email_verification.enabled %}
+	if val, ok := claims["verified"]; ok {
+		if b, ok := val.(bool); ok {
+			jwtPayload.Verified = b
+		}
+	}
+{% endif %}
+{% for c in config.authentication.jwt.claims %}
+{% if c.name not in ['user_id', 'email', 'role', 'verified'] %}
+{% set field_name = c.name | replace('_', ' ') | title | replace(' ', '') %}
+	if val, ok := claims["{{ c.name }}"]; ok {
+{% if c.type == 'uint' or c.type == 'int' %}
+		if num, ok := val.(float64); ok {
+			jwtPayload.{{ field_name }} = {{ c.type }}(num)
+		}
+{% elif c.type == 'bool' %}
+		if b, ok := val.(bool); ok {
+			jwtPayload.{{ field_name }} = b
+		}
+{% else %}
+		if str, ok := val.({{ c.type }}); ok {
+			jwtPayload.{{ field_name }} = str
+		}
+{% endif %}
+	}
+{% endif %}
+{% endfor %}
+
 	// Generate new tokens
-	token, err := jwtpkg.GenerateJWT(claims.UserID, claims.Fullname, claims.Email, claims.Verified)
+	token, err := jwtpkg.GenerateJWT(jwtPayload)
 	if err != nil {
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "token_generation_failed")
 	}
 
 {% if auth.refresh_token.rotate_on_refresh %}
-	newRefreshToken, err := jwtpkg.GenerateRefreshJWT(claims.UserID, claims.Fullname, claims.Email, claims.Verified)
+	newRefreshToken, err := jwtpkg.GenerateRefreshJWT(jwtPayload)
 	if err != nil {
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "token_generation_failed")
 	}
@@ -661,7 +831,7 @@ func RefreshToken(c *fiber.Ctx) error {
 // @Security FullAuth
 // @Success 200 {object} resppkg.SuccessResponse "Logged out successfully"
 // @Router /api/auth/logout [post]
-func Logout(c *fiber.Ctx) error {
+func (h *AuthHandler) Logout(c *fiber.Ctx) error {
 	// In stateless JWT, logout is handled on client side
 	// If using token blacklist/database storage, invalidate token here
 	return c.JSON(resppkg.SuccessResponse{
@@ -669,3 +839,67 @@ func Logout(c *fiber.Ctx) error {
 	})
 }
 {% endif %}
+
+// SearchUsers searches for users by dynamic fields
+// @Summary Search users
+// @Description Search for users with dynamic filtering, pagination and field selection
+// @Tags Authentication
+// @Produce json
+// @Param q query string false "Search query"
+// @Param limit query int false "Limit" default(20)
+// @Param offset query int false "Offset" default(0)
+// @Param search_fields query string false "Comma separated search fields (id,email,username,fullname,fcm_token)"
+// @Param return_fields query string false "Comma separated return fields"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/auth/users/search [get]
+func (h *AuthHandler) SearchUsers(c *fiber.Ctx) error {
+	query := c.Query("q")
+	limit, _ := strconv.Atoi(c.Query("limit", "20"))
+	offset, _ := strconv.Atoi(c.Query("offset", "0"))
+	searchFieldsRaw := c.Query("search_fields")
+	returnFieldsRaw := c.Query("return_fields")
+
+	var searchFields []string
+	if searchFieldsRaw != "" {
+		searchFields = strings.Split(searchFieldsRaw, ",")
+	} else {
+		// Default search fields
+		searchFields = []string{"id"}
+		{% if _uses_email %}
+		searchFields = append(searchFields, "email")
+		{% endif %}
+		{% if _uses_username %}
+		searchFields = append(searchFields, "username")
+		{% endif %}
+		{% if _name_field %}
+		searchFields = append(searchFields, "{{ _name_field }}")
+		{% endif %}
+		
+		{% if _uses_fcm %}
+		searchFields = append(searchFields, "fcm_token")
+		{% endif %}
+	}
+
+	var returnFields []string
+	if returnFieldsRaw != "" {
+		returnFields = strings.Split(returnFieldsRaw, ",")
+	}
+
+	repo := utilspkg.GetRepo(c).Auth
+	users, hasMore, err := repo.SearchUsers(repository.UserSearchOptions{
+		Query:        query,
+		SearchFields: searchFields,
+		ReturnFields: returnFields,
+		Limit:        limit,
+		Offset:       offset,
+	})
+
+	if err != nil {
+		return errorspkg.SendError(c, fiber.StatusInternalServerError, "search_failed")
+	}
+
+	return c.JSON(fiber.Map{
+		"users":    users,
+		"has_more": hasMore,
+	})
+}

@@ -239,7 +239,7 @@ func CSRFMiddleware(store *session.Store) fiber.Handler {
 // DASHBOARD ACCESS CONTROL
 // ============================================
 // NOTE: These functions assume your User model has:
-//   - user.{{config.rbac.model_field }} field (string)
+//   - user.Role field (string)
 //   - rbac.GetDashboardBasePath() function exists
 // If your model is different, disable this and create custom middleware
 
@@ -256,7 +256,7 @@ func SmartDashboardRedirect(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusNotFound, "internal_server_error")
 	}
 
-	dashBase := rbac.GetDashboardBasePath(user.{{config.rbac.model_field }})
+	dashBase := rbac.GetDashboardBasePath(user.Role)
 	return c.Redirect(dashBase+"/", fiber.StatusFound)
 }
 
@@ -274,7 +274,7 @@ func EnsureCorrectDashboardAccess() fiber.Handler {
 			return fiber.NewError(fiber.StatusNotFound, "internal_server_error")
 		}
 
-		correctDashBase := rbac.GetDashboardBasePath( user.{{config.rbac.model_field }})
+		correctDashBase := rbac.GetDashboardBasePath(user.Role)
 		currentPath := c.Path()
 
 		switch {

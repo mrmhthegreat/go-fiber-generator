@@ -81,7 +81,7 @@ func (s *RBACService) HasPermission(ctx context.Context, userID uint, permission
         return false, err
     }
 
-    if user.{{config.rbac.model_field}} == "{{config.rbac.all_privileges}}" {
+    if user.Role == "{{config.rbac.all_privileges}}" {
         s.cachePermission(ctx, cacheKey, true)
         return true, nil
     }
@@ -144,7 +144,7 @@ func (s *RBACService) GetUserPermissions(ctx context.Context, userID uint) (map[
 
     perms := make(map[string]bool)
 
-    if user.{{config.rbac.model_field}} == "{{ config.rbac.all_privileges }}" {
+    if user.Role == "{{ config.rbac.all_privileges }}" {
         var allPerms []domain.Permission
         s.DB.Find(&allPerms)
         for _, p := range allPerms {
@@ -187,8 +187,8 @@ func (s *RBACService) GetRoleDefaultPermissions(roleName string) []string {
 }
 
 func (s *RBACService) getUserRole(user *domain.{{config.project.user_model_name}}) string {
-    if user.{{config.rbac.model_field}} != "" {
-        return user.{{config.rbac.model_field}}
+    if user.Role != "" {
+        return user.Role
     }
 
     return "{{ config.rbac.default_role }}"

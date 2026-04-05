@@ -1,41 +1,25 @@
 project:
   module: github.com/username/my_api
   user_model_name: User  # Name of the user model struct
-  repository_name: UserRepository  # Repository interface name to use
 
 
 email:
   enabled: true
-  provider: smtp
-  smtp_host_env: SMTP_HOST
-  smtp_port_env: SMTP_PORT
-  smtp_user_env: SMTP_EMAIL
-  smtp_password_env: SMTP_EMAIL_PASSWORD
-  
+ 
 session:
   enabled: true
-  secret_key_env: CHANGE_THIS_SESSION_SECRET
-  cookies_secret_key_env: CHANGE_THIS_COOKIES_SECRET
-  cookie_http_only: true
-  cookie_secure: false # set to true in production
-  expiration: "24 * time.Hour"
-  store_context_key: "session"
 
 
 authentication:
-  # ─────────────────────────────────────────────────────────────────────────
-  # REPOSITORY VARIABLE NAME
-  # The variable name used in every handler/controller to call repo methods.
-  # e.g.  authRepo.GetUserByEmail(...)  instead of  db.GetUserByEmail(...)
-  # Must match the name you wire up via contexthelpers.Get<RepositoryName>(c)
-  # ─────────────────────────────────────────────────────────────────────────
-  repo_var: authRepo  # Used as: authRepo.GetUserByEmail(...)
+  enabled: true
   # ─────────────────────────────────────────────────────────────────────────
   # SESSION CONFIG  (used by web_auth_handler)
   # ─────────────────────────────────────────────────────────────────────────
   session:
-    enabled: true  # Set false for pure JWT / API-only projects
-
+    enabled: false
+    claims:
+      - { name: role, type: string }
+    
   # Middleware to apply to registration endpoint
   register_middleware: []
   jwt:
@@ -45,10 +29,7 @@ authentication:
     secret_key_env: JWT_SECRET
     
     claims:
-      - { name: user_id, type: uint }
-      - { name: email, type: string }
       - { name: role, type: string }
-      - { name: verified, type: bool }
   
   # =============================================================================
   # IDENTIFIER CONFIGURATION
@@ -57,6 +38,7 @@ authentication:
   identifier:
     # Login methods - defines what fields users can login with
     # Only ONE should have enabled: true at a time
+    name_pool: ["fullname",] 
     login_methods:
       - field: email
         enabled: false  # Set to true to use email-only login
@@ -88,7 +70,7 @@ authentication:
         dto_description: "Email or username"
         rate_limit:
           enabled: false
-          name: email_or_username_login_rate_limit
+          name: login_rate_limit
         middleware: []
     
     # Registration fields configuration
@@ -160,27 +142,11 @@ authentication:
       require_lowercase: true
       require_number: true
       require_special: true
-    
-    # Email Verification
-    email_verification:
-      enabled: true
-      require_on_registration: true
-      otp_length: 6
-      otp_expiry: 10m
-      email_template: templates/email_verification.html
-      model_field: Verified  # Field name in User model (bool)
-      rate_limit:
-        enabled: false
-        name: email_verification_rate_limit
-      middleware: []
-      endpoints:
-        - verify_email
-        - resend_verification
-    
     # Forgot Password Flow
     forgot_password:
       enabled: true
       otp_expiry: 10m
+      repository_method: GetUserByEmailOrUsernameForgot
       email_template: templates/password_reset.html
       rate_limit:
         enabled: false
@@ -189,11 +155,6 @@ authentication:
       
       # Input field for password reset - matches login_methods
       identifier_field: email_or_username  # Can use: email, username, or email_or_username
-      
-      endpoints:
-        - forgot_password
-        - reset_password
-    
     # Change Password
     change_password:
       enabled: true
@@ -202,13 +163,18 @@ authentication:
         enabled: false
         name: change_password_rate_limit
       middleware: []
-      endpoints:
-        - change_password
-    
-    endpoints:
-      - register
-      - login
   
+  email_verification:
+    enabled: true
+    require_on_registration: true
+    otp_length: 6
+    otp_expiry: 10m
+    email_template: templates/email_verification.html
+    rate_limit:
+      enabled: false
+      name: email_verification_rate_limit
+    middleware: []
+    
   # Social Authentication
   social_auth:
     google:
@@ -221,20 +187,16 @@ authentication:
       
       # Field mapping from OAuth to User model
       field_mapping:
-        - { source: email, target: Email, required: true }
         - { source: name, target: Fullname, required: false }
         - { source: picture, target: ProfileImage, required: false }
-        - { source: id, target: GoogleID, required: true, unique: true }
       
       # Repository method to find user by Google ID
       repository_method: GetUserByGoogleID  # Method name in your repository
-      model_field: GoogleID  # Field name in User model (*string type)
       
       endpoints:
         api:
           enabled: true
           path: /api/auth/google
-
           method: POST
         web:
           enabled: true
@@ -251,14 +213,11 @@ authentication:
       
       # Field mapping from OAuth to User model
       field_mapping:
-        - { source: email, target: Email, required: true }
         - { source: name, target: Fullname, required: false }
-        - { source: id, target: FacebookID, required: true, unique: true }
       
       # Repository method to find user by Facebook ID
       repository_method: GetUserByFacebookID  # Method name in your repository
-      model_field: FacebookID  # Field name in User model (*string type)
-      
+
       endpoints:
         api:
           enabled: true
@@ -278,15 +237,13 @@ authentication:
       enabled: false
       name: refresh_token_rate_limit
     middleware: []
-    endpoints:
-      - refresh_token
+    
   
   # Logout
   logout:
     enabled: true
     clear_tokens: true
-    endpoints:
-      - logout
+    
   
   # App Check Tokens - Generate custom JWT tokens with different configs
   app_check_tokens:
@@ -316,20 +273,16 @@ authentication:
   # Web Authentication (Session-based)
   web_auth:
     enabled: true
-    package_name: handlers
-    
     endpoints:
       login:
         enabled: true
         path: /auth/login
-        handler: LoginPage
         rate_limit:
           enabled: false
           name: login_rate_limit
       signup:
         enabled: true
         path: /auth/signup
-        handler: SignupPage
         middleware: []
         rate_limit:
           enabled: false
@@ -337,14 +290,12 @@ authentication:
       logout:
         enabled: true
         path: /auth/logout
-        handler: HandleLogout
         rate_limit:
           enabled: false
           name: logout_rate_limit
       verify_email:
         enabled: true
         path: /auth/verify
-        handler: VerifyEmailPage
         middleware: [login]
 
         rate_limit:
@@ -353,23 +304,13 @@ authentication:
       forgot_password:
         enabled: true
         path: /auth/forgot-password
-        handler: ForgotPasswordPage
         rate_limit:
           enabled: false
           name: forgot_password_rate_limit
       reset_password:
         enabled: true
         path: /auth/reset-password
-        handler: HandleResetPassword
         rate_limit:
           enabled: false
           name: reset_password_rate_limit
-     
-    # Social auth on web (handled by social_auth_controller.go)
-    social_auth:
-      google:
-        enabled: true  # Uses GoogleLoginWeb, GoogleCallbackWeb
-      facebook:
-        enabled: true  # Uses FacebookLoginWeb, FacebookCallbackWeb
-  
   

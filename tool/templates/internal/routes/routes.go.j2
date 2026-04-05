@@ -1,0 +1,428 @@
+package routes
+
+import (
+    "github.com/gofiber/fiber/v2"
+    "github.com/gofiber/fiber/v2/middleware/session"
+    {% if config.websocket.enabled %}
+    "github.com/gofiber/contrib/websocket"
+    {% endif %}
+
+    "{{ config.project.module }}/internal/api/handlers"
+    "{{ config.project.module }}/pkg/middleware"
+    {% if config.template_engine.enabled %}
+    "{{ config.project.module }}/internal/web"
+    {% endif %}
+    "{{ config.project.module }}/config"
+    {% if config.fcm.enabled %}
+    fcmhandler "{{ config.project.module }}/internal/api/handlers"
+    {% endif %}
+    {% if config.imap.enabled %}
+    emailhandler "{{ config.project.module }}/internal/api/handlers"
+    {% endif %}
+    {% if config.rbac.enabled %}
+    "{{ config.project.module }}/internal/rbac"
+    {% endif %}
+)
+
+// SetupRoutes initialises all application routes
+func SetupRoutes(
+    app *fiber.App,
+    store *session.Store,
+    cfg *config.Config,
+    {% if config.rbac.enabled %}
+    rbacSvc *rbac.Service,
+    {% endif %}
+) {
+    // ── Global Middleware ─────────────────────────────────────────────────────
+    middleware.SetupGlobalMiddleware(app, cfg)
+
+    // ── API Routes ────────────────────────────────────────────────────────────
+    setupAPIRoutes(app, cfg{% if config.rbac.enabled %}, rbacSvc{% endif %})
+
+    // ── Web Routes ────────────────────────────────────────────────────────────
+    {% if config.template_engine.enabled %}
+    setupWebRoutes(app, store, cfg{% if config.rbac.enabled %}, rbacSvc{% endif %})
+    {% endif %}
+
+    // ── WebSocket Routes ──────────────────────────────────────────────────────
+    {% if config.websocket.enabled %}
+    setupWebSocketRoutes(app, cfg)
+    {% endif %}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// API Routes
+// ─────────────────────────────────────────────────────────────────────────────
+
+func setupAPIRoutes(app *fiber.App, cfg *config.Config{% if config.rbac.enabled %}, rbacSvc *rbac.Service{% endif %}) {
+    api := app.Group("/api")
+
+    {% if config.middleware.rate_limit.enabled %}
+    api.Use(middleware.NewRateLimiter(middleware.APIBaseLimiter))
+    {% endif %}
+
+    setupPublicAPIRoutes(api, cfg)
+    setupProtectedAPIRoutes(api, cfg{% if config.rbac.enabled %}, rbacSvc{% endif %})
+}
+
+// ── Public API Routes (no auth required) ─────────────────────────────────────
+    {% set auth_eps = config.authentication.get('web_auth', {}).get('endpoints', {}) %}
+func setupPublicAPIRoutes(api fiber.Router, cfg *config.Config) {
+    {% if config.middleware.rate_limit.enabled %}
+    authGroup := api.Group("/auth", middleware.NewRateLimiter(middleware.AuthLimiter))
+    {% else %}
+    authGroup := api.Group("/auth")
+    {% endif %}
+
+    {% if config.authentication.email_password.enabled %}
+    authGroup.Post("{{ auth_eps.get('signup', {}).get('path', '/register') | replace('/auth', '') }}", handlers.RegisterUser)
+    authGroup.Post("{{ auth_eps.get('login', {}).get('path', '/login') | replace('/auth', '') }}",    handlers.LoginUser)
+
+    {% if config.authentication.email_password.forgot_password.enabled %}
+    {% set fp = config.authentication.email_password.forgot_password %}
+    authGroup.Post("{{ auth_eps.get('forgot_password', {}).get('path', fp.get('path', '/forgot-password')) | replace('/auth', '') }}", handlers.ForgotPassword)
+    authGroup.Post("{{ auth_eps.get('reset_password', {}).get('path', fp.get('reset_path', '/reset-password')) | replace('/auth', '') }}",  handlers.ResetPassword)
+    {% endif %}
+    {% endif %}
+
+    {% if config.authentication.refresh_token is defined and config.authentication.refresh_token.enabled %}
+    {% set rt = config.authentication.refresh_token %}
+    authGroup.Post("{{ rt.get('path', '/refresh') }}", handlers.RefreshToken)
+    {% endif %}
+
+    // ── Social Login ──────────────────────────────────────────────────────────
+    {% if config.authentication.social_auth.google.enabled %}
+    {% set gapi = config.authentication.social_auth.google.get('endpoints', {}).get('api', {}) %}
+    authGroup.{{ gapi.get('method', 'POST') | title }}("{{ gapi.get('path', '/google') | replace('/api', '') | replace('/auth', '') }}", handlers.GoogleLogin)
+    {% endif %}
+    {% if config.authentication.social_auth.facebook.enabled %}
+    {% set fbapi = config.authentication.social_auth.facebook.get('endpoints', {}).get('api', {}) %}
+    authGroup.{{ fbapi.get('method', 'POST') | title }}("{{ fbapi.get('path', '/facebook') | replace('/api', '') | replace('/auth', '') }}", handlers.FacebookLogin)
+    {% endif %}
+    {% if config.authentication.get('social_auth', {}).get('apple', {}).get('enabled') %}
+    {% set apapi = config.authentication.social_auth.apple.get('endpoints', {}).get('api', {}) %}
+    authGroup.{{ apapi.get('method', 'POST') | title }}("{{ apapi.get('path', '/apple') | replace('/api', '') | replace('/auth', '') }}", handlers.AppleLogin)
+    {% endif %}
+
+    {% for tok in config.authentication.get('app_check_tokens', []) %}
+    {% if tok.enabled %}
+    // App-check token: {{ tok.name }}
+    authGroup.Post("{{ tok.path | default('/guest-token') }}", handlers.{{ tok.name | camel_case }}Handler)
+    {% endif %}
+    {% endfor %}
+}
+
+// ── Protected API Routes (JWT required by default) ────────────────────────────
+func setupProtectedAPIRoutes(api fiber.Router, cfg *config.Config{% if config.rbac.enabled %}, rbacSvc *rbac.Service{% endif %}) {
+    userGroup := api.Group("/user")
+
+    // ── User profile ──────────────────────────────────────────────────────────
+    userGroup.Get("/profile", handlers.GetUserProfile)
+    userGroup.Put("/profile", handlers.UpdateUserProfile)
+
+    {% if config.authentication.email_verification is defined and config.authentication.email_verification.enabled %}
+    // ── Email verification ────────────────────────────────────────────────────
+    userGroup.Post("/verify-email",          handlers.VerifyEmail)
+    userGroup.Post("/resend-verification",   handlers.ResendVerification)
+    {% endif %}
+
+    // ── Password ──────────────────────────────────────────────────────────────
+    userGroup.Post("/change-password", handlers.ChangePassword)
+
+    // ── Models (CRUD, dynamically generated from config.models) ──────────────
+    {% for model in config.models %}
+    {% set mn = model.name %}
+    {% set ml = mn | lower %}
+    {% set ctrl = model.controller | default({}) %}
+    {% set bp = ctrl.base_path | default('/' ~ ml ~ 's') | replace('/api','',1) %}
+    {% if ctrl.enabled | default(true) %}
+    // {{ mn }} endpoints
+    {{ ml }}Group := api.Group("{{ bp }}")
+    {% if ctrl.middleware %}
+    {% for m in ctrl.middleware %}
+    {{ ml }}Group.Use(middleware.{{ m | camel_case }}())
+    {% endfor %}
+    {% endif %}
+
+    {% set crud = ctrl.crud_settings | default({}) %}
+    {% if (crud['list'] is defined and crud['list'].enabled) or (crud['get_list'] is defined and crud['get_list'].enabled) %}
+    {{ ml }}Group.Get("{{ crud['list'].path | default('/') }}", {% if config.rbac.enabled %}middleware.RequirePerm(rbacSvc, "{{ ml }}.view"), {% endif %}handlers.List{{ mn }})
+    {% endif %}
+    {% if crud['get'] is defined and crud['get'].enabled %}
+    {{ ml }}Group.Get("{{ crud['get'].path | default('/:id') }}", {% if config.rbac.enabled %}middleware.RequirePerm(rbacSvc, "{{ ml }}.view"), {% endif %}handlers.Get{{ mn }})
+    {% endif %}
+    {% if crud['create'] is defined and crud['create'].enabled %}
+    {{ ml }}Group.Post("{{ crud['create'].path | default('/') }}", {% if config.rbac.enabled %}middleware.RequirePerm(rbacSvc, "{{ ml }}.create"), {% endif %}handlers.Create{{ mn }})
+    {% endif %}
+    {% if crud['update'] is defined and crud['update'].enabled %}
+    {{ ml }}Group.Put("{{ crud['update'].path | default('/:id') }}", {% if config.rbac.enabled %}middleware.RequirePerm(rbacSvc, "{{ ml }}.update"), {% endif %}handlers.Update{{ mn }})
+    {% endif %}
+    {% if crud['delete'] is defined and crud['delete'].enabled %}
+    {{ ml }}Group.Delete("{{ crud['delete'].path | default('/:id') }}", {% if config.rbac.enabled %}middleware.RequirePerm(rbacSvc, "{{ ml }}.delete"), {% endif %}handlers.Delete{{ mn }})
+    {% endif %}
+    {% for cg in model.custom_getters | default([]) %}
+    {% if cg.controller is defined and cg.controller.enabled %}
+    {% set rel_path = cg.controller.path | replace('/api', '') | replace(bp, '') %}
+    {{ ml }}Group.{{ cg.controller.method | default('GET') | camel_case }}("{{ rel_path }}", {% if config.rbac.enabled %}middleware.RequirePerm(rbacSvc, "{{ ml }}.view"), {% endif %}handlers.{{ cg.name }})
+    {% endif %}
+    {% endfor %}
+    {% endif %}
+    {% endfor %}
+
+    // ── Chat API routes ───────────────────────────────────────────────────────
+    {% if config.get('chat', {}).get('enabled') and config.chat.get('controller', {}).get('enabled') %}
+    {% set cc = config.chat.controller %}
+    chatGroup := api.Group("{{ cc.get('base_path', '/chat') | replace('/api','',1) }}")
+    {% if cc.get('middleware') %}{% for m in cc.middleware %}
+    chatGroup.Use(middleware.{{ m | camel_case }}())
+    {% endfor %}{% endif %}
+    {% set ce = cc.get('endpoints', {}) %}
+    {% if ce.get('list_conversations', {}).get('enabled') %}
+    chatGroup.Get("{{ ce.list_conversations.get('path', '/conversations') }}", {% if config.rbac.enabled and ce.list_conversations.get('permissions') %}{% for p in ce.list_conversations.permissions %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}{% endif %}handlers.ListConversations)
+    {% endif %}
+    {% if ce.get('list_messages', {}).get('enabled') %}
+    chatGroup.Get("{{ ce.list_messages.get('path', '/conversations/:id/messages') }}", {% if config.rbac.enabled and ce.list_messages.get('permissions') %}{% for p in ce.list_messages.permissions %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}{% endif %}handlers.ListMessages)
+    {% endif %}
+    {% if ce.get('send_message', {}).get('enabled') %}
+    chatGroup.Post("{{ ce.send_message.get('path', '/conversations/:id/messages') }}", {% if config.rbac.enabled and ce.send_message.get('permissions') %}{% for p in ce.send_message.permissions %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}{% endif %}handlers.SendMessage)
+    {% endif %}
+    {% if ce.get('mark_as_read', {}).get('enabled') %}
+    chatGroup.Post("{{ ce.mark_as_read.get('path', '/conversations/:id/read') }}", {% if config.rbac.enabled and ce.mark_as_read.get('permissions') %}{% for p in ce.mark_as_read.permissions %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}{% endif %}handlers.MarkConversationAsRead)
+    {% endif %}
+    {% endif %}
+
+    // ── Notifications API routes ──────────────────────────────────────────────
+    {% if config.get('notifications', {}).get('enabled') and config.notifications.get('controller', {}).get('enabled') %}
+    {% set nc = config.notifications.controller %}
+    notifGroup := api.Group("{{ nc.get('base_path', '/notifications') | replace('/api','',1) }}")
+    {% if nc.get('middleware') %}{% for m in nc.middleware %}
+    notifGroup.Use(middleware.{{ m | camel_case }}())
+    {% endfor %}{% endif %}
+    {% set ne = nc.get('endpoints', {}) %}
+    {% if ne.get('list', {}).get('enabled') %}
+    notifGroup.Get("{{ ne.list.get('path', '/list') }}", {% if config.rbac.enabled and ne.list.get('permissions') %}{% for p in ne.list.permissions %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}{% endif %}handlers.ListNotifications)
+    {% endif %}
+    {% if ne.get('mark_as_read', {}).get('enabled') %}
+    notifGroup.Post("{{ ne.mark_as_read.get('path', '/:id/read') }}", {% if config.rbac.enabled and ne.mark_as_read.get('permissions') %}{% for p in ne.mark_as_read.permissions %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}{% endif %}handlers.MarkNotificationAsRead)
+    {% endif %}
+    {% if ne.get('mark_all_as_read', {}).get('enabled') %}
+    notifGroup.Post("{{ ne.mark_all_as_read.get('path', '/read-all') }}", {% if config.rbac.enabled and ne.mark_all_as_read.get('permissions') %}{% for p in ne.mark_all_as_read.permissions %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}{% endif %}handlers.MarkAllNotificationsAsRead)
+    {% endif %}
+    {% if ne.get('bulk_mark_read', {}).get('enabled') %}
+    notifGroup.Post("{{ ne.bulk_mark_read.get('path', '/bulk-read') }}", {% if config.rbac.enabled and ne.bulk_mark_read.get('permissions') %}{% for p in ne.bulk_mark_read.permissions %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}{% endif %}handlers.BulkMarkNotificationsAsRead)
+    {% endif %}
+    {% if ne.get('unread_count', {}).get('enabled') %}
+    notifGroup.Get("{{ ne.unread_count.get('path', '/unread-count') }}", {% if config.rbac.enabled and ne.unread_count.get('permissions') %}{% for p in ne.unread_count.permissions %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}{% endif %}handlers.GetUnreadNotificationCount)
+    {% endif %}
+    {% if ne.get('delete', {}).get('enabled') %}
+    notifGroup.Delete("{{ ne.delete.get('path', '/:id') }}", {% if config.rbac.enabled and ne.delete.get('permissions') %}{% for p in ne.delete.permissions %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}{% endif %}handlers.DeleteNotification)
+    {% endif %}
+    {% endif %}
+    // ── FCM API routes ────────────────────────────────────────────────────────
+    {% if config.fcm.enabled and config.fcm.controller.enabled %}
+    {% set fc = config.fcm.controller %}
+    fcmGroup := api.Group("{{ fc.base_path | default('/fcm') | replace('/api','',1) }}")
+    {% if fc.middleware %}{% for m in fc.middleware %}
+    fcmGroup.Use(middleware.{{ m | camel_case }}())
+    {% endfor %}{% endif %}
+    {% if fc.SendFCM is defined and fc.SendFCM.enabled %}
+    fcmGroup.Post("{{ fc.SendFCM.path | default('/send') }}", {% if config.rbac.enabled and fc.SendFCM.permissions %}{% for p in fc.SendFCM.permissions %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}{% endif %}fcmhandler.SendFCMNotification)
+    {% endif %}
+    {% if fc.SubscribeToTopic is defined and fc.SubscribeToTopic.enabled %}
+    fcmGroup.Post("{{ fc.SubscribeToTopic.path | default('/subscribe') }}", {% if config.rbac.enabled and fc.SubscribeToTopic.permissions %}{% for p in fc.SubscribeToTopic.permissions %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}{% endif %}fcmhandler.SubscribeToFCMTopic)
+    {% endif %}
+    fcmGroup.Get("/users", fcmhandler.GetUsersWithFCMTokens)
+    {% endif %}
+
+    // ── IMAP / Email API routes ───────────────────────────────────────────────
+    {% if config.imap.enabled and config.imap.controller.enabled %}
+    {% set ic = config.imap.controller %}
+    emailGroup := api.Group("{{ ic.base_path | default('/emails') | replace('/api','',1) }}")
+    {% if ic.middleware %}{% for m in ic.middleware %}
+    emailGroup.Use(middleware.{{ m | camel_case }}())
+    {% endfor %}{% endif %}
+    {% if ic.GetEmailsList is defined and ic.GetEmailsList.enabled %}
+    emailGroup.Get("{{ ic.GetEmailsList.path | default('/') }}", {% if config.rbac.enabled and ic.GetEmailsList.permissions %}{% for p in ic.GetEmailsList.permissions %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}{% endif %}emailhandler.GetEmailsList)
+    {% endif %}
+    {% if ic.GetEmailDetail is defined and ic.GetEmailDetail.enabled %}
+    emailGroup.Get("{{ ic.GetEmailDetail.path | default('/:id') }}", {% if config.rbac.enabled and ic.GetEmailDetail.permissions %}{% for p in ic.GetEmailDetail.permissions %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}{% endif %}emailhandler.GetEmailDetail)
+    {% endif %}
+    {% if ic.SendEmail is defined and ic.SendEmail.enabled %}
+    emailGroup.Post("{{ ic.SendEmail.path | default('/compose') }}", {% if config.rbac.enabled and ic.SendEmail.permissions %}{% for p in ic.SendEmail.permissions %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}{% endif %}emailhandler.ComposeEmail)
+    {% endif %}
+    {% if ic.MarkEmailRead is defined and ic.MarkEmailRead.enabled %}
+    emailGroup.Patch("{{ ic.MarkEmailRead.path | default('/:id/read') }}", {% if config.rbac.enabled and ic.MarkEmailRead.permissions %}{% for p in ic.MarkEmailRead.permissions %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}{% endif %}emailhandler.MarkEmailRead)
+    {% endif %}
+    {% if ic.RefreshEmails is defined and ic.RefreshEmails.enabled %}
+    emailGroup.Post("{{ ic.RefreshEmails.path | default('/refresh') }}", {% if config.rbac.enabled and ic.RefreshEmails.permissions %}{% for p in ic.RefreshEmails.permissions %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}{% endif %}emailhandler.RefreshEmails)
+    {% endif %}
+    {% endif %}
+
+    // ── RBAC API routes ───────────────────────────────────────────────────────
+    {% if config.rbac.enabled and config.rbac.controller.enabled %}
+    {% set rc = config.rbac.controller %}
+    rbacAPIGroup := api.Group("{{ rc.base_path | default('/rbac') | replace('/api','',1) }}")
+    {% if rc.middleware %}{% for m in rc.middleware %}
+    rbacAPIGroup.Use(middleware.{{ m | camel_case }}())
+    {% endfor %}{% endif %}
+    {% if rc.ListRoles is defined and rc.ListRoles.enabled %}
+    rbacAPIGroup.Get("{{ rc.ListRoles.path | default('/roles') }}", {% for p in rc.ListRoles.get('permissions', []) %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}handlers.ListRBACRoles)
+    {% endif %}
+    {% if rc.GetRole is defined and rc.GetRole.enabled %}
+    rbacAPIGroup.Get("{{ rc.GetRole.path | default('/roles/:id') }}", {% for p in rc.GetRole.get('permissions', []) %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}handlers.GetRBACRole)
+    {% endif %}
+    {% if rc.CreateRole is defined and rc.CreateRole.enabled %}
+    rbacAPIGroup.Post("{{ rc.CreateRole.path | default('/roles') }}", {% for p in rc.CreateRole.get('permissions', []) %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}handlers.CreateRBACRole)
+    {% endif %}
+    {% if rc.UpdateRole is defined and rc.UpdateRole.enabled %}
+    rbacAPIGroup.Put("{{ rc.UpdateRole.path | default('/roles/:id') }}", {% for p in rc.UpdateRole.get('permissions', []) %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}handlers.UpdateRBACRole)
+    {% endif %}
+    {% if rc.DeleteRole is defined and rc.DeleteRole.enabled %}
+    rbacAPIGroup.Delete("{{ rc.DeleteRole.path | default('/roles/:id') }}", {% for p in rc.DeleteRole.get('permissions', []) %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}handlers.DeleteRBACRole)
+    {% endif %}
+    {% if rc.ListPermissions is defined and rc.ListPermissions.enabled %}
+    rbacAPIGroup.Get("{{ rc.ListPermissions.path | default('/permissions') }}", {% for p in rc.ListPermissions.get('permissions', []) %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}handlers.ListRBACPermissions)
+    {% endif %}
+    {% if rc.SyncPermissions is defined and rc.SyncPermissions.enabled %}
+    rbacAPIGroup.Post("{{ rc.SyncPermissions.path | default('/permissions/sync') }}", {% for p in rc.SyncPermissions.get('permissions', []) %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}handlers.SyncRBACPermissions)
+    {% endif %}
+    {% if rc.GetUserOverrides is defined and rc.GetUserOverrides.enabled %}
+    rbacAPIGroup.Get("{{ rc.GetUserOverrides.path | default('/users/:userId/overrides') }}", {% for p in rc.GetUserOverrides.get('permissions', []) %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}handlers.GetUserPermissionOverrides)
+    {% endif %}
+    {% if rc.SetUserOverride is defined and rc.SetUserOverride.enabled %}
+    rbacAPIGroup.Post("{{ rc.SetUserOverride.path | default('/users/:userId/overrides') }}", {% for p in rc.SetUserOverride.get('permissions', []) %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}handlers.SetUserPermissionOverride)
+    rbacAPIGroup.Put("{{ rc.SetUserOverride.path | default('/users/:userId/overrides') }}", {% for p in rc.SetUserOverride.get('permissions', []) %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}handlers.UpdateUserPermissionOverride)
+    {% endif %}
+    {% if rc.RemoveUserOverride is defined and rc.RemoveUserOverride.enabled %}
+    rbacAPIGroup.Delete("{{ rc.RemoveUserOverride.path | default('/users/:userId/overrides/:permId') }}", {% for p in rc.RemoveUserOverride.get('permissions', []) %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}handlers.DeleteUserPermissionOverride)
+    {% endif %}
+    {% if rc.BulkUpdateRolePermissions is defined and rc.BulkUpdateRolePermissions.enabled %}
+    rbacAPIGroup.Put("{{ rc.BulkUpdateRolePermissions.path | default('/roles/:id/permissions/bulk') }}", {% for p in rc.BulkUpdateRolePermissions.get('permissions', []) %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}handlers.BulkUpdateRolePermissions)
+    {% endif %}
+    {% if rc.GetUserPermissions is defined and rc.GetUserPermissions.enabled %}
+    rbacAPIGroup.Get("{{ rc.GetUserPermissions.path | default('/users/:userId/permissions/debug') }}", {% for p in rc.GetUserPermissions.get('permissions', []) %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}handlers.GetUserRolePermissions)
+    {% endif %}
+    {% if rc.InvalidateCache is defined and rc.InvalidateCache.enabled %}
+    rbacAPIGroup.Post("{{ rc.InvalidateCache.path | default('/cache/invalidate/:userId') }}", {% for p in rc.InvalidateCache.get('permissions', []) %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}handlers.InvalidateRBACCache)
+    {% endif %}
+    {% if rc.CheckPermission is defined and rc.CheckPermission.enabled %}
+    rbacAPIGroup.Post("{{ rc.CheckPermission.path | default('/check') }}", {% for p in rc.CheckPermission.get('permissions', []) %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}handlers.CheckRBACPermission)
+    {% endif %}
+    rbacAPIGroup.Get("/me/permissions", handlers.GetMyRBACPermissions)
+    rbacAPIGroup.Get("/users/search",   handlers.SearchUsersForRBAC)
+    {% endif %}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Web Routes (template-rendered HTML)
+// ─────────────────────────────────────────────────────────────────────────────
+{% if config.template_engine.enabled %}
+func setupWebRoutes(app *fiber.App, store *session.Store, cfg *config.Config{% if config.rbac.enabled %}, rbacSvc *rbac.Service{% endif %}) {
+    webRouter := app.Group("/")
+    middleware.SetupWebMiddleware(webRouter, store, cfg)
+
+    {% set we = config.authentication.get('web_auth', {}).get('endpoints', {}) %}
+    webRouter.Get("{{ we.get('home', {}).get('path', '/') }}",      web.HomeHandler)
+    webRouter.Get("{{ we.get('login', {}).get('path', '/login') }}", web.LoginHandler)
+
+    // ── Role-based Dashboards ─────────────────────────────────────────────────
+    {% if config.rbac.enabled and config.rbac.roles %}
+    {% for role in config.rbac.roles %}
+    // {{ role.name | title }} Dashboard
+    {{ role.name }}Group := webRouter.Group("{{ role.dashboard_path | default('/' ~ role.name) }}")
+    {{ role.name }}Group.Use(middleware.RequirePerm(rbacSvc, "{{ role.name }}.dashboard.view"))
+    {{ role.name }}Group.Get("/", web.{{ role.name | camel_case }}DashboardHomeHandler)
+
+    // ── FCM Web routes ────────────────────────────────────────────────────────
+    {% if config.fcm.enabled and config.fcm.web_handler.enabled %}
+    {% set fw = config.fcm.web_handler %}
+    {{ role.name }}FcmGroup := {{ role.name }}Group.Group("{{ fw.base_path | default('/dashboard/notifications') | replace('/dashboard', '') }}")
+    {% if fw.middleware %}{% for m in fw.middleware %}
+    {{ role.name }}FcmGroup.Use(middleware.{{ m | camel_case }}())
+    {% endfor %}{% endif %}
+    {% if fw.GetNotificationPage is defined and fw.GetNotificationPage.enabled %}
+    {{ role.name }}FcmGroup.Get("{{ fw.GetNotificationPage.path | default('/') }}", {% if fw.GetNotificationPage.permissions %}{% for p in fw.GetNotificationPage.permissions %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}{% endif %}web.FCMNotificationPage)
+    {% endif %}
+    {% if fw.SendFCM is defined and fw.SendFCM.enabled %}
+    {{ role.name }}FcmGroup.Post("{{ fw.SendFCM.path | default('/send') }}", {% if fw.SendFCM.permissions %}{% for p in fw.SendFCM.permissions %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}{% endif %}web.SendFCMWeb)
+    {% endif %}
+    {% endif %}
+
+    // ── IMAP Web routes ───────────────────────────────────────────────────────
+    {% if config.imap.enabled and config.imap.web_handler.enabled %}
+    {% set iw = config.imap.web_handler %}
+    {{ role.name }}EmailGroup := {{ role.name }}Group.Group("{{ iw.base_path | default('/dashboard/emails') | replace('/dashboard', '') }}")
+    {% if iw.middleware %}{% for m in iw.middleware %}
+    {{ role.name }}EmailGroup.Use(middleware.{{ m | camel_case }}())
+    {% endfor %}{% endif %}
+    {% if iw.GetInboxPage is defined and iw.GetInboxPage.enabled %}
+    {{ role.name }}EmailGroup.Get("{{ iw.GetInboxPage.path | default('/inbox') }}", {% if iw.GetInboxPage.permissions %}{% for p in iw.GetInboxPage.permissions %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}{% endif %}web.InboxPage)
+    {% endif %}
+    {% if iw.GetSentEmails is defined and iw.GetSentEmails.enabled %}
+    {{ role.name }}EmailGroup.Get("{{ iw.GetSentEmails.path | default('/sent') }}", {% if iw.GetSentEmails.permissions %}{% for p in iw.GetSentEmails.permissions %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}{% endif %}web.SentPage)
+    {% endif %}
+    {% if iw.GetEmailDetail is defined and iw.GetEmailDetail.enabled %}
+    {{ role.name }}EmailGroup.Get("{{ iw.GetEmailDetail.path | default('/:id') }}", {% if iw.GetEmailDetail.permissions %}{% for p in iw.GetEmailDetail.permissions %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}{% endif %}web.EmailDetailPage)
+    {% endif %}
+    {% if iw.SendEmail is defined and iw.SendEmail.enabled %}
+    {{ role.name }}EmailGroup.Post("{{ iw.SendEmail.path | default('/compose') }}", {% if iw.SendEmail.permissions %}{% for p in iw.SendEmail.permissions %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}{% endif %}web.ComposeEmailWeb)
+    {% endif %}
+    {% if iw.MarkEmailRead is defined and iw.MarkEmailRead.enabled %}
+    {{ role.name }}EmailGroup.Patch("{{ iw.MarkEmailRead.path | default('/:id/read') }}", {% if iw.MarkEmailRead.permissions %}{% for p in iw.MarkEmailRead.permissions %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}{% endif %}web.MarkEmailReadWeb)
+    {% endif %}
+    {% if iw.RefreshEmails is defined and iw.RefreshEmails.enabled %}
+    {{ role.name }}EmailGroup.Post("{{ iw.RefreshEmails.path | default('/refresh') }}", {% if iw.RefreshEmails.permissions %}{% for p in iw.RefreshEmails.permissions %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}{% endif %}web.RefreshEmailsWeb)
+    {% endif %}
+    {% endif %}
+
+    // ── RBAC Web routes ───────────────────────────────────────────────────────
+    {% if config.rbac.enabled and config.rbac.web_handler.enabled %}
+    {% set rw = config.rbac.web_handler %}
+    {{ role.name }}RbacGroup := {{ role.name }}Group.Group("{{ rw.base_path | default('/dashboard/rbac') | replace('/dashboard', '') }}")
+    {% if rw.middleware %}{% for m in rw.middleware %}
+    {{ role.name }}RbacGroup.Use(middleware.{{ m | camel_case }}())
+    {% endfor %}{% endif %}
+    {% if rw.ManageRolesPage is defined and rw.ManageRolesPage.enabled %}
+    {{ role.name }}RbacGroup.Get("{{ rw.ManageRolesPage.path | default('/roles') }}", {% for p in rw.ManageRolesPage.get('permissions', []) %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}web.RBACRolesPage)
+    {% endif %}
+    {% if rw.ManageOverridesPage is defined and rw.ManageOverridesPage.enabled %}
+    {{ role.name }}RbacGroup.Get("{{ rw.ManageOverridesPage.path | default('/overrides') }}", {% for p in rw.ManageOverridesPage.get('permissions', []) %}middleware.RequirePerm(rbacSvc, "{{ p }}"), {% endfor %}web.RBACOverridesPage)
+    {% endif %}
+    {% endif %}
+
+    {% endfor %}
+    {% endif %}
+}
+{% endif %}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WebSocket Routes
+// ─────────────────────────────────────────────────────────────────────────────
+{% if config.websocket.enabled %}
+func setupWebSocketRoutes(app *fiber.App, cfg *config.Config) {
+    ws := app.Group("/ws")
+    ws.Use(func(c *fiber.Ctx) error {
+        if websocket.IsWebSocketUpgrade(c) {
+            return c.Next()
+        }
+        return fiber.ErrUpgradeRequired
+    })
+
+    {% set handler_type = config.websocket.handler_type | default('unified') %}
+    {% if handler_type == 'unified' %}
+    ws.Get("/", websocket.New(handlers.UnifiedWebSocketHub))
+    {% else %}
+    // Dedicated WebSocket handlers per domain
+    {% if config.chat.enabled %}
+    ws.Get("{{ config.websocket.get('dedicated', {}).get('chat', {}).get('path', '/chat') | replace('/ws','',1) }}", websocket.New(handlers.ChatWebSocketHub))
+    {% endif %}
+    {% if config.chat.modes.get('support') %}
+    ws.Get("{{ config.websocket.get('dedicated', {}).get('support', {}).get('path', '/support') | replace('/ws','',1) }}", websocket.New(handlers.SupportWebSocketHub))
+    {% endif %}
+    {% if config.websocket.events %}
+    ws.Get("{{ config.websocket.get('dedicated', {}).get('events', {}).get('path', '/events') | replace('/ws','',1) }}", websocket.New(handlers.EventsWebSocketHub))
+    {% endif %}
+    ws.Get("{{ config.websocket.get('dedicated', {}).get('user', {}).get('path', '/user') | replace('/ws','',1) }}", websocket.New(handlers.UserWebSocketHub))
+    {% endif %}
+}
+{% endif %}

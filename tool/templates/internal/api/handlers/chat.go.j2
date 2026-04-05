@@ -16,14 +16,18 @@ import (
 	utilspkg "{{ config.project.module }}/pkg/utils"
 	errorspkg "{{ config.project.module }}/pkg/errors"
 	"{{ config.project.module }}/internal/domain"
-	project_ws "{{ config.project.module }}/pkg/websocket"
+	{% if config.get('notifications', {}).get('enabled', false) %}
+	notifpkg "{{ config.project.module }}/pkg/notification"
+{% endif %}
+{% if config.chat.get('websocket', {}).get('enabled', false) %}
+	project_ws "{{ config.project.module }}/internal/websocket"
+{% endif %}
 	resppkg "{{ config.project.module }}/pkg/response"
 )
 
 {% set global_ctrl  = config.chat.get('controller', {}) %}
 {% set user_ctrl_cfg = global_ctrl.get('user_config', {
     'use_repo': True,
-    'repo_name': 'UserRepository',
     'method': 'GetByID'
 }) %}
 {% set support_mode = config.chat.modes.get('support', false) %}
@@ -43,7 +47,7 @@ import (
     {'name': 'last_message', 'type': 'string'},
     {'name': 'priority', 'type': 'string', 'default': 'normal'}
 ] %}
-{% set conv_user_fields = config.chat.domain.conversation.fields %}
+{% set conv_user_fields = config.chat.models.conversation.fields %}
 {% set conv_user_field_names = conv_user_fields | map(attribute='name') | list %}
 {% set conv_fields = conv_user_fields | list %}
 {% for base in conv_base_fields %}
@@ -61,7 +65,7 @@ import (
     {'name': 'content', 'type': 'string', 'required': true},
     {'name': 'is_read', 'type': 'bool', 'default': false}
 ] %}
-{% set msg_user_fields = config.chat.domain.message.fields %}
+{% set msg_user_fields = config.chat.models.message.fields %}
 {% set msg_user_field_names = msg_user_fields | map(attribute='name') | list %}
 {% set msg_fields = msg_user_fields | list %}
 {% for base in msg_base_fields %}
@@ -78,7 +82,7 @@ import (
 {% set conv_read_only_f   = conv_fields | selectattr('name', 'equalto', 'is_read_only') | first | default({'name': 'is_read_only'}) %}
 
 {% set msg_conv_id_f      = msg_fields | selectattr('name', 'equalto', 'conversation_id') | first | default({'name': 'conversation_id'}) %}
-{% if ctrl.get('endpoints', {}).get('list_conversations', {}).get('enabled', false) %}
+{% if global_ctrl.get('endpoints', {}).get('list_conversations', {}).get('enabled', false) %}
 // ── GetUserConversations ─────────────────────────────────────────────────────
 // @Summary  Get conversations for the authenticated user
 // @Tags     Chat
@@ -90,7 +94,7 @@ import (
 // @Param    offset    query  int     false  "Pagination offset"  default(0)
 // @Param    limit     query  int     false  "Pagination limit"   default(20)
 // @Success  200  {object}  resppkg.ConversationListResponse
-// @Router   {{ global_ctrl.get('base_path', '/api/v1/chat') }}{{ ctrl.get('endpoints', {}).get('list_conversations', {}).get('path', '/conversations') }} [{{ ctrl.get('endpoints', {}).get('list_conversations', {}).get('method', 'GET') }}]
+// @Router   {{ global_ctrl.get('base_path', '/api/v1/chat') }}{{ global_ctrl.get('endpoints', {}).get('list_conversations', {}).get('path', '/conversations') }} [{{ global_ctrl.get('endpoints', {}).get('list_conversations', {}).get('method', 'GET') }}]
 func GetUserConversations(c *fiber.Ctx) error {
 	dbConn := utilspkg.GetDB(c)
 	if dbConn == nil {
@@ -100,9 +104,9 @@ func GetUserConversations(c *fiber.Ctx) error {
 	userID, _ := c.Locals("user_id").(uint)
 
 {% if user_ctrl_cfg.use_repo %}
-	userRepo := utilspkg.Get{{ user_ctrl_cfg.repo_name }}(dbConn)
+	userRepo := dbConn.{{ config.project.user_model_name }}
 	if userRepo == nil {
-		log.Println("{{ user_ctrl_cfg.repo_name }} not available")
+		log.Println("{{ user_ctrl_cfg.user_model_name }} not available")
 		return fiber.NewError(fiber.StatusInternalServerError, "db_connection_failed")
 	}
 	user, err := userRepo.{{ user_ctrl_cfg.method }}(userID)
@@ -131,7 +135,7 @@ func GetUserConversations(c *fiber.Ctx) error {
 		options.HasUnread = &hasUnread
 	}
 
-	chatRepo := utilspkg.GetChatRepository(dbConn)
+	chatRepo := dbConn.Chat
 	conversations, hasMore, _, err := chatRepo.GetUserConversations(options)
 	if err != nil {
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
@@ -161,7 +165,7 @@ func GetUserConversations(c *fiber.Ctx) error {
 }
 {% endif %}
 
-{% if ctrl.get('endpoints', {}).get('list_messages', {}).get('enabled', false) %}
+{% if global_ctrl.get('endpoints', {}).get('list_messages', {}).get('enabled', false) %}
 // ── GetUserChatHistory ───────────────────────────────────────────────────────
 // @Summary  Get message history for a conversation
 // @Tags     Chat
@@ -170,7 +174,7 @@ func GetUserConversations(c *fiber.Ctx) error {
 // @Param    offset  query  int  false  "Pagination offset"  default(0)
 // @Param    limit   query  int  false  "Pagination limit"   default(50)
 // @Success  200  {object}  resppkg.MessageListResponse
-// @Router   {{ global_ctrl.get('base_path', '/api/v1/chat') }}{{ ctrl.get('endpoints', {}).get('list_messages', {}).get('path', '/conversations/:id/messages') }} [{{ ctrl.get('endpoints', {}).get('list_messages', {}).get('method', 'GET') }}]
+// @Router   {{ global_ctrl.get('base_path', '/api/v1/chat') }}{{ global_ctrl.get('endpoints', {}).get('list_messages', {}).get('path', '/conversations/:id/messages') }} [{{ global_ctrl.get('endpoints', {}).get('list_messages', {}).get('method', 'GET') }}]
 func GetUserChatHistory(c *fiber.Ctx) error {
 	dbConn := utilspkg.GetDB(c)
 	if dbConn == nil {
@@ -185,9 +189,9 @@ func GetUserChatHistory(c *fiber.Ctx) error {
 	userID, _ := c.Locals("user_id").(uint)
 
 {% if user_ctrl_cfg.use_repo %}
-	userRepo := utilspkg.Get{{ user_ctrl_cfg.repo_name }}(dbConn)
+	userRepo := dbConn.{{ config.project.user_model_name }}
 	if userRepo == nil {
-		log.Println("{{ user_ctrl_cfg.repo_name }} not available")
+		log.Println("{{ config.project.user_model_name }} not available")
 		return fiber.NewError(fiber.StatusInternalServerError, "db_connection_failed")
 	}
 	user, err := userRepo.{{ user_ctrl_cfg.method }}(userID)
@@ -198,7 +202,7 @@ func GetUserChatHistory(c *fiber.Ctx) error {
 	return fiber.NewError(fiber.StatusInternalServerError, "internal_server_error")
 {% endif %}
 
-	chatRepo := utilspkg.GetChatRepository(dbConn)
+	chatRepo := dbConn.Chat
 	conversation, err := chatRepo.GetConversationByIDSimple(uint(convID))
 	if err != nil {
 		return errorspkg.SendError(c, fiber.StatusNotFound, "conversation_not_found")
@@ -237,7 +241,7 @@ func GetUserChatHistory(c *fiber.Ctx) error {
 }
 {% endif %}
 
-{% if ctrl.get('endpoints', {}).get('send_message', {}).get('enabled', false) %}
+{% if global_ctrl.get('endpoints', {}).get('send_message', {}).get('enabled', false) %}
 // ── SendUserMessage ──────────────────────────────────────────────────────────
 // @Summary  Send a message in a conversation
 // @Tags     Chat
@@ -245,7 +249,7 @@ func GetUserChatHistory(c *fiber.Ctx) error {
 // @Produce  json
 // @Param    input  body   request.SendMessageInput  true  "Message payload"
 // @Success  201  {object}  resppkg.MessageResponse
-// @Router   {{ global_ctrl.get('base_path', '/api/v1/chat') }}{{ ctrl.get('endpoints', {}).get('send_message', {}).get('path', '/conversations/:id/messages') }} [{{ ctrl.get('endpoints', {}).get('send_message', {}).get('method', 'POST') }}]
+// @Router   {{ global_ctrl.get('base_path', '/api/v1/chat') }}{{ global_ctrl.get('endpoints', {}).get('send_message', {}).get('path', '/conversations/:id/messages') }} [{{ global_ctrl.get('endpoints', {}).get('send_message', {}).get('method', 'POST') }}]
 func SendUserMessage(c *fiber.Ctx) error {
 	dbConn := utilspkg.GetDB(c)
 	if dbConn == nil {
@@ -255,9 +259,9 @@ func SendUserMessage(c *fiber.Ctx) error {
 	userID, _ := c.Locals("user_id").(uint)
 
 {% if user_ctrl_cfg.use_repo %}
-	userRepo := utilspkg.Get{{ user_ctrl_cfg.repo_name }}(dbConn)
+	userRepo := dbConn.{{ config.project.user_model_name }}
 	if userRepo == nil {
-		log.Println("{{ user_ctrl_cfg.repo_name }} not available")
+		log.Println("{{ config.project.user_model_name }} not available")
 		return fiber.NewError(fiber.StatusInternalServerError, "db_connection_failed")
 	}
 	user, err := userRepo.{{ user_ctrl_cfg.method }}(userID)
@@ -276,7 +280,7 @@ func SendUserMessage(c *fiber.Ctx) error {
 		return errorspkg.SendError(c, fiber.StatusBadRequest, "content_cannot_be_empty")
 	}
 
-	chatRepo := utilspkg.GetChatRepository(dbConn)
+	chatRepo := dbConn.Chat
 	var conversation *domain.Conversation
 
 	// Derive the chat mode from the request context.
@@ -354,10 +358,10 @@ func SendUserMessage(c *fiber.Ctx) error {
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
 	}
 
-{% if config.get('notifications', {}).get('enabled', false) %}
+{% if config.get('notifications', {}).get('enabled', false) and config.chat.get('websocket', {}).get('enabled', false) %}
 	if conversation.{{ conv_receiver_id_f.name | title | replace('_', '') }} == nil {
 		go project_ws.NotifyAdmins(*createdMsg)
-		project_ws.TriggerNotification("message_sent", map[string]interface{}{
+	notifpkg.TriggerNotification("message_sent", map[string]interface{}{
 			"conversation_id": conversation.{{ conv_id_f.name | title | replace('_', '') }},
 			"user_id":         user.ID,
 			"content":         createdMsg.Content,
@@ -368,7 +372,7 @@ func SendUserMessage(c *fiber.Ctx) error {
 			targetUserID = conversation.{{ conv_user_id_f.name | title | replace('_', '') }}
 		}
 		go project_ws.NotifyTargetUser(targetUserID, *createdMsg)
-		project_ws.TriggerNotification("message_sent", map[string]interface{}{
+notifpkg.TriggerNotification("message_sent", map[string]interface{}{
 			"conversation_id": conversation.{{ conv_id_f.name | title | replace('_', '') }},
 			"receiver_id":     targetUserID,
 			"user_id":         user.ID,
@@ -381,13 +385,13 @@ func SendUserMessage(c *fiber.Ctx) error {
 }
 {% endif %}
 
-{% if ctrl.get('endpoints', {}).get('mark_as_read', {}).get('enabled', false) %}
+{% if global_ctrl.get('endpoints', {}).get('mark_as_read', {}).get('enabled', false) %}
 // ── MarkConversationAsRead ───────────────────────────────────────────────────
 // @Summary  Mark all messages in a conversation as read
 // @Tags     Chat
 // @Param    id  path  int  true  "Conversation ID"
 // @Success  200  {object}  resppkg.SuccessResponse
-// @Router   {{ global_ctrl.get('base_path', '/api/v1/chat') }}{{ ctrl.get('endpoints', {}).get('mark_as_read', {}).get('path', '/conversations/:id/read') }} [{{ ctrl.get('endpoints', {}).get('mark_as_read', {}).get('method', 'POST') }}]
+// @Router   {{ global_ctrl.get('base_path', '/api/v1/chat') }}{{ global_ctrl.get('endpoints', {}).get('mark_as_read', {}).get('path', '/conversations/:id/read') }} [{{ global_ctrl.get('endpoints', {}).get('mark_as_read', {}).get('method', 'POST') }}]
 func MarkConversationAsRead(c *fiber.Ctx) error {
 	dbConn := utilspkg.GetDB(c)
 	if dbConn == nil {
@@ -402,9 +406,9 @@ func MarkConversationAsRead(c *fiber.Ctx) error {
 	userID, _ := c.Locals("user_id").(uint)
 
 {% if user_ctrl_cfg.use_repo %}
-	userRepo := utilspkg.Get{{ user_ctrl_cfg.repo_name }}(dbConn)
+	userRepo := dbConn.{{ config.project.user_model_name }}
 	if userRepo == nil {
-		log.Println("{{ user_ctrl_cfg.repo_name }} not available")
+		log.Println("{{ config.project.user_model_name  }} not available")
 		return fiber.NewError(fiber.StatusInternalServerError, "db_connection_failed")
 	}
 	user, err := userRepo.{{ user_ctrl_cfg.method }}(userID)
@@ -415,7 +419,7 @@ func MarkConversationAsRead(c *fiber.Ctx) error {
 	return fiber.NewError(fiber.StatusInternalServerError, "internal_server_error")
 {% endif %}
 
-	chatRepo := utilspkg.GetChatRepository(dbConn)
+	chatRepo := dbConn.Chat
 	conversation, err := chatRepo.GetConversationByIDSimple(uint(convID))
 	if err != nil {
 		return errorspkg.SendError(c, fiber.StatusNotFound, "conversation_not_found")
@@ -452,7 +456,7 @@ func findOrCreateSupportConversation(dbConn *db.GormDatabase, userID uint) (*dom
 				Status:   "open",
 				{{ conv_type_f.name | title | replace('_', '') }}: "support",
 			}
-			chatRepo := utilspkg.GetChatRepository(dbConn)
+			chatRepo := dbConn.Chat
 			return chatRepo.CreateConversation(newConv)
 		}
 		return nil, err
@@ -465,7 +469,7 @@ func findOrCreateUserConversation(dbConn *db.GormDatabase, userID1, userID2 uint
 {% set conv_user_id_f     = conv_fields | selectattr('name', 'equalto', 'user_id') | first | default({'name': 'user_id'}) %}
 {% set conv_receiver_id_f = conv_fields | selectattr('name', 'equalto', 'receiver_id') | first | default({'name': 'receiver_id'}) %}
 {% set conv_type_f        = conv_fields | selectattr('name', 'equalto', 'conv_type') | first | default({'name': 'conv_type'}) %}
-	chatRepo := utilspkg.GetChatRepository(dbConn)
+	chatRepo := dbConn.Chat
 	conversation, err := chatRepo.GetConversationBetweenUsers(userID1, userID2)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) || err.Error() == "conversation not found" {
@@ -481,4 +485,5 @@ func findOrCreateUserConversation(dbConn *db.GormDatabase, userID1, userID2 uint
 	}
 	return conversation, nil
 }
+{% endif %}
 {% endif %}

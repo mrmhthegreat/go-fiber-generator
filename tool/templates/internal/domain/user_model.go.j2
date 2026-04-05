@@ -1,0 +1,46 @@
+package domain
+
+import (
+{% if model.timestamps or model.has_time_fields %}
+    "time"
+{% endif %}
+{% if model.has_json_fields %}
+    "gorm.io/datatypes"
+{% endif %}
+    "gorm.io/gorm"
+)
+
+// {{ model.name }} represents a {{ model.name | lower }} in the system
+type {{ model.name }} struct {
+{% for field in model.fields %}
+    {{ field.name }} {{ field.type }} `gorm:"{{ field.gorm }}" json:"{{ field.json }}{% if field.omitempty %},omitempty{% endif %}"{% if field.validate %} validate:"{{ field.validate }}"{% endif %}`
+{% endfor %}
+
+{% if model.timestamps %}
+    CreatedAt time.Time      `gorm:"autoCreateTime" json:"created_at"`
+    UpdatedAt time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
+{% endif %}
+{% if model.soft_delete %}
+    DeletedAt gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
+{% endif %}
+
+{% if model.relations %}
+    // Relations
+{% for rel in model.relations %}
+    {% if rel.type == 'has_one' %}
+    {{ rel.name }} *{{ rel.model }} `gorm:"foreignKey:{{ rel.foreign_key | default(model.name + 'ID') }};references:ID{% if rel.constraint %};{{ rel.constraint }}{% endif %}" json:"{{ rel.json | default(rel.name | lower) }}{% if rel.omitempty %},omitempty{% endif %}"`
+    {% elif rel.type == 'has_many' %}
+    {{ rel.name }} []{{ rel.model }} `gorm:"foreignKey:{{ rel.foreign_key | default(model.name + 'ID') }};references:ID{% if rel.constraint %};{{ rel.constraint }}{% endif %}" json:"{{ rel.json | default(rel.name | lower) }}{% if rel.omitempty %},omitempty{% endif %}"`
+    {% elif rel.type == 'belongs_to' %}
+    {{ rel.name }} *{{ rel.model }} `gorm:"foreignKey:{{ rel.foreign_key }};references:ID" json:"{{ rel.json | default(rel.name | lower) }}{% if rel.omitempty %},omitempty{% endif %}"`
+    {% elif rel.type == 'many_to_many' %}
+    {{ rel.name }} []{{ rel.model }} `gorm:"many2many:{{ rel.join_table }}{% if rel.constraint %};{{ rel.constraint }}{% endif %}" json:"{{ rel.json | default(rel.name | lower) }}{% if rel.omitempty %},omitempty{% endif %}"`
+    {% endif %}
+{% endfor %}
+{% endif %}
+}
+
+// TableName specifies the table name for {{ model.name }}
+func ({{ model.name }}) TableName() string {
+    return "{{ model.table_name }}"
+}

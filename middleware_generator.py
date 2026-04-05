@@ -2,6 +2,7 @@
 Enhanced Middleware Generator
 Generates Go middleware code from YAML configuration
 """
+import argparse
 import yaml
 import sys
 import os
@@ -265,50 +266,58 @@ class MiddlewareGenerator:
             print(f"❌ Error writing documentation: {e}")
 
 
-def main():
+# ─────────────────────────────────────────────────────────────────────────────
+# Module-level entry points (consistent with other generators)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def run(config_path: str, templates_dir: str, output_dir: str) -> None:
     """
-    Main entry point for the generator
+    Run the middleware generator. Called by master orchestrator.
+
+    Args:
+        config_path:   Path to YAML config
+        templates_dir: Templates root directory (the middleware template must be at
+                       <templates_dir>/internal/api/middleware/middleware.go.j2)
+        output_dir:    Output root directory
     """
-    if len(sys.argv) < 2:
-        print("Usage: python middleware_generator.py <config.yaml> [options]")
-        print("")
-        print("Options:")
-        print("  --template-dir DIR    Directory containing templates (default: ./templates)")
-        print("  --output-dir DIR      Output directory (default: ./generated)")
-        print("  --docs               Also generate documentation")
-        sys.exit(1)
-
-    config_path = sys.argv[1]
-    template_dir = "./tool/templates/internal/api/middleware"
-    output_dir = "./generated/"
-    generate_docs = False
-
-    # Parse additional arguments
-    i = 2
-    while i < len(sys.argv):
-        if sys.argv[i] == "--template-dir" and i + 1 < len(sys.argv):
-            template_dir = sys.argv[i + 1]
-            i += 2
-        elif sys.argv[i] == "--output-dir" and i + 1 < len(sys.argv):
-            output_dir = sys.argv[i + 1]
-            i += 2
-        elif sys.argv[i] == "--docs":
-            generate_docs = True
-            i += 1
-        else:
-            print(f"Unknown option: {sys.argv[i]}")
-            sys.exit(1)
-
-    # Create generator and run
+    template_dir = os.path.join(templates_dir, 'internal', 'api', 'middleware')
     generator = MiddlewareGenerator(config_path, template_dir, output_dir)
     generator.generate()
 
-    if generate_docs:
+
+def main():
+    """
+    CLI entry point for the middleware generator.
+    """
+    parser = argparse.ArgumentParser(description='Generate Go middleware from YAML config')
+    parser.add_argument('--config',    required=True,
+                        help='Path to YAML config file')
+    parser.add_argument('--templates', default='./tool/templates',
+                        help='Templates root directory (default: ./tool/templates)')
+    parser.add_argument('--output',   default='./generated',
+                        help='Output directory (default: ./generated)')
+    parser.add_argument('--docs',     action='store_true',
+                        help='Also generate MIDDLEWARE.md documentation')
+    args = parser.parse_args()
+
+    if not os.path.exists(args.config):
+        print(f'❌ Config not found: {args.config}')
+        sys.exit(1)
+
+    print('=' * 60)
+    print('  MIDDLEWARE GENERATOR')
+    print('=' * 60)
+
+    template_dir = os.path.join(args.templates, 'internal', 'api', 'middleware')
+    generator = MiddlewareGenerator(args.config, template_dir, args.output)
+    generator.generate()
+
+    if args.docs:
         generator.generate_docs()
 
-    print("")
-    print("🎉 Generation complete!")
+    print('')
+    print('🎉 Generation complete!')
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

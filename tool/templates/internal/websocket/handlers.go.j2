@@ -1,5 +1,4 @@
 package websocket
-
 import (
 	"fmt"
 	"log"
@@ -7,463 +6,39 @@ import (
 {% if config.websocket.events | selectattr('rate_limit', 'defined') | selectattr('rate_limit.enabled') | list %}
 	"sync"
 {% endif %}
-
 	"github.com/bytedance/sonic"
 	"github.com/gofiber/contrib/websocket"
 	"github.com/gofiber/fiber/v2"
-
 	"{{ config.project.module }}/config"
 	"{{ config.project.module }}/internal/domain"
+{% if config.notifications.enabled %}
+	notifpkg "{{ config.project.module }}/pkg/notification"
+{% endif %}
 	resppkg "{{ config.project.module }}/pkg/response"
 )
-
-{% if config.websocket.enabled %}
-{# Resolve pool names once so inline code is consistent #}
-{% set ns = namespace(auto_user_pool=None, auto_admin_pool=None) %}
-{% for pool in config.websocket.hub.pools %}
-{% if pool.enabled %}
-    {% if 'admin' in pool.name | lower and pool.key_by == 'connection' %}{% set ns.auto_admin_pool = pool %}{% endif %}
-    {% if 'user' in pool.name | lower and 'admin' not in pool.name | lower and pool.key_by == 'user_id' %}{% set ns.auto_user_pool = pool %}{% endif %}
-{% endif %}
-{% endfor %}
-
-{# ────────────────────────────────────────────────────────────── #}
-{# Hub reference helpers — used in shared handlers below           #}
-{# unified  → Hub.*                                                #}
-{# dedicated → routed to the correct dedicated hub instance        #}
-{# ────────────────────────────────────────────────────────────── #}
-{% if config.websocket.handler_type == 'dedicated' %}
-{% set hub_broadcast_all    = 'BroadcastAll' %}
-{% set hub_broadcast_admins = 'SupportHubInst.BroadcastToAdmins' %}
-{% set hub_broadcast_user   = 'ChatHubInst.BroadcastToUser' %}
-{% set hub_broadcast_room   = 'ChatHubInst.BroadcastToRoom' %}
-{% else %}
-{% set hub_broadcast_all    = 'Hub.BroadcastAll' %}
-{% set hub_broadcast_admins = 'Hub.BroadcastToAdmins' %}
-{% set hub_broadcast_user   = 'Hub.BroadcastToUser' %}
-{% set hub_broadcast_room   = 'Hub.BroadcastToRoom' %}
-{% endif %}
-
-{# ────────────────────────────────────────────────────────────── #}
-{# Rate Limiters - Generated from YAML config                      #}
-{# ────────────────────────────────────────────────────────────── #}
-{% for event in config.websocket.events %}
-{% if event.enabled and event.get('rate_limit') and event.rate_limit.get('enabled', false) %}
-// Rate limiter for {{ event.name }} event
-var rateLimiter{{ event.name | replace('_', '') | title }} = &struct {
-	requests map[string][]time.Time
-	mu       sync.RWMutex
-	max      int
-	window   time.Duration
-}{
-	requests: make(map[string][]time.Time),
-	max:      {{ event.rate_limit.max_per_minute }},
-	window:   time.Minute,
-}
-
-func checkRateLimit{{ event.name | replace('_', '') | title }}(userID uint) bool {
-	key := fmt.Sprintf("user_%d", userID)
-	limiter := rateLimiter{{ event.name | replace('_', '') | title }}
-	
-	limiter.mu.Lock()
-	defer limiter.mu.Unlock()
-	
-	now := time.Now()
-	times := limiter.requests[key]
-	
-	// Remove old requests outside the window
-	filtered := make([]time.Time, 0)
-	for _, t := range times {
-		if now.Sub(t) < limiter.window {
-			filtered = append(filtered, t)
-		}
-	}
-	
-	if len(filtered) >= limiter.max {
-		return false
-	}
-	
-	filtered = append(filtered, now)
-	limiter.requests[key] = filtered
-	return true
-}
-{% endif %}
-{% endfor %}
-
-{# ────────────────────────────────────────────────────────────── #}
-{# Validation Functions - Generated from YAML config               #}
-{# ────────────────────────────────────────────────────────────── #}
-{% if config.chat.get('controller', {}).get('validation', {}).get('message', {}).get('content') %}
-func validateMessageContent(content string) error {
-	{% if config.chat.controller.validation.message.content.get('required', false) %}
-	if content == "" {
-		return fmt.Errorf("content is required")
-	}
-	{% endif %}
-	{% if config.chat.controller.validation.message.content.get('min_length') %}
-	if len(content) < {{ config.chat.controller.validation.message.content.min_length }} {
-		return fmt.Errorf("content must be at least {{ config.chat.controller.validation.message.content.min_length }} characters")
-	}
-	{% endif %}
-	{% if config.chat.controller.validation.message.content.get('max_length') %}
-	if len(content) > {{ config.chat.controller.validation.message.content.max_length }} {
-		return fmt.Errorf("content must not exceed {{ config.chat.controller.validation.message.content.max_length }} characters")
-	}
-	{% endif %}
-	return nil
-}
-{% endif %}
-
-// UnifiedWebSocketHandler handles all real-time connections via a single multiplexed endpoint.
-// Supported events: {% for event in config.websocket.events %}{% if event.enabled %}{{ event.name }}{% if not loop.last %}, {% endif %}{% endif %}{% endfor %}
-
-func UnifiedWebSocketHandler(c *websocket.Conn) {
-	// ── Authentication ──────────────────────────────────────────
-{% if config.websocket.authentication.method in ['jwt', 'unified'] %}
-	appToken   := c.Headers("{{ config.websocket.authentication.get('app_token', {}).get('header_name', 'X-App-Token') }}", c.Query("{{ config.websocket.authentication.get('app_token', {}).get('query_param', 'app_token') }}"))
-	authHeader := c.Headers("{{ config.websocket.authentication.get('jwt', {}).get('extraction', {}).get('header', 'Authorization') }}")
-	if authHeader == "" {
-		authHeader = "{{ config.websocket.authentication.get('jwt', {}).get('extraction', {}).get('header_prefix', 'Bearer ') }}" + c.Query("{{ config.websocket.authentication.get('jwt', {}).get('extraction', {}).get('query_param', 'token') }}")
-	}
-
-	userID, err := ValidateUnifiedTokens(appToken, authHeader)
-	if err != nil {
-		_ = c.WriteJSON(fiber.Map{"error": err.Error()})
-		c.Close()
-		return
-	}
-{% elif config.websocket.authentication.method == 'session' %}
-	sessionID := c.Cookies("{{ config.websocket.authentication.get('session', {}).get('cookie_name', 'session_id') }}")
-	userID, err := {{ config.websocket.authentication.get('session', {}).get('validation_function', 'ValidateSession') }}(sessionID)
-	if err != nil {
-		_ = c.WriteJSON(fiber.Map{"error": "invalid session"})
-		c.Close()
-		return
-	}
-{% elif config.websocket.authentication.method == 'custom' %}
-	userID, err := {{ config.websocket.authentication.get('custom', {}).get('function_name', 'CustomAuthHandler') }}(c)
-	if err != nil {
-		_ = c.WriteJSON(fiber.Map{"error": "authentication failed"})
-		c.Close()
-		return
-	}
-{% else %}
-	var userID uint // authentication.method = none
-{% endif %}
-
-	safeConn := NewSafeConn(c)
-
-	// ── Register connection pools ───────────────────────────────
-{% for pool in config.websocket.hub.pools %}
-{% if pool.enabled %}
-{% if pool.key_by == 'user_id' and pool.get('auto_register', true) %}
-	{{ pool.name }}Conn := &UserConn{UserID: userID, Conn: safeConn}
-	Hub.register{{ pool.name | title }} <- {{ pool.name }}Conn
-	defer func() { Hub.unregister{{ pool.name | title }} <- {{ pool.name }}Conn }()
-{% elif pool.key_by == 'connection' and pool.get('auto_register', true) %}
-	Hub.register{{ pool.name | title }} <- c
-	defer func() { Hub.unregister{{ pool.name | title }} <- c }()
-{% endif %}
-{% endif %}
-{% endfor %}
-
-{% if config.websocket.get('presence', {}).get('enabled', false) and config.websocket.presence.get('broadcast_on_connect', false) %}
-	// Broadcast user online status
-	{% for event in config.websocket.presence.get('events', []) %}
-	{% if event.name == 'user_online' %}
-	statusUpdate := StatusUpdate{
-		UserID:   userID,
-		IsOnline: true,
-	}
-	{% for target in event.get('broadcast_to', []) %}
-	{% if target == 'admins' %}
-	Hub.broadcastStatus <- statusUpdate
-	{% elif target == 'all' %}
-	// Broadcast to all users
-	Hub.BroadcastAll(map[string]interface{}{
-		"type": "user_online",
-		"user_id": userID,
-	})
-	{% endif %}
-	{% endfor %}
-	{% endif %}
-	{% endfor %}
-{% endif %}
-
-	// ── Main read loop ──────────────────────────────────────────
-	for {
-		var msg map[string]interface{}
-		if err := safeConn.ReadJSON(&msg); err != nil {
-			break
-		}
-
-		eventType, ok := msg["type"].(string)
-		if !ok {
-			continue
-		}
-
-		// Route to appropriate handler based on event type
-		switch eventType {
-{% for event in config.websocket.events %}
-{% if event.enabled %}
-		case "{{ event.name }}":
-			{% if event.get('requires_auth', true) and config.websocket.authentication.method != 'none' %}
-			// Authentication already verified
-			{% endif %}
-			
-			{% if event.get('rate_limit') and event.rate_limit.get('enabled', false) %}
-			// Check rate limit
-			if !checkRateLimit{{ event.name | replace('_', '') | title }}(userID) {
-				_ = safeConn.WriteJSON(fiber.Map{
-					"error": "rate_limit_exceeded",
-					"event": "{{ event.name }}",
-					"max_per_minute": {{ event.rate_limit.max_per_minute }},
-				})
-				continue
-			}
-			{% endif %}
-			
-			{% if event.get('throttle') and event.throttle.get('enabled', false) %}
-			// Throttle delay
-			time.Sleep({{ event.throttle.delay_ms }} * time.Millisecond)
-			{% endif %}
-			
-			{% if event.handler_type == 'chat_message' %}
-			handleChatMessage(msg, userID, safeConn)
-			{% elif event.handler_type == 'custom' %}
-			{{ event.custom_handler }}(msg, userID, safeConn)
-			{% else %}
-			handleGenericEvent("{{ event.name }}", msg, userID, safeConn)
-			{% endif %}
-{% endif %}
-{% endfor %}
-		default:
-			log.Printf("Unknown WebSocket event type: %s", eventType)
-			_ = safeConn.WriteJSON(fiber.Map{
-				"error": "unknown_event_type",
-				"type":  eventType,
-			})
-		}
-	}
-
-{% if config.websocket.get('presence', {}).get('enabled', false) and config.websocket.presence.get('broadcast_on_disconnect', false) %}
-	// Broadcast user offline status
-	{% for event in config.websocket.presence.get('events', []) %}
-	{% if event.name == 'user_offline' %}
-	statusUpdate := StatusUpdate{
-		UserID:   userID,
-		IsOnline: false,
-	}
-	{% for target in event.get('broadcast_to', []) %}
-	{% if target == 'admins' %}
-	Hub.broadcastStatus <- statusUpdate
-	{% endif %}
-	{% endfor %}
-	{% endif %}
-	{% endfor %}
-{% endif %}
-}
-
-{# ────────────────────────────────────────────────────────────── #}
-{# Chat Message Handler - Made Dynamic                             #}
-{# ────────────────────────────────────────────────────────────── #}
-{% if config.chat.enabled %}
-{% set chat_event = config.websocket.events | selectattr('handler_type', 'defined') | selectattr('handler_type', 'equalto', 'chat_message') | first | default(none) %}
-func handleChatMessage(msg map[string]interface{}, userID uint, conn WSWriter) {
-	conversationIDFloat, _ := msg["conversation_id"].(float64)
-	conversationID := uint(conversationIDFloat)
-	content, _ := msg["content"].(string)
-
-	// Validation
-	if conversationID == 0 {
-		_ = conn.WriteJSON(fiber.Map{"error": "conversation_id is required"})
-		return
-	}
-
-	{% if config.chat.get('controller', {}).get('validation', {}).get('message', {}).get('content') %}
-	if err := validateMessageContent(content); err != nil {
-		_ = conn.WriteJSON(fiber.Map{"error": err.Error()})
-		return
-	}
-	{% else %}
-	if content == "" {
-		_ = conn.WriteJSON(fiber.Map{"error": "content is required"})
-		return
-	}
-	{% endif %}
-
-	// Fetch conversation for authorization
-	var conversation domain.Conversation
-	if err := config.DB.First(&conversation, conversationID).Error; err != nil {
-		log.Printf("Conversation %d not found", conversationID)
-		_ = conn.WriteJSON(fiber.Map{"error": "conversation not found"})
-		return
-	}
-
-	// Authorization: user must be owner or receiver of the conversation
-	{% set receiver_id_field = config.chat.domain.conversation.fields | selectattr('name', 'equalto', 'receiver_id') | first %}
-	isParticipant := conversation.UserID == userID
-	{% if receiver_id_field %}
-	isParticipant = isParticipant || (conversation.ReceiverID != nil && *conversation.ReceiverID == userID)
-	{% endif %}
-	if !isParticipant {
-		log.Printf("User %d is not authorized for conversation %d", userID, conversationID)
-		_ = conn.WriteJSON(fiber.Map{"error": "unauthorized"})
-		return
-	}
-
-	// Create message
-	chatMsg := domain.Message{
-		ConversationID: conversationID,
-		SenderID:       userID,
-		SenderType:     "user",
-		Content:        content,
-	}
-
-	{% if not chat_event or chat_event.get('persist', true) %}
-	// Save to database
-	if err := config.DB.Create(&chatMsg).Error; err != nil {
-		log.Println("Error creating chat message:", err)
-		_ = conn.WriteJSON(fiber.Map{"error": "failed to create message"})
-		return
-	}
-
-	// Update conversation last message
-	{% set last_message_field = config.chat.domain.conversation.fields | selectattr('name', 'equalto', 'last_message') | first %}
-	{% if last_message_field %}
-	config.DB.Model(&domain.Conversation{}).
-		Where("id = ?", conversationID).
-		Update("last_message", content)
-	{% endif %}
-	{% endif %}
-
-	{% if chat_event %}
-	// Broadcast to configured targets
-	{% for target in chat_event.get('broadcast_to', ['conversation']) %}
-	{% if target == 'conversation' or target == 'user' %}
-	NotifyUser(chatMsg)
-	{% elif target == 'admins' %}
-	NotifyAdmins(chatMsg)
-	{% elif target == 'all' %}
-	{{ hub_broadcast_all }}(map[string]interface{}{
-		"type": "message_sent",
-		"message": chatMsg,
-	})
-	{% endif %}
-	{% endfor %}
-	{% else %}
-	// Default broadcast behavior
-	NotifyUser(chatMsg)
-	NotifyAdmins(chatMsg)
-	{% endif %}
-
-	// Trigger notifications for offline users
-	{% if config.notifications.enabled %}
-	triggerData := map[string]interface{}{
-		"conversation_id": conversationID,
-		"user_id":         userID,
-		"content":         content,
-	}
-	{% set receiver_id_field = config.chat.domain.conversation.fields | selectattr('name', 'equalto', 'receiver_id') | first %}
-	{% if receiver_id_field %}
-	if conversation.ReceiverID != nil {
 		triggerData["receiver_id"] = *conversation.ReceiverID
 	}
 	{% endif %}
-	TriggerNotification("message_sent", triggerData)
+	notifpkg.TriggerNotification("message_sent", triggerData)
 	{% endif %}
-
 	// Send success response
-	_ = conn.WriteJSON(fiber.Map{
-		"success": true,
-		"message": chatMsg,
-	})
-}
-{% endif %}
-
-{# ────────────────────────────────────────────────────────────── #}
-{# Generic Event Handler - Made Dynamic                            #}
-{# ────────────────────────────────────────────────────────────── #}
-func handleGenericEvent(eventType string, msg map[string]interface{}, userID uint, conn WSWriter) {
-	log.Printf("Generic event '%s' from user %d", eventType, userID)
-	msg["type"]      = eventType
-	msg["sender_id"] = userID
-
-{% for event in config.websocket.events %}
-{% if event.enabled and event.get('handler_type', 'generic') not in ['chat_message', 'custom'] %}
 	if eventType == "{{ event.name }}" {
 {% if event.get('persist', false) %}
 		// Persist event as a notification record
-		GlobalNotify(map[string]interface{}{
+		notifpkg.GlobalNotify(map[string]interface{}{
 			"user_id": userID,
 			"title":   "Event: {{ event.name }}",
 			"message": "{{ event.get('description', 'New activity detected') }}",
-			"type":    "{{ event.name }}",
-		}, nil)
-{% endif %}
-
-		// Broadcast to configured targets
-{% for target in event.get('broadcast_to', []) %}
-{% if target == 'all' %}
-		{{ hub_broadcast_all }}(msg)
-{% elif target == 'admins' %}
-		{{ hub_broadcast_admins }}(msg)
-{% elif target == 'user' %}
-		if targetID, ok := msg["target_id"].(float64); ok {
-			{{ hub_broadcast_user }}(uint(targetID), msg)
-		}
-{% elif target == 'room' %}
-		if roomID, ok := msg["room_id"].(string); ok {
-			{{ hub_broadcast_room }}(roomID, msg)
-		}
-{% elif target == 'custom' and event.get('custom_broadcast_function') %}
-		{{ event.custom_broadcast_function }}(msg)
-{% endif %}
-{% endfor %}
-
-		// Send success response
-		_ = conn.WriteJSON(fiber.Map{
-			"success": true,
-			"event": "{{ event.name }}",
-		})
-		return
-	}
-{% endif %}
-{% endfor %}
-
-	// Default: just log it
-	_ = conn.WriteJSON(fiber.Map{
-		"success": true,
-		"event": eventType,
-		"note": "Event received but no specific handler configured",
-	})
-}
-
-{# ────────────────────────────────────────────────────────────── #}
-{# Custom Event Handlers - Generated from YAML                     #}
-{# ────────────────────────────────────────────────────────────── #}
-{% for event in config.websocket.events %}
-{% if event.enabled and event.get('handler_type') == 'custom' %}
-// {{ event.custom_handler }} handles the '{{ event.name }}' event.
-{% if event.get('description') %}
-// Description: {{ event.description }}
-{% endif %}
-func {{ event.custom_handler }}(msg map[string]interface{}, userID uint, conn WSWriter) {
-	log.Printf("Custom handler '{{ event.custom_handler }}' for '{{ event.name }}' from user %d", userID)
-	
-	// TODO: Implement your custom logic here
-	// Available: msg (payload), userID (authenticated user), conn (websocket connection)
 	
 {% if event.get('persist', false) %}
 	// Auto-persist as notification
-	GlobalNotify(map[string]interface{}{
+	notifpkg.GlobalNotify(map[string]interface{}{
 		"user_id": userID,
 		"title":   "{{ event.get('notification_title', 'Event: ' + event.name) }}",
 		"message": "{{ event.get('notification_message', 'Activity recorded') }}",
 		"type":    "{{ event.name }}",
 	}, nil)
 {% endif %}
-
 	// Broadcast to configured targets
 {% for target in event.get('broadcast_to', []) %}
 {% if target == 'all' %}
@@ -482,7 +57,6 @@ func {{ event.custom_handler }}(msg map[string]interface{}, userID uint, conn WS
 	{{ event.custom_broadcast_function }}(msg)
 {% endif %}
 {% endfor %}
-
 	// Send success response
 	_ = conn.WriteJSON(fiber.Map{
 		"success": true,
@@ -491,9 +65,7 @@ func {{ event.custom_handler }}(msg map[string]interface{}, userID uint, conn WS
 }
 {% endif %}
 {% endfor %}
-
 {% endif %}{# websocket.enabled #}
-
 {# ────────────────────────────────────────────────────────────── #}
 {# Admin Chat WebSocket Handler (server-side rendered admin UI)   #}
 {# ────────────────────────────────────────────────────────────── #}
@@ -502,14 +74,12 @@ func {{ event.custom_handler }}(msg map[string]interface{}, userID uint, conn WS
 {% for pool in config.websocket.hub.pools %}
 {% if 'admin' in pool.name | lower and pool.enabled %}{% set ns2.admin_pool = pool %}{% endif %}
 {% endfor %}
-
 // AdminChatWebSocket handles admin connections for the support chat interface.
 func AdminChatWebSocket(c *websocket.Conn) {
 {% if ns2.admin_pool %}
 	Hub.register{{ ns2.admin_pool.name | title }} <- c
 	defer func() { Hub.unregister{{ ns2.admin_pool.name | title }} <- c }()
 {% endif %}
-
 	for {
 		type InputMsg struct {
 			ConversationID uint                     `json:"conversation_id"`
@@ -519,32 +89,26 @@ func AdminChatWebSocket(c *websocket.Conn) {
 		if err := c.ReadJSON(&input); err != nil {
 			break
 		}
-
 		if input.Content == "" || input.ConversationID == 0 {
 			continue
 		}
-
 	
-
 		msg := domain.Message{
 			ConversationID: input.ConversationID,
 			SenderID:       0, // system/admin sender
 			SenderType:     "admin",
 			Content:        input.Content,
 		}
-
 		if err := config.DB.Create(&msg).Error; err != nil {
 			log.Println("AdminChatWebSocket DB error:", err)
 			continue
 		}
-
-		{% set last_message_field = config.chat.domain.conversation.fields | selectattr('name', 'equalto', 'last_message') | first %}
+		{% set last_message_field = config.chat.models.conversation.fields | selectattr('name', 'equalto', 'last_message') | first %}
 		{% if last_message_field %}
 		config.DB.Model(&domain.Conversation{}).
 			Where("id = ?", input.ConversationID).
 			Updates(domain.Conversation{LastMessage: input.Content})
 		{% endif %}
-
 		NotifyUser(msg)
 		NotifyAdmins(msg) // echo back to all admins for UI sync
 	}

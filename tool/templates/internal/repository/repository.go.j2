@@ -18,7 +18,8 @@ import (
 type {{ model.name }}Repository interface {
     // CRUD Operations
     Create({{ model.name | lower }} *models.{{ model.name }}) error
-    GetByID(id uint) (*models.{{ model.name }}, error)
+    
+    GetByID(id uint, fields ...string) (*models.{{ model.name }}, error)
     Update({{ model.name | lower }} *models.{{ model.name }}) error
     Delete(id uint) error
 {% if model.soft_delete and model.soft_delete.include_hard_delete %}
@@ -39,7 +40,7 @@ type {{ model.name }}Repository interface {
     {% if getter.pagination or getter.filters or getter.sort_by %}
     {{ getter.name }}({% for field in getter.fields %}{{ field | lower }} {{ getter.field_types[loop.index0] | default('string') }}, {% endfor %}options {{ getter.name }}Options) ([]models.{{ model.name }}, bool, error)
     {% else %}
-    {{ getter.name }}({% for field in getter.fields %}{{ field | lower }} {{ getter.field_types[loop.index0] | default('string') }}{% if not loop.last %}, {% endif %}{% endfor %}) ({% if getter.unique %}*models.{{ model.name }}{% else %}[]models.{{ model.name }}{% endif %}, error)
+    {{ getter.name }}({% for field in getter.fields %}{{ field | lower }} {{ getter.field_types[loop.index0] | default('string') }}, {% endfor %}fields ...string) ({% if getter.unique %}*models.{{ model.name }}{% else %}[]models.{{ model.name }}{% endif %}, error)
     {% endif %}
 {% endfor %}
 {% endif %}
@@ -331,9 +332,13 @@ func (r *{{ model.name | lower }}Repository) Create({{ model.name | lower }} *mo
 }
 
 // GetByID retrieves a {{ model.name | lower }} by ID
-func (r *{{ model.name | lower }}Repository) GetByID(id uint) (*models.{{ model.name }}, error) {
+func (r *{{ model.name | lower }}Repository) GetByID(id uint, fields ...string) (*models.{{ model.name }}, error) {
     var {{ model.name | lower }} models.{{ model.name }}
-    if err := r.db.First(&{{ model.name | lower }}, id).Error; err != nil {
+    query := r.db
+    if len(fields) > 0 {
+        query = query.Select(fields)
+    }
+    if err := query.First(&{{ model.name | lower }}, id).Error; err != nil {
         if errors.Is(err, gorm.ErrRecordNotFound) {
             return nil, fmt.Errorf("{{ model.name | lower }} not found")
         }
@@ -645,15 +650,16 @@ func (r *{{ model.name | lower }}Repository) apply{{ getter.name }}Preloading(qu
 
 {% else %}
 // {{ getter.name }} retrieves {{ model.name | lower }}(s) by {{ getter.fields | join(', ') }}
-func (r *{{ model.name | lower }}Repository) {{ getter.name }}({% for field in getter.fields %}{{ field | lower }} {{ getter.field_types[loop.index0] | default('string') }}{% if not loop.last %}, {% endif %}{% endfor %}) ({% if getter.unique %}*models.{{ model.name }}{% else %}[]models.{{ model.name }}{% endif %}, error) {
-    {% if getter.unique %}
+func (r *{{ model.name | lower }}Repository) {{ getter.name }}({% for field in getter.fields %}{{ field | lower }} {{ getter.field_types[loop.index0] | default('string') }}, {% endfor %}fields ...string) ({% if getter.unique %}*models.{{ model.name }}{% else %}[]models.{{ model.name }}{% endif %}, error) {  {% if getter.unique %}
     var {{ model.name | lower }} models.{{ model.name }}
     {% else %}
     var {{ model.name | lower }}s []models.{{ model.name }}
     {% endif %}
     
     query := r.db.Model(&models.{{ model.name }}{})
-    
+    if len(fields) > 0 {
+        query = query.Select(fields)
+    }
 {% if getter.preloads %}
 {% for preload in getter.preloads %}
     {% if preload.select_fields or preload.order_by or preload.sort_by or preload.limit %}

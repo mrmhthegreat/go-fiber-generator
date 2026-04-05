@@ -1,8 +1,8 @@
-{% extends 'html/layouts/main.html.j2' %}
+[% extends 'html/layouts/main.html.j2' %]
 
-{% block title %}Dashboard | {{ config.project.name }}{% endblock %}
-{% block active_page %}Dashboard{% endblock %}
-{% block content %}
+[% block title %]Dashboard | [[ config.project.name ]][% endblock %]
+[% block active_page %]Dashboard[% endblock %]
+[% block content %]
 <div class="space-y-6">
     <!-- Welcome Section -->
     <div class="rounded-2xl bg-gradient-to-r from-primary/10 via-primary/5 to-transparent p-8 dark:from-primary/20 dark:via-primary/10">
@@ -11,13 +11,13 @@
     </div>
     <!-- Stats Grid -->
     <div class="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
-        {% if repo.models %}
-        {% for model in repo.models | selectattr('web_handler.enabled', 'equalto', true) %}
+        [% if repo.models %]
+        [% for model in repo.models | selectattr('web_handler.enabled', 'equalto', true) %]
         <div class="rounded-xl border border-gray-200 bg-white p-6 shadow-sm transition-all hover:shadow-md dark:border-gray-700 dark:bg-gray-800">
             <div class="flex items-center justify-between">
                 <div>
-                    <p class="text-sm font-medium text-gray-500 dark:text-gray-400">{{ model.name }}</p>
-                    <p class="mt-2 text-2xl font-bold text-gray-900 dark:text-white">{{ item_counts[model.name] | default('0') }}</p>
+                    <p class="text-sm font-medium text-gray-500 dark:text-gray-400">[[ model.name ]]</p>
+                    <p class="mt-2 text-2xl font-bold text-gray-900 dark:text-white">[[ item_counts[model.name] | default('0') ]]</p>
                 </div>
                 <div class="rounded-lg bg-primary/10 p-3 text-primary">
                     <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
@@ -26,32 +26,7 @@
                 <span class="font-medium text-green-600 dark:text-green-400">+12%</span>
                 <span class="ml-2 text-gray-500">from last month</span>
         </div>
-        {% endfor %}
-        {% endif %}
-    <!-- Recent Activity Placeholder -->
-    <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <div class="rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
-            <div class="border-b border-gray-200 p-6 dark:border-gray-700">
-                <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Recent Activity</h3>
-            <div class="p-6">
-                <div class="space-y-4">
-                    {% for i in range(5) %}
-                    <div class="flex items-start gap-4">
-                        <div class="h-2 w-2 mt-2 rounded-full bg-primary"></div>
-                        <div>
-                            <p class="text-sm text-gray-900 dark:text-white">New user registered: <span class="font-medium">User #{{ i }}</span></p>
-                            <p class="text-xs text-gray-500">{{ i + 1 }} hours ago</p>
-                        </div>
-                    </div>
-                    {% endfor %}
-                <h3 class="text-lg font-semibold text-gray-900 dark:text-white">System Status</h3>
-                <div class="space-y-6">
-                    <div class="flex items-center justify-between">
-                        <span class="text-sm text-gray-600 dark:text-gray-400">Database</span>
-                        <span class="rounded-full bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-700 dark:bg-green-900/20 dark:text-green-400">Stable</span>
-                        <span class="text-sm text-gray-600 dark:text-gray-400">WebSocket Hub</span>
-                        <span class="rounded-full bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-700 dark:bg-green-900/20 dark:text-green-400">Online</span>
-                        <span class="text-sm text-gray-600 dark:text-gray-400">SMTP Server</span>
-                        <span class="rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-semibold text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-400">Latency</span>
-</div>
-{% endblock %}
+        [% endfor %]
+        [% endif %]
+
+[% endblock %]

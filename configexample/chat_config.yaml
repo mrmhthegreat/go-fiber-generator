@@ -3,9 +3,395 @@ project:
   user_model_name: User  # Name of the user model struct
   repository_name: UserRepository  # Repository interface name to use
 
+notifications:
+  enabled: true
+  
+  # ──────────────────────────────────────────────────────────────────────────
+  # Model Configuration
+  # ──────────────────────────────────────────────────────────────────────────
+  model:
+    timestamps: true
+    soft_delete: true
+    
+    fields:
+      - name: id
+        type: uint
+        primary_key: true
+        auto_increment: true
+      
+      - name: user_id
+        type: uint
+        required: true
+        index: true
+      
+      - name: title
+        type: string
+        gorm_type: varchar(200)
+        required: true
+      
+      - name: message
+        type: string
+        gorm_type: text
+        required: true
+      
+      - name: type
+        type: string
+        gorm_type: varchar(50)
+        required: true
+        validation:
+          enum: [info, warning, error, success, chat, order, system]
+      
+      - name: priority
+        type: string
+        gorm_type: varchar(10)
+        default: normal
+        validation:
+          enum: [low, normal, high, urgent]
+      
+      - name: reference_id
+        type: "*uint"
+        index: true
+        description: "ID of related entity (order, conversation, etc)"
+      
+      - name: reference_type
+        type: "*string"
+        gorm_type: varchar(50)
+        description: "Type of related entity"
+      
+      - name: is_read
+        type: bool
+        default: false
+      
+      - name: action_url
+        type: "*string"
+        gorm_type: varchar(500)
+        description: "URL to navigate on click"
+      
+      - name: metadata
+        type: "*string"
+        gorm_type: json
+        description: "Additional custom data"
+    
+    relations:
+      - name: User
+        model: User
+        foreign_key: UserID
+        preload: false
+  
+  # ──────────────────────────────────────────────────────────────────────────
+  # Repository Configuration
+  # ──────────────────────────────────────────────────────────────────────────
+  repository:
+    batch_operations: true  # Enable batch create/update
+    
+    custom_methods:
+      - name: MarkAllAsRead
+        description: "Mark all notifications as read for user"
+      - name: DeleteOldNotifications
+        description: "Delete notifications older than X days"
+  
+  # ──────────────────────────────────────────────────────────────────────────
+  # Controller Configuration
+  # ──────────────────────────────────────────────────────────────────────────
+  controller:
+    enabled: true
+    base_path: /api/v1/notifications
+    middleware: ["auth"]
+    endpoints:
+      list:
+        enabled: true
+        method: GET
+        path: /list
+      
+      mark_as_read:
+        enabled: true
+        method: POST
+        path: /:id/read
+        # id is needed in path
+      
+      mark_all_as_read:
+        enabled: false
+        method: POST
+      bulk_mark_read:
+        enabled: true
+        method: POST
+        path: /bulk-read
+      unread_count:
+        enabled: true
+        method: GET
+        path: /unread-count
+      delete:
+        enabled: true
+        method: DELETE
+        path: /:id
+        # id is needed in path
+      delete_all:
+        enabled: true
+        method: DELETE
+        path: /all
+  # ──────────────────────────────────────────────────────────────────────────
+  # WebSocket Integration
+  # ──────────────────────────────────────────────────────────────────────────
+  websocket:
+    enabled: false
+  
+  # Push Notifications (FCM)
+  # ──────────────────────────────────────────────────────────────────────────
+  push:
+    enabled: false
+    # When to send push notifications
+    # triggers:
+      # - event: notification_created
+      #   condition: user_offline  # always | user_offline | custom
+      #   custom_condition_function: ""
+      # - event: message_sent
+      #   condition: user_offline  # always | user_offline | custom
+      #   custom_condition_function: ""
+  # ──────────────────────────────────────────────────────────────────────────
+  # Notification Triggers (Auto-create notifications)
+  # ──────────────────────────────────────────────────────────────────────────
+  # triggers:
+    # Chat-related triggers
+    # - event: message_sent
+    #   condition: receiver_offline
+    #   notification:
+    #     type: chat
+    #     title_template: "New message from {sender_name}"
+    #     message_template: "{message_content}"
+    #     reference_type: conversation
+    #     reference_id_field: conversation_id
+    # - event: order_init
+    #   enabled: true
+    #   notification:
+    #     type: order
+    #     title_template: "New order #{order_id}"
+    #     message_template: "Your order has been created"
+    # Order-related triggers
+    # - event: order_created
+    #   condition: receiver_offline
+    #   notification:
+    #     type: order
+    #     title_template: "New order from {sender_name}"
+    #     message_template: "{message_content}"
+    #     reference_type: order
+    #     reference_id_field: order_id
 # ============================================================================
 # CHAT CONFIGURATION - Fully Dynamic
 # ============================================================================
+rbac:
+  enabled: true
+# ============================================================================
+# WEBSOCKET CONFIGURATION - Fully Dynamic
+# ============================================================================
+websocket:
+  enabled: true
+  handler_type: dedicated  # unified | dedicated
+  path: /ws  # WebSocket endpoint path
+  
+  # ──────────────────────────────────────────────────────────────────────────
+  # Authentication Configuration - FULLY DYNAMIC
+  # ──────────────────────────────────────────────────────────────────────────
+  authentication:
+    method: jwt  # jwt | session | custom | none
+    
+    # JWT Configuration - All Dynamic!
+    jwt:
+      secret_key_env: JWT_SECRET  # If source=env
+      algorithm: HS256  # HS256 | HS384 | HS512 | RS256 | RS384 | RS512 | ES256 | ES384 | ES512
+      
+      # Claims configuration - Define which claims to extract
+      claims:
+        user_id:
+          claim_name: user_id  # Name of claim in JWT
+          type: float64  # float64 | string | int
+          required: true
+        
+        role:
+          claim_name: role
+          type: string
+          required: false
+        
+        email:
+          claim_name: email
+          type: string
+          required: false
+      
+      # Token extraction
+      extraction:
+        header: Authorization  # Header name
+        header_prefix: "Bearer "  # Prefix to strip
+        query_param: token  # Alternative: query parameter
+        cookie_name: ""  # Alternative: cookie name
+    
+    # App Token Configuration - DYNAMIC!
+    app_token:
+      enabled: true
+      secret_key: APP_TOKEN  # If source=env
+      header_name: X-App-Token  # Header to check
+      query_param: app_token  # Alternative: query parameter
+      required: false  # If true, both JWT and app token required
+    
+    # Session-based authentication (if method=session)
+    session:
+      cookie_name: session_id
+      validation_function: ValidateSession  # Custom function name
+    
+    # Custom authentication (if method=custom)
+    custom:
+      function_name: CustomAuthHandler  # Your custom auth function
+  
+  # ──────────────────────────────────────────────────────────────────────────
+  # Connection Configuration
+  # ──────────────────────────────────────────────────────────────────────────
+  connection:
+    read_buffer_size: 1024
+    write_buffer_size: 1024
+    handshake_timeout: 10  # seconds
+    read_deadline: 60  # seconds, 0 = no deadline
+    write_deadline: 10  # seconds
+    pong_wait: 60  # seconds
+    ping_period: 54  # seconds (must be less than pong_wait)
+    max_message_size: 512  # KB
+  
+  # ──────────────────────────────────────────────────────────────────────────
+  # Presence Tracking - OPTIONAL
+  # ──────────────────────────────────────────────────────────────────────────
+  presence:
+    enabled: true
+    broadcast_on_connect: true
+    broadcast_on_disconnect: true
+    visibility: all  # all | admins | friends | custom
+    
+    # Custom visibility function (if visibility=custom)
+    custom_visibility_function: CheckPresenceVisibility
+    
+    # Presence events
+    events:
+      - name: user_online
+        broadcast_to: [admins, friends]  # admins | users | friends | all | custom
+        persist: false  # Save to database?
+      
+      - name: user_offline
+        broadcast_to: [admins]
+        persist: false
+  
+  # ──────────────────────────────────────────────────────────────────────────
+  # Hub Configuration - Connection Pools
+  # ──────────────────────────────────────────────────────────────────────────
+  hub:
+    pools:
+      - name: admins
+        enabled: true
+        key_by: connection  # connection | user_id | room_id
+        auto_register: false  # Auto-register on connect?
+        description: "Admin connections for support chat"
+      
+      - name: users
+        enabled: true
+        key_by: user_id
+        auto_register: true
+        description: "Regular user connections"
+      
+      - name: game_rooms
+        enabled: false
+        key_by: room_id
+        auto_register: false
+        description: "Game room connections"
+    
+    # Broadcast Channels
+    channels:
+      - name: broadcastAdmin
+        enabled: true
+        buffer_size: 100
+        drop_on_full: true  # Drop messages if buffer full?
+        description: "Broadcast to all admins"
+      
+      - name: broadcastUser
+        enabled: true
+        buffer_size: 100
+        drop_on_full: true
+        description: "Broadcast to specific users"
+      
+      - name: broadcastStatus
+        enabled: true
+        buffer_size: 50
+        drop_on_full: false
+        description: "Presence status updates"
+      
+      - name: broadcastNotify
+        enabled: true
+        buffer_size: 200
+        drop_on_full: true
+        description: "Notification broadcasts"
+  
+  # ──────────────────────────────────────────────────────────────────────────
+  # Events Configuration - Define ANY Events
+  # ──────────────────────────────────────────────────────────────────────────
+  events:
+    # Chat message event
+    - name: message_sent
+      enabled: true
+      handler_type: chat_message  # chat_message | custom | generic
+      broadcast_to: [conversation]  # conversation | user | room | all | admins | custom
+      persist: true  # Save to database
+      requires_auth: true
+      rate_limit:
+        enabled: false
+        max_per_minute: 60
+      throttle:
+        enabled: false
+        delay_ms: 100
+    
+    # Custom game event example
+    - name: game_move
+      enabled: true
+      handler_type: custom
+      custom_handler: handleGameMove  # Function name
+      broadcast_to: [room]
+      persist: false
+      requires_auth: true
+      rate_limit:
+        enabled: true
+        max_per_minute: 120
+    
+    # Dashboard metric update example
+    - name: metric_update
+      enabled: true
+      handler_type: custom
+      custom_handler: handleMetricUpdate
+      broadcast_to: [all]
+      persist: false  # Ephemeral
+      requires_auth: true
+    
+    # Location tracking example
+    - name: location_update
+      enabled: true
+      handler_type: custom
+      custom_handler: handleLocationUpdate
+      broadcast_to: [custom]
+      custom_broadcast_function: BroadcastToNearby
+      persist: false
+      requires_auth: true
+      throttle:
+        enabled: true
+        delay_ms: 500  # Max 2 updates per second
+  
+  # ──────────────────────────────────────────────────────────────────────────
+  # Rooms/Channels Support (Optional)
+  # ──────────────────────────────────────────────────────────────────────────
+  rooms:
+    enabled: false
+    auto_join:
+      enabled: false
+      pattern: "user_{user_id}"  # Auto-join pattern
+    
+    custom_rooms:
+      - name: lobby
+        auto_join: true
+      - name: game_{game_id}
+        auto_join: false
+
+
 chat:
   enabled: true
   

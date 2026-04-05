@@ -26,7 +26,7 @@ import (
 	utilspkg "{{ config.project.module }}/pkg/utils"
 	storagepkg "{{ config.project.module }}/pkg/storage"
 	errorspkg "{{ config.project.module }}/pkg/errors"
-    "{{{ config.project.module }}/internal/domain"
+    "{{ config.project.module }}/internal/domain"
     "{{ config.project.module }}/repository"
     resppkg "{{ config.project.module }}/pkg/response"
     "{{ config.project.module }}/contexthelpers"
@@ -41,7 +41,7 @@ import (
         return errorspkg.SendError(c, fiber.StatusInternalServerError, "db_connection_failed")
     }
     
-    repo := utilspkg.Get{{ modelName }}Repository(dbConn)
+    repo := dbConn.{{ modelName }}
     if repo == nil {
         return errorspkg.SendError(c, fiber.StatusInternalServerError, "db_connection_failed")
     }
@@ -80,16 +80,7 @@ func New{{ ctrl.model }}Controller() *{{ ctrl.model }}Controller {
     return &{{ ctrl.model }}Controller{}
 }
 
-// Register registers all routes for {{ ctrl.model }}
-func (h *{{ ctrl.model }}Controller) Register(router fiber.Router) {
-{% for ep in ctrl.endpoints %}
-{% set rp = ep.path | replace(ctrl.base_path, '') %}
-    router.{{ ep.method }}("{{ rp if rp else '/' }}", h.{{ ep.func_name }})
-{% endfor %}
-{% for ep in ctrl.getter_endpoints %}
-    router.{{ ep.method }}("{{ ep.path | replace(ctrl.base_path, '') }}", h.{{ ep.func_name }})
-{% endfor %}
-}
+
 
 // ============================================================================
 // CRUD Endpoints
@@ -114,7 +105,7 @@ func (h *{{ ctrl.model }}Controller) Register(router fiber.Router) {
 {% else %}
 // @Param input body dtopkg.{{ ep.dto_name }} true "{{ ep.model }} data"
 {% endif %}
-// @Success 201 {object} resppkg.{{ ep.resppkg.struct }}
+// @Success 201 {object} resppkg.{{ ep.response.struct }}
 // @Failure 400 {object} resppkg.ErrorResponse
 // @Failure 401 {object} resppkg.ErrorResponse
 // @Failure 500 {object} resppkg.ErrorResponse
@@ -132,7 +123,7 @@ func (h *{{ ep.model }}Controller) {{ ep.func_name }}(c *fiber.Ctx) error {
     if dbConn == nil {
         return errorspkg.SendError(c, fiber.StatusInternalServerError, "db_connection_failed")
     }
-    repo := utilspkg.Get{{ ep.model }}Repository(dbConn)
+    repo := dbConn.{{ ep.model }}
     if repo == nil {
         return errorspkg.SendError(c, fiber.StatusInternalServerError, "db_connection_failed")
     }
@@ -198,8 +189,8 @@ func (h *{{ ep.model }}Controller) {{ ep.func_name }}(c *fiber.Ctx) error {
         return errorspkg.SendError(c, fiber.StatusInternalServerError, "create_failed", err.Error())
     }
 
-{% if ep.resppkg.converter %}
-    return c.Status(fiber.StatusCreated).JSON(resppkg.{{ ep.resppkg.converter }}(&{{ ep.model | lower }}))
+{% if ep.response.converter %}
+    return c.Status(fiber.StatusCreated).JSON(resppkg.{{ ep.response.converter }}(&{{ ep.model | lower }}))
 {% else %}
     return c.Status(fiber.StatusCreated).JSON(resppkg.SuccessResponse{Message: "{{ ep.model }} created"})
 {% endif %}
@@ -221,7 +212,7 @@ func (h *{{ ep.model }}Controller) {{ ep.func_name }}(c *fiber.Ctx) error {
 // @Param {{ p.name }} query {{ p.swagger_type }} false "{{ p.name }}"
 {% endif %}
 {% endfor %}
-// @Success 200 {object} resppkg.{{ ep.resppkg.struct }}
+// @Success 200 {object} resppkg.{{ ep.response.struct }}
 // @Failure 400 {object} resppkg.ErrorResponse
 // @Failure 404 {object} resppkg.ErrorResponse
 // @Router {{ ep.path }} [get]
@@ -234,7 +225,7 @@ func (h *{{ ep.model }}Controller) {{ ep.func_name }}(c *fiber.Ctx) error {
     if dbConn == nil {
         return errorspkg.SendError(c, fiber.StatusInternalServerError, "db_connection_failed")
     }
-    repo := utilspkg.Get{{ ep.model }}Repository(dbConn)
+    repo := dbConn.{{ ep.model }}
     if repo == nil {
         return errorspkg.SendError(c, fiber.StatusInternalServerError, "db_connection_failed")
     }
@@ -257,8 +248,8 @@ func (h *{{ ep.model }}Controller) {{ ep.func_name }}(c *fiber.Ctx) error {
 {% endfor %}
 {% endif %}
 
-{% if ep.resppkg.converter %}
-    return c.Status(fiber.StatusOK).JSON(resppkg.{{ ep.resppkg.converter }}({{ ep.model | lower }}))
+{% if ep.response.converter %}
+    return c.Status(fiber.StatusOK).JSON(resppkg.{{ ep.response.converter }}({{ ep.model | lower }}))
 {% else %}
     return c.Status(fiber.StatusOK).JSON({{ ep.model | lower }})
 {% endif %}
@@ -287,7 +278,7 @@ func (h *{{ ep.model }}Controller) {{ ep.func_name }}(c *fiber.Ctx) error {
 {% else %}
 // @Param input body dtopkg.{{ ep.dto_name }} false "Update data"
 {% endif %}
-// @Success 200 {object} resppkg.{{ ep.resppkg.struct }}
+// @Success 200 {object} resppkg.{{ ep.response.struct }}
 // @Failure 400 {object} resppkg.ErrorResponse
 // @Failure 403 {object} resppkg.ErrorResponse
 // @Failure 404 {object} resppkg.ErrorResponse
@@ -301,7 +292,7 @@ func (h *{{ ep.model }}Controller) {{ ep.func_name }}(c *fiber.Ctx) error {
     if dbConn == nil {
         return errorspkg.SendError(c, fiber.StatusInternalServerError, "db_connection_failed")
     }
-    repo := utilspkg.Get{{ ep.model }}Repository(dbConn)
+    repo := dbConn.{{ ep.model }}
     if repo == nil {
         return errorspkg.SendError(c, fiber.StatusInternalServerError, "db_connection_failed")
     }
@@ -368,8 +359,8 @@ func (h *{{ ep.model }}Controller) {{ ep.func_name }}(c *fiber.Ctx) error {
         return errorspkg.SendError(c, fiber.StatusInternalServerError, "update_failed", err.Error())
     }
 
-{% if ep.resppkg.converter %}
-    return c.Status(fiber.StatusOK).JSON(resppkg.{{ ep.resppkg.converter }}(existing))
+{% if ep.response.converter %}
+    return c.Status(fiber.StatusOK).JSON(resppkg.{{ ep.response.converter }}(existing))
 {% else %}
     return c.Status(fiber.StatusOK).JSON(resppkg.SuccessResponse{Message: "{{ ep.model }} updated"})
 {% endif %}
@@ -402,7 +393,7 @@ func (h *{{ ep.model }}Controller) {{ ep.func_name }}(c *fiber.Ctx) error {
     if dbConn == nil {
         return errorspkg.SendError(c, fiber.StatusInternalServerError, "db_connection_failed")
     }
-    repo := utilspkg.Get{{ ep.model }}Repository(dbConn)
+    repo := dbConn.{{ ep.model }}
     if repo == nil {
         return errorspkg.SendError(c, fiber.StatusInternalServerError, "db_connection_failed")
     }
@@ -465,7 +456,7 @@ func (h *{{ ep.model }}Controller) {{ ep.func_name }}(c *fiber.Ctx) error {
     if dbConn == nil {
         return errorspkg.SendError(c, fiber.StatusInternalServerError, "db_connection_failed")
     }
-    repo := utilspkg.Get{{ ep.model }}Repository(dbConn)
+    repo := dbConn.{{ ep.model }}
     if repo == nil {
         return errorspkg.SendError(c, fiber.StatusInternalServerError, "db_connection_failed")
     }
@@ -531,7 +522,7 @@ func (h *{{ ep.model }}Controller) {{ ep.func_name }}(c *fiber.Ctx) error {
 
 {% endif %}
 {% endfor %}
-// @Success 200 {object} resppkg.{{ ep.resppkg.struct }}
+// @Success 200 {object} resppkg.{{ ep.response.struct }}
 // @Failure 400 {object} resppkg.ErrorResponse
 // @Failure 404 {object} resppkg.ErrorResponse
 // @Router {{ ep.path }} [{{ ep.method | lower }}]
@@ -613,7 +604,7 @@ func (h *{{ ep.model }}Controller) {{ ep.func_name }}(c *fiber.Ctx) error {
     if dbConn == nil {
         return errorspkg.SendError(c, fiber.StatusInternalServerError, "db_connection_failed")
     }
-    repo := utilspkg.Get{{ ep.model }}Repository(dbConn)
+    repo := dbConn.{{ ep.model }}
     if repo == nil {
         return errorspkg.SendError(c, fiber.StatusInternalServerError, "db_connection_failed")
     }
@@ -631,14 +622,14 @@ func (h *{{ ep.model }}Controller) {{ ep.func_name }}(c *fiber.Ctx) error {
     }
 
 {% if ep.unique %}
-{% if ep.resppkg.converter %}
-    return c.Status(fiber.StatusOK).JSON(resppkg.{{ ep.resppkg.converter }}(result))
+{% if ep.response.converter %}
+    return c.Status(fiber.StatusOK).JSON(resppkg.{{ ep.response.converter }}(result))
 {% else %}
     return c.Status(fiber.StatusOK).JSON(result)
 {% endif %}
 {% else %}
-{% if ep.resppkg.converter %}
-    items := resppkg.{{ ep.resppkg.converter }}(results)
+{% if ep.response.converter %}
+    items := resppkg.{{ ep.response.converter }}(results)
 {% else %}
     items := results
 {% endif %}

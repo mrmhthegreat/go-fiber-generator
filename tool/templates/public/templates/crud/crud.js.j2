@@ -1,0 +1,345 @@
+(function () {
+  "use strict";
+
+  [% set model_filters = model.filters if model.filters is iterable and model.filters is not string else [] %]
+  [% set has_date_range = 'date_range' in model_filters %]
+
+  [% set has_details = handler.crud_settings is defined and handler.crud_settings.get('get', {}).enabled %]
+  [% set has_create = handler.crud_settings is defined and handler.crud_settings.get('create', {}).enabled %]
+  [% set has_edit   = handler.crud_settings is defined and handler.crud_settings.get('update', {}).enabled %]
+  [% set has_delete = handler.crud_settings is defined and handler.crud_settings.get('delete', {}).enabled %]
+
+
+  [% if has_date_range %]
+  document.addEventListener("alpine:init", () => {
+    setTimeout(() => {
+      flatpickr(".[[ model.name | lower ]]datepicker", {
+        mode: "range",
+        static: true,
+        monthSelectorType: "static",
+        dateFormat: "M j, Y",
+        defaultDate: [new Date().setDate(new Date().getDate() - 6), new Date()],
+        prevArrow: '<svg class="stroke-current" width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M15.25 6L9 12.25L15.25 18.5" stroke="" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+        nextArrow: '<svg class="stroke-current" width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M8.75 19L15 12.75L8.75 6.5" stroke="" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+        onReady: (selectedDates, dateStr, instance) => {
+          instance.element.value = dateStr.replace("to", "-");
+          const customClass = instance.element.getAttribute("data-class");
+          if (customClass) instance.calendarContainer.classList.add(customClass);
+        },
+        onChange: (selectedDates, dateStr, instance) => {
+          instance.element.value = dateStr.replace("to", "-");
+          const tableData = Alpine.$data(document.body);
+          if (tableData && tableData.[[ model.name | lower ]]filters) {
+            tableData.[[ model.name | lower ]]filters.date_range = dateStr.replace("to", "-");
+          }
+        },
+      });
+    }, 100);
+  });
+  [% endif %]
+
+  [% if has_details %]
+  async function load[[ model.name ]]Detail(id, tableData) {
+    const detailsPage = document.getElementById("[[ model.name | lower ]]-details-page");
+    if (detailsPage) detailsPage.innerHTML = "";
+
+    try {
+      const response = await window.htmxAjaxPromise(
+        "GET",
+        `[[ handler.base_path if handler is defined and handler.base_path is defined else '/dashboard/' + model.name | lower + 's' ]]/${id}`,
+        { target: `#[[ model.name | lower ]]-details-page`, swap: "innerHTML" }
+      );
+
+      tableData.isLoading = false;
+      const redirectURL = response.getResponseHeader("HX-Redirect");
+      if (redirectURL) { window.location.href = redirectURL; return; }
+      if (response.status != 200) {
+        tableData.is[[ model.name ]]DetailsModalOpen = false;
+        const message = response.responseText
+          ? JSON.parse(response.responseText).error || "Failed to load details"
+          : "Failed to load details";
+        showNotification(message, "error");
+      }
+    } catch (error) {
+      tableData.is[[ model.name ]]DetailsModalOpen = false;
+      tableData.isLoading = false;
+      showNotification("Failed to load details", "error");
+    }
+  }
+  [% endif %]
+
+  [% if has_create %]
+  async function submit[[ model.name ]]Create() {
+    const tableData = Alpine.$data(document.body);
+    const form = document.getElementById("[[ model.name | lower ]]-create-form");
+    if (!form) return;
+
+    tableData.isLoading = true;
+    const formData = new FormData(form);
+
+    try {
+      const response = await fetch("[[ handler.base_path if handler is defined and handler.base_path is defined else '/dashboard/' + model.name | lower + 's' ]]", {
+        method: "POST",
+        body: formData,
+      });
+
+      const redirectURL = response.headers.get("HX-Redirect");
+      if (redirectURL) { window.location.href = redirectURL; return; }
+
+      if (response.ok) {
+        tableData.is[[ model.name ]]CreateModalOpen = false;
+        form.reset();
+        showNotification(tableData.trans.[[ model.name | lower ]]_created || "[[ model.name ]] created successfully!", "success");
+        tableData.load[[ model.name ]]Table(true);
+      } else {
+        const res = await response.json().catch(() => ({}));
+        showNotification(res.error || res.message || "Something went wrong.", "error");
+      }
+    } catch (e) {
+      showNotification("Something went wrong.", "error");
+    } finally {
+      tableData.isLoading = false;
+    }
+  }
+  [% endif %]
+
+  [% if has_edit %]
+  async function submit[[ model.name ]]Edit() {
+    const tableData = Alpine.$data(document.body);
+    const form = document.getElementById("[[ model.name | lower ]]-edit-form");
+    if (!form) return;
+
+    tableData.isLoading = true;
+    const formData = new FormData(form);
+
+    try {
+      const response = await fetch(`[[ handler.base_path if handler is defined and handler.base_path is defined else '/dashboard/' + model.name | lower + 's' ]]/${tableData.current[[ model.name ]]ID}`, {
+        method: "PATCH",
+        body: formData,
+      });
+
+      const redirectURL = response.headers.get("HX-Redirect");
+      if (redirectURL) { window.location.href = redirectURL; return; }
+
+      if (response.ok) {
+        tableData.is[[ model.name ]]EditModalOpen = false;
+        showNotification(tableData.trans.[[ model.name | lower ]]_updated || "[[ model.name ]] updated successfully!", "success");
+        tableData.load[[ model.name ]]Table(true);
+      } else {
+        const res = await response.json().catch(() => ({}));
+        showNotification(res.error || res.message || "Something went wrong.", "error");
+      }
+    } catch (e) {
+      showNotification("Something went wrong.", "error");
+    } finally {
+      tableData.isLoading = false;
+    }
+  }
+  [% endif %]
+
+  function [[ model.name | lower ]]TableData() {
+    return {
+      [[ model.name | lower ]]filters: {
+        [%- for filter_name in model_filters %]
+        [%- set filter_str = filter_name if filter_name is string else filter_name.get('name', '') %]
+        [%- if filter_str not in ['search', ''] %]
+        [[ filter_str ]]: "",
+        [%- endif %]
+        [%- endfor %]
+        [% if model.sort_by is defined and model.sort_by %]
+        sort_by: "[[ model.sort_by[0] ]]",
+        [% endif %]
+        sort_order: "desc",
+        search: "",
+        [% if has_date_range %]
+        placed_from: "",
+        placed_to: "",
+        [% endif %]
+      },
+      [[ model.name | lower ]]pagination: { limit: 10, offset: 0 },
+      hasMore[[ model.name ]]: false,
+      loadingMore[[ model.name ]]: false,
+      isLoading: false,
+      total[[ model.name | lower ]]Loaded: 0,
+
+      // Modal state
+      [% if has_details %]
+      is[[ model.name ]]DetailsModalOpen: false,
+      [% endif %]
+      [% if has_create %]
+      is[[ model.name ]]CreateModalOpen: false,
+      [% endif %]
+      [% if has_edit %]
+      is[[ model.name ]]EditModalOpen: false,
+      [% endif %]
+      [% if has_delete %]
+      is[[ model.name ]]DeleteModalOpen: false,
+      [% endif %]
+      current[[ model.name ]]ID: 0,
+      current[[ model.name ]]Data: null,
+
+      apply[[ model.name | lower ]]filters() {
+        this.[[ model.name | lower ]]pagination.offset = 0;
+        [% if has_date_range %]
+        this.parse[[ model.name ]]DateRange();
+        [% endif %]
+        this.load[[ model.name ]]Table(true);
+      },
+
+      reset[[ model.name | lower ]]filters() {
+        [%- for filter_name in model_filters %]
+        [%- set filter_str = filter_name if filter_name is string else filter_name.get('name', '') %]
+        [%- if filter_str not in ['search', ''] %]
+        this.[[ model.name | lower ]]filters.[[ filter_str ]] = "";
+        [%- endif %]
+        [%- endfor %]
+        [% if model.sort_by is defined and model.sort_by %]
+        this.[[ model.name | lower ]]filters.sort_by = "[[ model.sort_by[0] ]]";
+        [% endif %]
+        this.[[ model.name | lower ]]filters.sort_order = "desc";
+        this.[[ model.name | lower ]]filters.search = "";
+        [% if has_date_range %]
+        this.[[ model.name | lower ]]filters.date_range = "";
+        this.[[ model.name | lower ]]filters.placed_from = "";
+        this.[[ model.name | lower ]]filters.placed_to = "";
+        const datePicker = document.querySelector(".[[ model.name | lower ]]datepicker");
+        if (datePicker && datePicker._flatpickr) datePicker._flatpickr.clear();
+        [% endif %]
+        this.[[ model.name | lower ]]pagination.limit = 10;
+        this.hasMore[[ model.name ]] = false;
+        this.total[[ model.name | lower ]]Loaded = 0;
+        this.apply[[ model.name | lower ]]filters();
+      },
+
+      [% if has_date_range %]
+      parse[[ model.name ]]DateRange() {
+        if (this.[[ model.name | lower ]]filters.date_range && this.[[ model.name | lower ]]filters.date_range.includes(" - ")) {
+          const dates = this.[[ model.name | lower ]]filters.date_range.split(" - ");
+          this.[[ model.name | lower ]]filters.placed_from = this.format[[ model.name ]]DateForAPI(dates[0]);
+          this.[[ model.name | lower ]]filters.placed_to = this.format[[ model.name ]]DateForAPI(dates[1]);
+        } else {
+          this.[[ model.name | lower ]]filters.placed_from = "";
+          this.[[ model.name | lower ]]filters.placed_to = "";
+        }
+      },
+
+      format[[ model.name ]]DateForAPI(dateStr) {
+        try {
+          const months = { Jan:"01",Feb:"02",Mar:"03",Apr:"04",May:"05",Jun:"06",Jul:"07",Aug:"08",Sep:"09",Oct:"10",Nov:"11",Dec:"12" };
+          const parts = dateStr.replace(",", "").split(" ");
+          if (parts.length !== 3) throw new Error("Invalid");
+          const month = months[parts[0]], day = parts[1].padStart(2, "0"), year = parts[2];
+          if (!month || isNaN(day) || isNaN(year)) throw new Error("Invalid");
+          return `${year}-${month}-${day}`;
+        } catch { return ""; }
+      },
+      [% endif %]
+
+      async load[[ model.name ]]Table(reset = false) {
+        this.loadingMore[[ model.name ]] = true;
+        this.hasMore[[ model.name ]] = false;
+
+        if (reset) {
+          const container = document.getElementById("[[ model.name | lower ]]-table-container");
+          if (container) container.innerHTML = "";
+        } else {
+          this.[[ model.name | lower ]]pagination.offset += this.[[ model.name | lower ]]pagination.limit;
+        }
+
+        try {
+          const response = await window.htmxAjaxPromise(
+            "GET",
+            "[[ handler.base_path if handler is defined and handler.base_path is defined else '/dashboard/' + model.name | lower + 's' ]]-table",
+            {
+              target: "#[[ model.name | lower ]]-table-container",
+              swap: reset ? "innerHTML" : "beforeend",
+              values: this.get[[ model.name ]]FilterValues(),
+            }
+          );
+
+          if (response.status != 200) showNotification("Something Went Wrong", "error");
+          const redirectURL = response.getResponseHeader("HX-Redirect");
+          if (redirectURL) { window.location.href = redirectURL; return; }
+
+          const rows = document.querySelectorAll(
+            "#[[ model.name | lower ]]-table-container tr[data-[[ model.name | lower ]]-id]"
+          );
+          this.hasMore[[ model.name ]] = rows.length >= this.[[ model.name | lower ]]pagination.limit + this.[[ model.name | lower ]]pagination.offset;
+          this.total[[ model.name | lower ]]Loaded += rows.length;
+        } finally {
+          this.loadingMore[[ model.name ]] = false;
+        }
+      },
+
+      // Open inline detail panel
+      [% if has_details %]
+      open[[ model.name ]]DetailsView(id) {
+        this.current[[ model.name ]]ID = id;
+        this.is[[ model.name ]]DetailsModalOpen = true;
+        this.isLoading = true;
+        window.load[[ model.name ]]Detail(id, this);
+      },
+      [% endif %]
+
+      // Open edit modal — set current data for field pre-fill, wire delete btn URL like order_models does
+      [% if has_edit %]
+      open[[ model.name ]]EditModal(id, rowData) {
+        this.current[[ model.name ]]ID = id;
+        this.current[[ model.name ]]Data = rowData || null;
+        this.is[[ model.name ]]EditModalOpen = true;
+      },
+      [% endif %]
+
+      // Open delete modal — set hx-delete URL on the confirm button (matching order_models pattern)
+      [% if has_delete %]
+      open[[ model.name ]]DeleteModal(id) {
+        this.current[[ model.name ]]ID = id;
+        const btn = document.getElementById("[[ model.name | lower ]]-delete-confirm-btn");
+        if (btn) btn.setAttribute("hx-delete", `[[ handler.base_path if handler is defined and handler.base_path is defined else '/dashboard/' + model.name | lower + 's' ]]/${id}`);
+        htmx.process(btn);
+        this.is[[ model.name ]]DeleteModalOpen = true;
+      },
+      [% endif %]
+
+      get[[ model.name ]]FilterValues() {
+        return {
+          [%- for filter_name in model_filters %]
+          [%- set filter_str = filter_name if filter_name is string else filter_name.get('name', '') %]
+          [%- if filter_str not in ['search', ''] %]
+          [[ filter_str ]]: this.[[ model.name | lower ]]filters.[[ filter_str ]],
+          [%- endif %]
+          [%- endfor %]
+          [% if model.sort_by is defined and model.sort_by %]
+          sort_by: this.[[ model.name | lower ]]filters.sort_by,
+          [% endif %]
+          sort_order: this.[[ model.name | lower ]]filters.sort_order,
+          search: this.[[ model.name | lower ]]filters.search,
+          [% if has_date_range %]
+          placed_from: this.[[ model.name | lower ]]filters.placed_from,
+          placed_to: this.[[ model.name | lower ]]filters.placed_to,
+          [% endif %]
+          offset: this.[[ model.name | lower ]]pagination.offset,
+          limit: this.[[ model.name | lower ]]pagination.limit,
+          _csrf: document.querySelector('input[name="_csrf"]')?.value || "",
+        };
+      },
+
+      init() {
+        this.$nextTick(() => this.load[[ model.name ]]Table(true));
+      },
+    };
+  }
+
+  // Expose globally for Alpine spread and template calls
+  window.[[ model.name | lower ]]TableData = [[ model.name | lower ]]TableData;
+  [% if has_details %]
+  window.load[[ model.name ]]Detail = load[[ model.name ]]Detail;
+  [% endif %]
+  [% if has_create %]
+  window.submit[[ model.name ]]Create = submit[[ model.name ]]Create;
+  [% endif %]
+  [% if has_edit %]
+  window.submit[[ model.name ]]Edit = submit[[ model.name ]]Edit;
+  [% endif %]
+
+})();

@@ -11,17 +11,17 @@ import (
     "{{ config.project.module }}/internal/domain"
 )
 
-{% if model.list_response and model.list_resppkg.enabled %}
+{% if model.list_response and model.list_response.enabled %}
 // {{ model.name }}ListItem represents a {{ model.name | lower }} in list view
 type {{ model.name }}ListItem struct {
-{% for field in model.list_resppkg.fields %}
+{% for field in model.list_response.fields %}
 {% if field.omitempty %}
     {{ field.name }} {{ field.type }} `json:"{{ field.json_name }},omitempty"`
 {% else %}
     {{ field.name }} {{ field.type }} `json:"{{ field.json_name }}"`
 {% endif %}
 {% endfor %}
-{% for relation in model.list_resppkg.get('include_relations', []) %}
+{% for relation in model.list_response.get('include_relations', []) %}
 {% if relation.response_type == 'nested_list' %}
     {{ relation.name }} []{{ relation.response_struct }} `json:"{{ relation.json_name }},omitempty"`
 {% elif relation.response_type == 'nested_detail' %}
@@ -39,12 +39,12 @@ func To{{ model.name }}ListItem(m *models.{{ model.name }}) {{ model.name }}List
     }
 
     item := {{ model.name }}ListItem{
-{% for field in model.list_resppkg.fields %}
+{% for field in model.list_response.fields %}
         {{ field.name }}: m.{{ field.from_field }},
 {% endfor %}
     }
 
-{% for relation in model.list_resppkg.get('include_relations', []) %}
+{% for relation in model.list_response.get('include_relations', []) %}
 {% if relation.response_type == 'nested_list' %}
     if len(m.{{ relation.name }}) > 0 {
         item.{{ relation.name }} = To{{ relation.response_struct }}s(m.{{ relation.name }})
@@ -93,17 +93,17 @@ func New{{ model.name }}ListResponse(items []{{ model.name }}ListItem, hasMore b
 
 {% endif %}
 
-{% if model.detail_response and model.detail_resppkg.enabled %}
+{% if model.detail_response and model.detail_response.enabled %}
 // {{ model.name }}DetailResponse represents detailed {{ model.name | lower }} information
 type {{ model.name }}DetailResponse struct {
-{% for field in model.detail_resppkg.fields %}
+{% for field in model.detail_response.fields %}
 {% if field.get('omitempty') %}
     {{ field.name }} {{ field.type }} `json:"{{ field.json_name }},omitempty"`
 {% else %}
     {{ field.name }} {{ field.type }} `json:"{{ field.json_name }}"`
 {% endif %}
 {% endfor %}
-{% for relation in model.detail_resppkg.get('include_relations', []) %}
+{% for relation in model.detail_response.get('include_relations', []) %}
 {% if relation.response_type == 'nested_list' %}
     {{ relation.name }} []{{ relation.response_struct }} `json:"{{ relation.json_name }},omitempty"`
 {% elif relation.response_type == 'nested_detail' %}
@@ -121,12 +121,12 @@ func To{{ model.name }}DetailResponse(m *models.{{ model.name }}) {{ model.name 
     }
 
     resp := {{ model.name }}DetailResponse{
-{% for field in model.detail_resppkg.fields %}
+{% for field in model.detail_response.fields %}
         {{ field.name }}: m.{{ field.from_field }},
 {% endfor %}
     }
 
-{% for relation in model.detail_resppkg.get('include_relations', []) %}
+{% for relation in model.detail_response.get('include_relations', []) %}
 {% if relation.response_type == 'nested_list' %}
     if len(m.{{ relation.name }}) > 0 {
         resp.{{ relation.name }} = To{{ relation.response_struct }}s(m.{{ relation.name }})

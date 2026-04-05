@@ -40,6 +40,7 @@ class ModelGenerator:
         self.config_path = config_path
         self.templates_dir = templates_dir
         self.output_dir = output_dir
+        self.is_share_generate = False
         
         # Load configuration
         with open(config_path, 'r') as f:
@@ -57,6 +58,20 @@ class ModelGenerator:
         self.env.filters['to_go_type'] = self.to_go_type
         self.env.filters['is_pointer'] = lambda t: t.startswith('*')
         self.env.filters['strip_pointer'] = lambda t: t[1:] if t.startswith('*') else t
+
+        # Setup Web Jinja2 environment with custom delimiters
+        self.web_env = Environment(
+            loader=FileSystemLoader(templates_dir),
+            trim_blocks=True,
+            lstrip_blocks=True,
+            block_start_string='[%',
+            block_end_string='%]',
+            variable_start_string='[[',
+            variable_end_string=']]',
+            comment_start_string='[#',
+            comment_end_string='#]',
+        )
+        self.web_env.filters = self.env.filters.copy()
         
     def to_go_type(self, field_type: str) -> str:
         """Convert field type to appropriate Go type"""
@@ -88,7 +103,6 @@ class ModelGenerator:
             return None
         
         name = model['name']
-        rbac_model_field = model.get('rbac_model_field', 'Role')
         base_path = handler_cfg.get('base_path', f'/dashboard/{name.lower()}')
         middleware = handler_cfg.get('middleware', ['auth'])
         rate_limit = handler_cfg.get('rate_limit', {})
@@ -538,7 +552,6 @@ class ModelGenerator:
             'model': name,
             'package_name': package_name,
             'base_path': base_path,
-            'rbac_model_field': rbac_model_field,
             'middleware': middleware,
             'auth_redirect': auth_redirect,
             'rate_limit': rate_limit,
@@ -547,6 +560,7 @@ class ModelGenerator:
                 'enabled': rbac_enabled,
                 'service_var': rbac_service_var,
             },
+            'crud_settings': crud_settings,
             'endpoints': endpoints,
             'getter_endpoints': getter_endpoints,
             'needs_user_repo': False,  # Not needed - repos come from contexthelpers
@@ -567,16 +581,129 @@ class ModelGenerator:
         """
         processed = model.copy()
         
+        # --- NEW LOGIC: Standardize ID and Inject Auth Fields ---
+        project_cfg = self.config.get('project', {})
+        user_model_name = project_cfg.get('user_model_name', 'User')
+        
+        auth_cfg = self.config.get('authentication', {})
+        fcm_cfg = self.config.get('fcm', {})
+        
+        raw_fields = processed.get('fields', [])
+        
+        # 1. Always enforce standard ID field
+        fixed_id_field = {
+            "name": "ID",
+            "type": "uint",
+            "gorm": "primaryKey;autoIncrement",
+            "json": "id"
+        }
+        
+        # Filter out existing ID fields (case insensitive)
+        existing_field_names = []
+        filtered_fields = []
+        for f in raw_fields:
+            if f.get('name', '').lower() != 'id':
+                filtered_fields.append(f)
+                existing_field_names.append(f.get('name', '').lower())
+                
+        final_fields = [fixed_id_field] + filtered_fields
+        
+        # 2. Inject Dynamic User Fields based on config
+        if processed.get('name') == user_model_name:
+            # Helper to add field if not exists
+            def add_field_if_missing(f_cfg):
+                if f_cfg['name'].lower() not in existing_field_names:
+                    final_fields.append(f_cfg)
+                    existing_field_names.append(f_cfg['name'].lower())
+
+            # a. Login Identifier Fields (Email / Username)
+            ident_cfg = auth_cfg.get('identifier', {})
+            login_methods = ident_cfg.get('login_methods', [])
+            
+            uses_email = False
+            uses_username = False
+            
+            for lm in login_methods:
+                if lm.get('enabled', False):
+                    fname = lm.get('field', '')
+                    if fname == 'email':
+                        uses_email = True
+                    elif fname == 'username':
+                        uses_username = True
+                    elif fname in ['email_or_username', 'username_or_email']:
+                        uses_email = True
+                        uses_username = True
+            
+            if uses_email:
+                add_field_if_missing({
+                    "name": "Email", "type": "string", "gorm": "unique;not null;index", "json": "email", "validate": "required,email"
+                })
+                
+            if uses_username:
+                add_field_if_missing({
+                    "name": "Username", "type": "string", "gorm": "unique;not null;index", "json": "username", "validate": "required,min=3,max=50,alphanum"
+                })
+                
+            # b. Password Field
+            email_pass_cfg = auth_cfg.get('email_password', {})
+            if email_pass_cfg.get('enabled', False) or (not auth_cfg.get('social_auth') and auth_cfg.get('enabled', False)):
+                add_field_if_missing({
+                    "name": "Password", "type": "string", "gorm": "not null", "json": "-"
+                })
+                
+            # c. Email Verification
+            email_verif_cfg = auth_cfg.get('email_verification', {})
+            if email_verif_cfg.get('enabled', False):
+                # ensure email exists if not already added by login_methods
+                if not uses_email:
+                    add_field_if_missing({
+                        "name": "Email", "type": "string", "gorm": "unique;not null;index", "json": "email", "validate": "required,email"
+                    })
+                add_field_if_missing({
+                    "name": "Verified", "type": "bool", "gorm": "default:false", "json": "verified"
+                })
+                
+            # d. Social Auth
+            social_cfg = auth_cfg.get('social_auth', {})
+            has_social = False
+            for provider, p_cfg in social_cfg.items():
+                if isinstance(p_cfg, dict) and p_cfg.get('enabled', False):
+                    has_social = True
+                    # Check for provider specific model fields
+                    if provider=="google":
+                        add_field_if_missing({
+                            "name": "GoogleID", "type": "*string", "gorm": "uniqueIndex", "json": "google_id"
+                        })
+                    elif provider=="facebook":
+                        add_field_if_missing({
+                            "name": "FacebookID", "type": "*string", "gorm": "uniqueIndex", "json": "facebook_id"
+                        })
+                   
+            
+            if has_social:
+                add_field_if_missing({
+                    "name": "AuthProvider", "type": "string", "gorm": "default:'local'", "json": "auth_provider"
+                })
+                
+            # e. FCM Token
+            if fcm_cfg.get('enabled', False):
+                add_field_if_missing({
+                    "name": "FCMToken", "type": "*string", "gorm": "index", "json": "fcm_token"
+                })
+                
+        processed['fields'] = final_fields
+        # --- END NEW LOGIC ---
+        
         # Detect if model has time fields
         processed['has_time_fields'] = any(
             field.get('type') in ['time.Time', '*time.Time'] 
-            for field in model.get('fields', [])
+            for field in processed.get('fields', [])
         )
         
         # Detect if model has JSON fields
         processed['has_json_fields'] = any(
             'datatypes.JSON' in field.get('type', '') 
-            for field in model.get('fields', [])
+            for field in processed.get('fields', [])
         )
         
         # Set default pagination settings
@@ -1051,7 +1178,11 @@ class ModelGenerator:
         Returns:
             Generated Go code as string
         """
-        template = self.env.get_template('internal/domain/model.go.j2')
+        user_model_name = self.config.get('project', {}).get('user_model_name', 'User')
+        if model.get('name') == user_model_name:
+            template = self.env.get_template('internal/domain/user_model.go.j2')
+        else:
+            template = self.env.get_template('internal/domain/model.go.j2')
         return template.render(model=model)
     
     def generate_dto(self, model: Dict[str, Any]) -> str:
@@ -1693,34 +1824,209 @@ class ModelGenerator:
 
     def generate_controller(self, ctrl_ctx: Dict[str, Any]) -> str:
         template = self.env.get_template('internal/api/handlers/handler.go.j2')
-        return template.render(ctrl=ctrl_ctx)
+        return template.render(ctrl=ctrl_ctx, config=self.config)
 
     def generate_response(self, model: Dict[str, Any]) -> str:
         template = self.env.get_template('pkg/response/response.go.j2')
-        return template.render(model=model)
+        return template.render(model=model, config=self.config, module_path=self.config.get('project', {}).get('module', ''))
     
     def generate_repository(self, model: Dict[str, Any], module_path: str) -> str:
         template = self.env.get_template('internal/repository/repository.go.j2')
-        return template.render(model=model, module_path=module_path)
+        return template.render(model=model, module_path=module_path, config=self.config)
     def generate_web_handler(self, handler_ctx: Dict[str, Any]) -> str:
         """Generate web handler code from context"""
         template = self.env.get_template('internal/web/dashboard/web_handler.go.j2')
-        return template.render(handler=handler_ctx, module_path=handler_ctx['module_path'])
+        return template.render(handler=handler_ctx, module_path=handler_ctx['module_path'], config=self.config)
+
+    def generate_web_templates(self, model: Dict[str, Any], handler_ctx: Dict[str, Any]):
+        """Generate HTML and JS templates for the web handler"""
+        model_name_lower = model['name'].lower()
+        output_path = Path(self.output_dir)
+        
+        # Determine DTO fields for the form
+        # We try to find a 'create' or 'update' DTO
+        dto_name = ""
+        for ep in handler_ctx['endpoints']:
+            if ep['type'] in ['create', 'update'] and ep.get('dto_name'):
+                dto_name = ep['dto_name']
+                break
+        
+        # If no DTO found, use all fields (fallback)
+        dto_fields = []
+        if dto_name:
+            # We need to find the DTO in the model's dtos list
+            for dto in model.get('dtos', []):
+                if dto['name'] == dto_name:
+                    for f_name in dto.get('fields', []):
+                        f_cfg = self.get_field_by_name(model, f_name)
+                        if f_cfg:
+                            dto_fields.append(f_cfg)
+                    # Add file fields if any
+                    for f_name, f_type in dto.get('file_fields', {}).items():
+                        if f_type == 'file':
+                            f_cfg = self.get_field_by_name(model, f_name)
+                            if f_cfg:
+                                f_copy = f_cfg.copy()
+                                f_copy['type'] = 'file'
+                                dto_fields.append(f_copy)
+                    break
+        
+        # Fallback if no DTO fields found
+        if not dto_fields:
+            dto_fields = [f for f in model.get('fields', []) if f['name'] not in ['ID', 'CreatedAt', 'UpdatedAt', 'DeletedAt']]
+
+        # Context for rendering templates
+        render_ctx = {
+            'model': model,
+            'handler': handler_ctx,
+            'dto_fields': dto_fields,
+            'config': self.config
+        }
+        shared_dir = output_path / 'html' / 'templates' / 'shared'
+        shared_dir.mkdir(parents=True, exist_ok=True)
+        if not self.is_share_generate:
+            if handler_ctx['crud_settings'].get('list', {}).get('enabled', False):
+                table_loading_html = self.web_env.get_template('public/templates/crud/partials/table-loading.html.j2').render(**render_ctx)
+                table_loading_path = shared_dir / 'table-loading.html'
+                with open(table_loading_path, 'w') as f:
+                    f.write(table_loading_html)
+
+            preloader_html = self.web_env.get_template('public/templates/shared/preloader.html.j2').render(**render_ctx)
+            preloader_path = shared_dir / 'preloader.html'
+            with open(preloader_path, 'w') as f:
+                f.write(preloader_html)
+
+            overlay_html = self.web_env.get_template('public/templates/shared/overlay.html.j2').render(**render_ctx)
+            overlay_path = shared_dir / 'overlay.html'
+            with open(overlay_path, 'w') as f:
+                f.write(overlay_html)
+
+            
+            # header_html = self.web_env.get_template('public/templates/shared/header.html.j2').render(**render_ctx)
+            # header_path = shared_dir / 'header.html'
+            # with open(header_path, 'w') as f:
+            #     f.write(header_html)
+
+            # sidebar_html = self.web_env.get_template('public/templates/shared/sidebar.html.j2').render(**render_ctx)
+            # sidebar_path = shared_dir / 'sidebar.html'
+            # with open(sidebar_path, 'w') as f:
+            #     f.write(sidebar_html)
+
+            self.is_share_generate=True
+
+       
+        # 2. Form Page (Create/Edit)
+        # We render it twice: once for create, once for edit (sharing the same j2)
+        if handler_ctx['crud_settings'].get('create_page', {}).get('enabled', False):
+            print("Rendering form edit=False"); create_html = self.web_env.get_template('public/templates/crud/form.html.j2').render(edit=False, **render_ctx)
+            create_path = output_path / 'html' / 'templates' / handler_ctx['template_base'] / 'create.html'
+            create_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(create_path, 'w') as f:
+                f.write(create_html)
+        if handler_ctx['crud_settings'].get('edit_page', {}).get('enabled', False):
+            print("Rendering form edit=True"); edit_html = self.web_env.get_template('public/templates/crud/form.html.j2').render(edit=True, **render_ctx)
+            edit_path = output_path / 'html' / 'templates' / handler_ctx['template_base'] / 'edit.html'
+            edit_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(edit_path, 'w') as f:
+                f.write(edit_html)
+            
+        # 3. Show Page
+
+        
+        # 4a. Additional Partials (filter, table-view, models)
+        partials_dir = output_path / 'html' / 'templates' / handler_ctx['template_base'] / 'partials' 
+        partials_dir.mkdir(parents=True, exist_ok=True)
+        if handler_ctx['crud_settings'].get('get', {}).get('enabled', False):
+            try:
+                show_html = self.web_env.get_template('public/templates/crud/show.html.j2').render(**render_ctx)
+                show_path = partials_dir / 'show.html'
+                with open(show_path, 'w') as f:
+                    f.write(show_html)
+            except Exception as e:
+                print(f"Warning: Could not render show template for {model['name']}: {e}")
+            try:
+                loading_html = self.web_env.get_template('public/templates/crud/partials/details-loading.html.j2').render(**render_ctx)
+                with open(partials_dir / f'{model_name_lower}-details-loading.html', 'w') as f:
+                    f.write(loading_html)
+            except Exception as e:
+                print(f"Warning: Could not render details-loading template for {model['name']}: {e}")
+         
+        # 4. Table Rows Partial
+        if handler_ctx['crud_settings'].get('list', {}).get('enabled', False):
+             # 1. List Page
+            print("Rendering list"); 
+            list_html = self.web_env.get_template('public/templates/crud/list.html.j2').render(**render_ctx)
+            list_path = output_path / 'html' / 'templates' / handler_ctx['template_base'] / 'index.html'
+            list_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(list_path, 'w') as f:
+                f.write(list_html)
+            
+            try:
+                rows_html = self.web_env.get_template('public/templates/crud/partials/table_rows.html.j2').render(**render_ctx)
+                rows_path = partials_dir / f'{model_name_lower}_table_rows.html'
+                with open(rows_path, 'w') as f:
+                    f.write(rows_html)
+            except Exception as e:
+                print(f"Warning: Could not render filter template for {model['name']}: {e}")
+
+            try:
+                filter_html = self.web_env.get_template('public/templates/crud/partials/filter.html.j2').render(**render_ctx)
+                with open(partials_dir / f'{model_name_lower}-filter.html', 'w') as f:
+                    f.write(filter_html)
+            except Exception as e:
+                print(f"Warning: Could not render filter template for {model['name']}: {e}")
+
+            try:
+                table_view = self.web_env.get_template('public/templates/crud/partials/table-view.html.j2').render(**render_ctx)
+                with open(partials_dir / f'{model_name_lower}-table-view.html', 'w') as f:
+                    f.write(table_view)
+            except Exception as e:
+                print(f"Warning: Could not render table-view template for {model['name']}: {e}")
+
+            try:
+                models_html = self.web_env.get_template('public/templates/crud/partials/models.html.j2').render(**render_ctx)
+                with open(partials_dir / f'{model_name_lower}_models.html', 'w') as f:
+                    f.write(models_html)
+            except Exception as e:
+                print(f"Warning: Could not render models template for {model['name']}: {e}")
+
+        # 4b. Shared loading template
+       
+           
+        # 5. CRUD JS
+        crud_js = self.web_env.get_template('public/templates/crud/crud.js.j2').render(**render_ctx)
+        js_path = output_path / 'html' / 'static' / model_name_lower / 'js' / f"{model_name_lower}.js"
+        js_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(js_path, 'w') as f:
+            f.write(crud_js)
+            
+        print(f"    ✓ HTML/JS templates generated for {model['name']}")
 
 
     def create_directories(self):
         """Create output directories if they don't exist"""
-        models_dir = Path(self.output_dir) / 'internal'/'domain'
-        dto_dir = Path(self.output_dir) /'pkg' / 'dto'
-        response_dir = Path(self.output_dir) /'pkg'/ 'response's
-        repository_dir = Path(self.output_dir) / 'internal'/ 'repository'
-        controller_dir = Path(self.output_dir) /'internal'/ 'api'/ 'handlers'
-        handler_dir = Path(self.output_dir) / 'web' / 'dashboard'  # ADD THIS LINE
+        output_path = Path(self.output_dir)
+        models_dir = output_path / 'internal'/'domain'
+        dto_dir = output_path /'pkg' / 'dto'
+        response_dir = output_path /'pkg'/ 'response'
+        repository_dir = output_path / 'internal'/ 'repository'
+        controller_dir = output_path /'internal'/ 'api'/ 'handlers'
+        handler_dir = output_path / 'internal' / 'web' / 'dashboard'
         
-        for d in [models_dir, dto_dir, response_dir, repository_dir, controller_dir,handler_dir]:
+        # HTML and Static directories
+        template_dir = output_path / 'html' / 'templates'
+        static_dir = output_path / 'html' / 'static'
+        
+        dirs = [
+            models_dir, dto_dir, response_dir, repository_dir, 
+            controller_dir, handler_dir, template_dir, static_dir
+        ]
+        
+        for d in dirs:
             d.mkdir(parents=True, exist_ok=True)
-        
-        return models_dir, dto_dir, response_dir, repository_dir, controller_dir,handler_dir
+            
+        return models_dir, dto_dir, response_dir, repository_dir, controller_dir, handler_dir
+
     def generate_all(self, module_path: str = "your-module/path"):
         """Generate all models, DTOs, responses, repositories, and controllers"""
         models_dir, dto_dir, response_dir, repository_dir, controller_dir,handler_dir = self.create_directories()
@@ -1730,12 +2036,10 @@ class ModelGenerator:
             return
         
         print(f"Generating {len(self.config['models'])} models...")
-        rbac_model_field = self.config["authentication"].get("rbac", {}).get("model_field", "Role")
         for raw_model in self.config['models']:
             
             model = self.process_model(raw_model)
             model['_module_path'] = module_path
-            model['rbac_model_field'] = rbac_model_field
             model_name = model['name']
             
             
@@ -1782,6 +2086,9 @@ class ModelGenerator:
                 with open(handler_dir / f"{model_name.lower()}_handler.go", 'w') as f:
                     f.write(handler_code)
                 print(f"    ✓ Web Handler generated")
+                
+                # Generate HTML templates
+                self.generate_web_templates(model, handler_ctx)
         
         print(f"\n✅ Generation complete! Files saved to: {self.output_dir}")
 

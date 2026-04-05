@@ -1,7 +1,6 @@
 project:
   module: github.com/username/my_api
   user_model_name: User  # Name of the user model struct
-  repository_name: UserRepository  # Repository interface name to use
 
 
 # ============================================================================

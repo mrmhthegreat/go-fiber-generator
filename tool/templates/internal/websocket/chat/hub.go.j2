@@ -4,17 +4,16 @@ import (
 	"log"
 	"sync"
 	"time"
-
 	"github.com/gofiber/contrib/websocket"
-
 	"{{ config.project.module }}/config"
-
 	fcmpkg "{{ config.project.module }}/pkg/fcm"
 	"{{ config.project.module }}/internal/domain"
 	resppkg "{{ config.project.module }}/pkg/response"
-	ws "{{ config.project.module }}/websocket"
+{% if config.notifications.enabled %}
+	notifpkg "{{ config.project.module }}/pkg/notification"
+{% endif %}
+	ws "{{ config.project.module }}/internal/websocket"
 )
-
 {% if config.websocket.enabled %}
 {# ────────────────────────────────────────────────────────────── #}
 {# Resolve pool/channel names once at template level              #}
@@ -41,7 +40,6 @@ import (
     {% if 'notify' in channel.name | lower %}{% set ns.notify_chan = channel %}{% endif %}
 {% endif %}
 {% endfor %}
-
 {# ────────────────────────────────────────────────────────────── #}
 {# Shared types (both modes)                                      #}
 {# ────────────────────────────────────────────────────────────── #}
@@ -51,16 +49,13 @@ type StatusUpdate struct {
 	IsOnline bool `json:"is_online"`
 }
 {% endif %}
-
 type UserConn struct {
 	UserID uint
 	Conn   WSWriter
 }
-
 {# 1. ChatHub — user↔user and user↔system chat messages            #}
 {# ──────────────────────────────────────────────────────────────── #}
 {% if config.chat.enabled and config.websocket.get('dedicated', {}).get('chat', {}).get('enabled', true) %}
-
 // ChatHub manages user connections and chat message broadcasting.
 type ChatHub struct {
 {% if ns.user_pool %}
@@ -76,7 +71,6 @@ type ChatHub struct {
 {% endif %}
 	mu sync.RWMutex
 }
-
 var ChatHubInst = ChatHub{
 {% if ns.user_pool %}
 	{{ ns.user_pool.name }}: make(map[uint]WSWriter),
@@ -90,7 +84,6 @@ var ChatHubInst = ChatHub{
 	{{ ns.status_chan.name }}: make(chan StatusUpdate, {{ ns.status_chan.buffer_size }}),
 {% endif %}
 }
-
 func (h *ChatHub) Run() {
 	for {
 		select {
@@ -102,7 +95,6 @@ func (h *ChatHub) Run() {
 {% if config.websocket.get('presence', {}).get('enabled', false) and config.websocket.get('presence', {}).get('broadcast_on_connect', false) %}
 			go h.BroadcastStatus(userConn.UserID, true)
 {% endif %}
-
 		case userConn := <-h.unregister{{ ns.user_pool.name | title }}:
 			h.mu.Lock()
 			if conn, ok := h.{{ ns.user_pool.name }}[userConn.UserID]; ok && conn == userConn.Conn {
@@ -114,14 +106,13 @@ func (h *ChatHub) Run() {
 			}
 			h.mu.Unlock()
 {% endif %}
-
 {% if ns.user_chan %}
 		case msg := <-h.{{ ns.user_chan.name }}:
 			h.mu.RLock()
 			var conversation domain.Conversation
 			if err := config.DB.First(&conversation, msg.ConversationID).Error; err == nil {
 				targetID := conversation.UserID
-				{% set receiver_id_field = config.chat.domain.conversation.fields | selectattr('name', 'equalto', 'receiver_id') | first %}
+				{% set receiver_id_field = config.chat.models.conversation.fields | selectattr('name', 'equalto', 'receiver_id') | first %}
 				{% if receiver_id_field %}
 				if msg.SenderID == conversation.UserID && conversation.ReceiverID != nil {
 					targetID = *conversation.ReceiverID
@@ -144,7 +135,6 @@ func (h *ChatHub) Run() {
 			}
 			h.mu.RUnlock()
 {% endif %}
-
 {% if config.websocket.get('presence', {}).get('enabled', false) and ns.status_chan %}
 		case status := <-h.{{ ns.status_chan.name }}:
 			// Presence update — forward to SupportHub via registry so admins see it
@@ -161,7 +151,6 @@ func (h *ChatHub) Run() {
 		}
 	}
 }
-
 {% if config.websocket.get('presence', {}).get('enabled', false) and ns.status_chan %}
 func (h *ChatHub) BroadcastStatus(userID uint, isOnline bool) {
 	select {
@@ -171,7 +160,6 @@ func (h *ChatHub) BroadcastStatus(userID uint, isOnline bool) {
 	}
 }
 {% endif %}
-
 func (h *ChatHub) SendOfflineNotification(userID uint, msg domain.Message) {
 	var user domain.User
 	if err := config.DB.Select("id", "fcm_token").First(&user, userID).Error; err == nil {
@@ -185,7 +173,6 @@ func (h *ChatHub) SendOfflineNotification(userID uint, msg domain.Message) {
 		}
 	}
 }
-
 func (h *ChatHub) BroadcastToUser(userID uint, msg interface{}) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -202,7 +189,6 @@ func (h *ChatHub) BroadcastToUser(userID uint, msg interface{}) {
 	}
 {% endif %}
 }
-
 // IsUserOnline satisfies the UserBroadcaster interface.
 func (h *ChatHub) IsUserOnline(userID uint) bool {
 	h.mu.RLock()
@@ -214,7 +200,6 @@ func (h *ChatHub) IsUserOnline(userID uint) bool {
 	return false
 {% endif %}
 }
-
 func NotifyUser(msg domain.Message) {
 {% if ns.user_chan %}
 	select {
@@ -224,11 +209,9 @@ func NotifyUser(msg domain.Message) {
 	}
 {% endif %}
 }
-
 func NotifyTargetUser(targetUserID uint, msg domain.Message) {
 	NotifyUser(msg)
 }
-
 func NotifyTargetUserAction(targetUserID uint, conversationID uint, action string) {
 	ChatHubInst.mu.RLock()
 {% if ns.user_pool %}
@@ -238,7 +221,6 @@ func NotifyTargetUserAction(targetUserID uint, conversationID uint, action strin
 	ok := false
 {% endif %}
 	ChatHubInst.mu.RUnlock()
-
 	if ok {
 		resp := resppkg.MessageResponse{
 			ConversationID: conversationID,
@@ -252,12 +234,15 @@ func NotifyTargetUserAction(targetUserID uint, conversationID uint, action strin
 		}
 	}
 }
-
 func StartChatHub() {
 	ws.RegisterUserBroadcaster(&ChatHubInst)
+{% if config.notifications.enabled and config.notifications.websocket.enabled %}
+	notifpkg.WsBroadcastHook = func(userID uint, msg map[string]interface{}) {
+		ChatHubInst.BroadcastToUser(userID, msg)
+	}
+	notifpkg.IsUserOnlineHook = ChatHubInst.IsUserOnline
+{% endif %}
 	go ChatHubInst.Run()
 }
-
 {% endif %}{# dedicated.chat #}
-
 {% endif %}{# websocket.enabled #}

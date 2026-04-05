@@ -32,7 +32,7 @@ type Config struct {
 
 // ServerConfig holds server configuration
 type ServerConfig struct {
-	{% if config.features.maintenance_mode.enabled %}
+	{% if config.middleware.maintenance.enabled %}
 	MaintenanceMode bool   `yaml:"maintenance_mode"`
 	MaintenanceEndTime string `yaml:"maintenance_end_time,omitempty"`
 	{% endif %}

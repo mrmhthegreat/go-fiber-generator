@@ -20,7 +20,7 @@ import (
     {'name': 'last_message', 'type': 'string'},
     {'name': 'priority', 'type': 'string', 'default': 'normal'}
 ] %}
-{% set conv_user_fields = config.chat.domain.conversation.fields %}
+{% set conv_user_fields = config.chat.models.conversation.fields %}
 {% set conv_user_field_names = conv_user_fields | map(attribute='name') | list %}
 {% set conv_fields = conv_user_fields | list %}
 {% for base in conv_base_fields %}
@@ -38,7 +38,7 @@ import (
     {'name': 'content', 'type': 'string', 'required': true},
     {'name': 'is_read', 'type': 'bool', 'default': false}
 ] %}
-{% set msg_user_fields = config.chat.domain.message.fields %}
+{% set msg_user_fields = config.chat.models.message.fields %}
 {% set msg_user_field_names = msg_user_fields | map(attribute='name') | list %}
 {% set msg_fields = msg_user_fields | list %}
 {% for base in msg_base_fields %}
@@ -63,13 +63,15 @@ import (
 
 // ChatRepository defines the interface for chat-related database operations.
 type ChatRepository interface {
-	GetUserConversations(opts ListConversationOptions) ([]domain.Conversation, bool, int64, error)
-	GetAdminConversations(opts ListConversationOptions) ([]domain.Conversation, bool, int64, error)
-	GetConversationByIDSimple(id uint) (*domain.Conversation, error)
-	ListMessages(opts ListMessageOptions) ([]domain.Message, bool, int64, error)
+	
+	GetUserConversations(opts ListConversationOptions, fields ...string) ([]domain.Conversation, bool, int64, error)
+	GetAdminConversations(opts ListConversationOptions, fields ...string) ([]domain.Conversation, bool, int64, error)
+	GetConversationByIDSimple(id uint, fields ...string) (*domain.Conversation, error)
+	ListMessages(opts ListMessageOptions, fields ...string) ([]domain.Message, bool, int64, error)
+	
 	CreateMessage(msg *domain.Message) (*domain.Message, error)
 	MarkMessagesAsRead(convID uint, targetType string) error
-	GetConversationBetweenUsers(userID1, userID2 uint) (*domain.Conversation, error)
+	GetConversationBetweenUsers(userID1, userID2 uint, fields ...string) (*domain.Conversation, error)
 	CreateConversation(conv *domain.Conversation) (*domain.Conversation, error)
 {% if config.chat.repository.get('custom_methods') %}
 {% for method in config.chat.repository.custom_methods %}
@@ -113,12 +115,14 @@ type ListMessageOptions struct {
 }
 
 // GetUserConversations retrieves conversations the user participates in.
-func (r *chatRepository) GetUserConversations(opts ListConversationOptions) ([]domain.Conversation, bool, int64, error) {
+func (r *chatRepository) GetUserConversations(opts ListConversationOptions, fields ...string) ([]domain.Conversation, bool, int64, error) {
 	var conversations []domain.Conversation
 	var total int64
-
 	query := r.db.Model(&domain.Conversation{}).
 		Where("{{ conv_user_id_f.name }} = ? OR {{ conv_receiver_id_f.name }} = ?", opts.UserID, opts.UserID)
+	if len(fields) > 0 {
+		query = query.Select(fields)
+	}
 
 	if opts.Status != "" {
 		query = query.Where("{{ conv_status_f.name }} = ?", opts.Status)
@@ -160,7 +164,7 @@ func (r *chatRepository) GetUserConversations(opts ListConversationOptions) ([]d
 		Limit(opts.Limit + 1).
 		Offset(opts.Offset)
 
-{% for relation in config.chat.domain.conversation.get('relations', []) %}
+{% for relation in config.chat.models.conversation.get('relations', []) %}
 {% if relation.get('preload', false) %}
 	query = query.Preload("{{ relation.name }}")
 {% endif %}
@@ -178,11 +182,13 @@ func (r *chatRepository) GetUserConversations(opts ListConversationOptions) ([]d
 }
 
 // GetAdminConversations retrieves all conversations for an admin view.
-func (r *chatRepository) GetAdminConversations(opts ListConversationOptions) ([]domain.Conversation, bool, int64, error) {
+func (r *chatRepository) GetAdminConversations(opts ListConversationOptions, fields ...string) ([]domain.Conversation, bool, int64, error) {
 	var conversations []domain.Conversation
 	var total int64
-
 	query := r.db.Model(&domain.Conversation{})
+	if len(fields) > 0 {
+		query = query.Select(fields)
+	}
 
 	if opts.Status != "" {
 		query = query.Where("{{ conv_status_f.name }} = ?", opts.Status)
@@ -206,7 +212,7 @@ func (r *chatRepository) GetAdminConversations(opts ListConversationOptions) ([]
 		Limit(opts.Limit + 1).
 		Offset(opts.Offset)
 
-{% for relation in config.chat.domain.conversation.get('relations', []) %}
+{% for relation in config.chat.models.conversation.get('relations', []) %}
 {% if relation.get('preload', false) %}
 	query = query.Preload("{{ relation.name }}")
 {% endif %}
@@ -224,20 +230,25 @@ func (r *chatRepository) GetAdminConversations(opts ListConversationOptions) ([]
 }
 
 // GetConversationByIDSimple retrieves a single conversation by primary key.
-func (r *chatRepository) GetConversationByIDSimple(id uint) (*domain.Conversation, error) {
-	var conv domain.Conversation
-	if err := r.db.First(&conv, "{{ conv_id_f.name }} = ?", id).Error; err != nil {
+func (r *chatRepository) GetConversationByIDSimple(id uint, fields ...string) (*domain.Conversation, error) {
+	query := r.db
+	if len(fields) > 0 {
+		query = query.Select(fields)
+	}
+	if err := query.First(&conv, "{{ conv_id_f.name }} = ?", id).Error; err != nil {
 		return nil, err
 	}
 	return &conv, nil
 }
 
 // ListMessages retrieves messages for a conversation with filtering and pagination.
-func (r *chatRepository) ListMessages(opts ListMessageOptions) ([]domain.Message, bool, int64, error) {
+func (r *chatRepository) ListMessages(opts ListMessageOptions, fields ...string) ([]domain.Message, bool, int64, error) {
 	var messages []domain.Message
 	var total int64
-
 	query := r.db.Model(&domain.Message{}).Where("{{ msg_conv_id_f.name }} = ?", opts.ConversationID)
+	if len(fields) > 0 {
+		query = query.Select(fields)
+	}
 
 	if opts.SenderType != "" {
 		query = query.Where("{{ msg_sender_type_f.name }} = ?", opts.SenderType)
@@ -293,9 +304,13 @@ func (r *chatRepository) MarkMessagesAsRead(convID uint, targetType string) erro
 }
 
 // GetConversationBetweenUsers finds a direct conversation between two users.
-func (r *chatRepository) GetConversationBetweenUsers(userID1, userID2 uint) (*domain.Conversation, error) {
+func (r *chatRepository) GetConversationBetweenUsers(userID1, userID2 uint, fields ...string) (*domain.Conversation, error) {
 	var conv domain.Conversation
-	err := r.db.
+	query := r.db
+	if len(fields) > 0 {
+		query = query.Select(fields)
+	}
+	err := query.
 		Where(
 			"({{ conv_user_id_f.name }} = ? AND {{ conv_receiver_id_f.name }} = ?) OR ({{ conv_user_id_f.name }} = ? AND {{ conv_receiver_id_f.name }} = ?)",
 			userID1, userID2, userID2, userID1,

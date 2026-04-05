@@ -1,6 +1,12 @@
 project:
   module: github.com/username/my_api
-
+email:
+  enabled: true
+  provider: smtp
+  smtp_host_env: SMTP_HOST
+  smtp_port_env: SMTP_PORT
+  smtp_user_env: SMTP_EMAIL
+  smtp_password_env: SMTP_EMAIL_PASSWORD
 # IMAP Configuration (for fetching emails)
 imap:
   enabled: true  # Enable to fetch emails from mailbox

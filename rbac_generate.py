@@ -16,7 +16,7 @@ import os
 import sys
 import argparse
 import yaml
-from auth_generate import render_all   # shared renderer lives in auth_generate
+from help_utils import render_all
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -45,6 +45,13 @@ def build_context(config_path: str) -> dict:
     rbac.setdefault('roles',          [])
     rbac.setdefault('controller',     {'enabled': False})
     rbac.setdefault('web_handler',    {'enabled': False})
+
+    # Dependency validation
+    if rbac.get('enabled'):
+        mw_rbac = config.get('middleware', {}).get('rbac', {})
+        if not mw_rbac.get('enabled'):
+            print('⚠️  WARNING: rbac.enabled is true but middleware.rbac.enabled is false '
+                  '— RBAC service will be generated but the middleware will not enforce it')
 
     return config
 

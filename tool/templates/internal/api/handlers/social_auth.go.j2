@@ -13,7 +13,8 @@ import (
 	"golang.org/x/oauth2/facebook"
 
 
-	jwtpkg resppkg "{{ config.project.module }}/pkg/response"
+	jwtpkg "{{ config.project.module }}/pkg/jwt"
+	resppkg "{{ config.project.module }}/pkg/response"
 	"{{ config.project.module }}/pkg/jwt"
 	utilspkg "{{ config.project.module }}/pkg/utils"
 	errorspkg "{{ config.project.module }}/pkg/errors"
@@ -21,8 +22,18 @@ import (
 	dtopkg "{{ config.project.module }}/pkg/dto"
 )
 
+
+
+type SocialAuthHandler struct {
+}
+
+// NewSocialAuthHandler creates a new SocialAuthHandler
+func NewSocialAuthHandler() *SocialAuthHandler {
+return &SocialAuthHandler{}
+}
+
 {% set auth = config.authentication %}
-{% set repo_var = auth.get('repo_var', 'authRepo') %}
+{% set repo_var = 'authRepo' %}
 
 {% if auth.social_auth.google.enabled %}
 // Google OAuth Configuration
@@ -33,7 +44,7 @@ var googleOauthConfig = &oauth2.Config{
 	Scopes:       []string{"https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/userinfo.profile"},
 	Endpoint:     google.Endpoint,
 }
-
+{% if auth.social_auth.google.endpoints.api.enabled %}
 // GoogleLogin handles Google OAuth login (for mobile/SPA - accepts ID token)
 // @Summary Google OAuth login
 // @Description Login with Google ID token
@@ -44,8 +55,8 @@ var googleOauthConfig = &oauth2.Config{
 // @Success 200 {object} dtopkg.AuthUserResponse "Login successful"
 // @Failure 400 {object} resppkg.ErrorResponse "Invalid token"
 // @Failure 500 {object} resppkg.ErrorResponse "Internal server error"
-// @Router /api/auth/google [post]
-func GoogleLogin(c *fiber.Ctx) error {
+// @Router {{ auth.social_auth.google.endpoints.api.path }} [{{ auth.social_auth.google.endpoints.api.method }}]
+func (h *SocialAuthHandler) GoogleLogin(c *fiber.Ctx) error {
 	var input dtopkg.GoogleLoginInput
 	if err := c.BodyParser(&input); err != nil {
 		return errorspkg.SendError(c, fiber.StatusBadRequest, "invalid_json")
@@ -57,36 +68,46 @@ func GoogleLogin(c *fiber.Ctx) error {
 		log.Printf("Error verifying Google token: %v", err)
 		return errorspkg.SendError(c, fiber.StatusBadRequest, "invalid_google_token")
 	}
+	dbConn := utilspkg.GetDB(c)
+	if dbConn == nil {
+		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
+	}
 
-	{{ repo_var }} := utilspkg.Get{{ config.project.repository_name }}(c)
+	{{ repo_var }} := dbConn.Auth
+
 	if {{ repo_var }} == nil {
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "db_connection_failed")
 	}
 
+	{% set google_jwt_fields = ['"id"', '"email"', '"auth_provider"'] %}
+	{% set _ = google_jwt_fields.append('"' ~ config.authentication.identifier.name_field | lower ~ '"') if config.authentication.identifier.name_field else google_jwt_fields.append('"fullname"') %}
+	{% for c in config.authentication.jwt.claims %}
+		{% if c.name != 'user_id' and c.name != 'verified' %}
+			{% set _ = google_jwt_fields.append('"' ~ c.name ~ '"') %}
+		{% endif %}
+	{% endfor %}
 	// Try to find existing user by Google ID
-	user, err := {{ repo_var }}.{{ auth.social_auth.google.repository_method }}(googleUser.ID)
+	user, err := {{ repo_var }}.{{ auth.social_auth.google.repository_method }}(googleUser.ID, {{ google_jwt_fields | join(', ') }})
 	
 	if err != nil {
 		// User doesn't exist - create new user
-{% set field_mapping = auth.social_auth.google.field_mapping %}
+		{% set field_mapping = auth.social_auth.google.field_mapping %}
 		newUser := domain.{{ config.project.user_model_name }}{
+			GoogleID:     &googleUser.ID,
+			Email:        googleUser.Email,
 {% for mapping in field_mapping %}
-{% if mapping.source == 'email' %}
-			{{ mapping.target }}: googleUser.Email,
-{% elif mapping.source == 'name' %}
+{% if mapping.source == 'name' %}
 			{{ mapping.target }}: googleUser.Name,
 {% elif mapping.source == 'picture' %}
 			{{ mapping.target }}: googleUser.Picture,
-{% elif mapping.source == 'id' %}
-			{{ mapping.target }}: &googleUser.ID,
 {% endif %}
 {% endfor %}
 			AuthProvider: "google",
-{% if auth.email_password.email_verification.enabled %}
-			{{ auth.email_password.email_verification.model_field }}: true, // Google emails are pre-verified
+{% if auth.email_verification.enabled %}
+			Verified: true, // Google emails are pre-verified
 {% endif %}
 {% if config.rbac.enabled %}
-			{{ config.rbac.model_field }}: "{{ config.rbac.default_role | default('user') }}",
+			Role: "{{ config.rbac.default_role | default('user') }}",
 {% endif %}
 		}
 
@@ -98,13 +119,33 @@ func GoogleLogin(c *fiber.Ctx) error {
 	}
 
 	// Generate JWT tokens
-	token, err := jwtpkg.GenerateJWT(user.ID, user.Fullname, user.Email, true)
+	jwtPayload := jwtpkg.TokenPayload{
+		UserID: user.ID,
+{% set use_email = config.authentication.email_password.enabled or config.authentication.social_auth.google.enabled or config.authentication.social_auth.facebook.enabled %}
+{% if use_email %}
+		Email:  user.Email,
+{% endif %}
+{% if config.rbac.enabled %}
+		Role:   user.Role,
+{% endif %}
+{% if auth.email_verification.enabled %}
+		Verified: true, // Social auth emails are typically verified
+{% endif %}
+{% for c in config.authentication.jwt.claims %}
+{% if c.name not in ['user_id', 'email', 'role', 'verified'] %}
+{% set field_name = c.name | replace('_', ' ') | title | replace(' ', '') %}
+		{{ field_name }}: user.{{ field_name }},
+{% endif %}
+{% endfor %}
+	}
+
+	token, err := jwtpkg.GenerateJWT(jwtPayload)
 	if err != nil {
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "token_generation_failed")
 	}
 
 {% if auth.refresh_token.enabled %}
-	refreshToken, err := jwtpkg.GenerateRefreshJWT(user.ID, user.Fullname, user.Email, true)
+	refreshToken, err := jwtpkg.GenerateRefreshJWT(jwtPayload)
 	if err != nil {
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "token_generation_failed")
 	}
@@ -115,43 +156,39 @@ func GoogleLogin(c *fiber.Ctx) error {
 {% if auth.refresh_token.enabled %}
 		RefreshToken: refreshToken,
 {% endif %}
-		User: &dtopkg.dtopkg.UserResponse{
-			ID:       user.ID,
-			Email:    user.Email,
-			Fullname: user.Fullname,
-		},
+		
 	})
 }
-
+{% endif %}
+{% if auth.social_auth.google.endpoints.web.enabled %}
 // GoogleLoginWeb initiates Google OAuth flow (for web)
 // @Summary Initiate Google OAuth (Web)
 // @Description Redirects to Google OAuth consent screen
 // @Tags Social Authentication
-// @Router /auth/google/login [get]
-func GoogleLoginWeb(c *fiber.Ctx) error {
+// @Router {{ auth.social_auth.google.endpoints.web.login_path }} [get]
+func (h *SocialAuthHandler) GoogleLoginWeb(c *fiber.Ctx) error {
 	// Generate a random state and store it in session to prevent CSRF
 	state := utilspkg.GenerateRandomState()
 {% if auth.session.enabled %}
-	sess, _ := utilspkg.GetSession(c)
+	sess, _ := authpkg.GetSession(c)
 	sess.Set("oauth_state", state)
 	sess.Save()
 {% endif %}
 	url := googleOauthConfig.AuthCodeURL(state, oauth2.AccessTypeOffline)
 	return c.Redirect(url)
 }
-
 // GoogleCallbackWeb handles Google OAuth callback (for web)
 // @Summary Google OAuth callback (Web)
 // @Description Handles Google OAuth redirect and creates session
 // @Tags Social Authentication
-// @Router /auth/google/callback [get]
-func GoogleCallbackWeb(c *fiber.Ctx) error {
+// @Router {{ auth.social_auth.google.endpoints.web.callback_path }} [get]
+func (h *SocialAuthHandler) GoogleCallbackWeb(c *fiber.Ctx) error {
 	code := c.Query("code")
 	state := c.Query("state")
 
 	// Verify state to prevent CSRF
 {% if auth.session.enabled %}
-	sess, _ := utilspkg.GetSession(c)
+	sess, _ := authpkg.GetSession(c)
 	storedState, _ := sess.Get("oauth_state").(string)
 	if state == "" || state != storedState {
 		return c.Redirect("/login?error=invalid_state")
@@ -186,35 +223,48 @@ func GoogleCallbackWeb(c *fiber.Ctx) error {
 		log.Printf("Error decoding user info: %v", err)
 		return c.Redirect("/login?error=oauth_failed")
 	}
+	dbConn := utilspkg.GetDB(c)
+	if dbConn == nil {
+		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
+	}
 
-	{{ repo_var }} := utilspkg.Get{{ config.project.repository_name }}(c)
+	{{ repo_var }} := dbConn.Auth
 	if {{ repo_var }} == nil {
 		return c.Redirect("/login?error=server_error")
 	}
 
+	{% set google_sess_fields = ['"id"', '"email"', '"auth_provider"'] %}
+	{% set _ = google_sess_fields.append('"' ~ config.authentication.identifier.name_field | lower ~ '"') if config.authentication.identifier.name_field else google_sess_fields.append('"fullname"') %}
+	{% if config.rbac.enabled %}
+		{% set _ = google_sess_fields.append('"role"') %}
+	{% endif %}
+	{% if auth.session.claims %}
+		{% for claim in auth.session.claims %}
+			{% if claim.name not in ['user_id', 'role', 'is_verified', 'authenticated', 'exp', 'iat', 'type', 'verified'] %}
+				{% set _ = google_sess_fields.append('"' ~ claim.name ~ '"') %}
+			{% endif %}
+		{% endfor %}
+	{% endif %}
 	// Find or create user
-	user, err := {{ repo_var }}.{{ auth.social_auth.google.repository_method }}(googleUser.ID)
+	user, err := {{ repo_var }}.{{ auth.social_auth.google.repository_method }}(googleUser.ID, {{ google_sess_fields | join(', ') }})
 	if err != nil {
-		// Create new user
-{% set field_mapping = auth.social_auth.google.field_mapping %}
+		{% set field_mapping = auth.social_auth.google.field_mapping %}
 		newUser := domain.{{ config.project.user_model_name }}{
+			GoogleID:     &googleUser.ID,
+			Email:        googleUser.Email,
 {% for mapping in field_mapping %}
-{% if mapping.source == 'email' %}
-			{{ mapping.target }}: googleUser.Email,
-{% elif mapping.source == 'name' %}
+{% if mapping.source == 'name' %}
 			{{ mapping.target }}: googleUser.Name,
 {% elif mapping.source == 'picture' %}
 			{{ mapping.target }}: googleUser.Picture,
-{% elif mapping.source == 'id' %}
-			{{ mapping.target }}: &googleUser.ID,
 {% endif %}
 {% endfor %}
 			AuthProvider: "google",
-{% if auth.email_password.email_verification.enabled %}
-			{{ auth.email_password.email_verification.model_field }}: true,
+{% if auth.email_verification.enabled %}
+			Verified: true,
 {% endif %}
 {% if config.rbac.enabled %}
-			{{ config.rbac.model_field }}: "{{ config.rbac.default_role }}",
+			Role: "{{ config.rbac.default_role }}",
 {% endif %}
 		}
 
@@ -227,24 +277,36 @@ func GoogleCallbackWeb(c *fiber.Ctx) error {
 
 	// Set session for web flow
 {% if auth.session.enabled %}
-	sess, err := utilspkg.GetSession(c)
+	sess, err := authpkg.GetSession(c)
 	if err != nil {
 		return c.Redirect("/login?error=session_error")
 	}
 	sess.Destroy()
 	sess.Set("authenticated", true)
 	sess.Set("user_id", user.ID)
-	sess.Set("email", user.Email)
-{% if auth.email_password.email_verification.enabled %}
+{% if auth.email_verification.enabled %}
 	sess.Set("is_verified", true) // Google accounts are pre-verified
 {% endif %}
 {% if config.rbac.enabled %}
-	sess.Set("role", user.{{ config.rbac.model_field }})
+	sess.Set("role", user.Role)
+{% endif %}
+{% set use_email = config.authentication.email_password.enabled or config.authentication.social_auth.google.enabled or config.authentication.social_auth.facebook.enabled %}
+{% if use_email %}
+	sess.Set("email", user.Email)
+{% endif %}
+{% if auth.session.claims %}
+{% for claim in auth.session.claims %}
+{% if claim.name not in ['user_id', 'exp', 'iat', 'type', 'role', 'verified', 'is_verified', 'email'] %}
+{% set field_name = claim.name | replace('_', ' ') | title | replace(' ', '') %}
+	sess.Set("{{ claim.name }}", user.{{ field_name }})
+{% endif %}
+{% endfor %}
 {% endif %}
 	sess.Save()
 {% endif %}
 	return c.Redirect("{{ auth.social_auth.google.success_redirect }}")
 }
+{% endif %}
 {% endif %}
 
 {% if auth.social_auth.facebook.enabled %}
@@ -256,7 +318,7 @@ var facebookOauthConfig = &oauth2.Config{
 	Scopes:       []string{"email", "public_profile"},
 	Endpoint:     facebook.Endpoint,
 }
-
+{% if auth.social_auth.facebook.endpoints.api.enabled %}
 // FacebookLogin handles Facebook OAuth login (for mobile/SPA)
 // @Summary Facebook OAuth login
 // @Description Login with Facebook access token
@@ -267,8 +329,8 @@ var facebookOauthConfig = &oauth2.Config{
 // @Success 200 {object} dtopkg.AuthUserResponse "Login successful"
 // @Failure 400 {object} resppkg.ErrorResponse "Invalid token"
 // @Failure 500 {object} resppkg.ErrorResponse "Internal server error"
-// @Router /api/auth/facebook [post]
-func FacebookLogin(c *fiber.Ctx) error {
+// @Router {{ auth.social_auth.facebook.endpoints.api.path }} [{{ auth.social_auth.facebook.endpoints.api.method }}]
+func (h *SocialAuthHandler) FacebookLogin(c *fiber.Ctx) error {
 	var input dtopkg.FacebookLoginInput
 	if err := c.BodyParser(&input); err != nil {
 		return errorspkg.SendError(c, fiber.StatusBadRequest, "invalid_json")
@@ -290,35 +352,44 @@ func FacebookLogin(c *fiber.Ctx) error {
 	if err := json.NewDecoder(resp.Body).Decode(&facebookUser); err != nil {
 		return errorspkg.SendError(c, fiber.StatusBadRequest, "invalid_facebook_response")
 	}
+	dbConn := utilspkg.GetDB(c)
+	if dbConn == nil {
+		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
+	}
 
-	{{ repo_var }} := utilspkg.Get{{ config.project.repository_name }}(c)
+	{{ repo_var }} := dbConn.Auth
 	if {{ repo_var }} == nil {
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "db_connection_failed")
 	}
 
+	{% set facebook_jwt_fields = ['"id"', '"email"', '"auth_provider"'] %}
+	{% set _ = facebook_jwt_fields.append('"' ~ config.authentication.identifier.name_field | lower ~ '"') if config.authentication.identifier.name_field else facebook_jwt_fields.append('"fullname"') %}
+	{% for c in config.authentication.jwt.claims %}
+		{% if c.name != 'user_id' and c.name != 'verified' %}
+			{% set _ = facebook_jwt_fields.append('"' ~ c.name ~ '"') %}
+		{% endif %}
+	{% endfor %}
 	// Try to find existing user
-	user, err := {{ repo_var }} .{{ auth.social_auth.facebook.repository_method }}(facebookUser.ID)
+	user, err := {{ repo_var }}.{{ auth.social_auth.facebook.repository_method }}(facebookUser.ID, {{ facebook_jwt_fields | join(', ') }})
 	
 	if err != nil {
 		// Create new user
-{% set field_mapping = auth.social_auth.facebook.field_mapping %}
+		{% set field_mapping = auth.social_auth.facebook.field_mapping %}
 		newUser := domain.{{ config.project.user_model_name }}{
+			FacebookID:   &facebookUser.ID,
+			Email:        facebookUser.Email,
 {% for mapping in field_mapping %}
-{% if mapping.source == 'email' %}
-			{{ mapping.target }}: facebookUser.Email,
-{% elif mapping.source == 'name' %}
+{% if mapping.source == 'name' %}
 			{{ mapping.target }}: facebookUser.Name,
-{% elif mapping.source == 'id' %}
-			{{ mapping.target }}: &facebookUser.ID,
 {% endif %}
 {% endfor %}
 			AuthProvider: "facebook",
-{% if auth.email_password.email_verification.enabled %}
-			{{ auth.email_password.email_verification.model_field }}: true,
-{% endif %}
-{% if config.rbac.enabled %}
-			{{ config.rbac.model_field }}: "{{ config.rbac.default_role }}",
-{% endif %}
+			{% if auth.email_verification.enabled %}
+						Verified: true,
+			{% endif %}
+			{% if config.rbac.enabled %}
+						Role: "{{ config.rbac.default_role }}",
+			{% endif %}
 		}
 
 		user, err = {{ repo_var }}.CreateUser(&newUser)
@@ -329,13 +400,33 @@ func FacebookLogin(c *fiber.Ctx) error {
 	}
 
 	// Generate tokens
-	token, err := jwtpkg.GenerateJWT(user.ID, user.Fullname, user.Email, true)
+	jwtPayload := jwtpkg.TokenPayload{
+		UserID: user.ID,
+{% set use_email = config.authentication.email_password.enabled or config.authentication.social_auth.google.enabled or config.authentication.social_auth.facebook.enabled %}
+{% if use_email %}
+		Email:  user.Email,
+{% endif %}
+{% if config.rbac.enabled %}
+		Role:   user.Role,
+{% endif %}
+{% if auth.email_verification.enabled %}
+		Verified: true, // Social auth emails are typically verified
+{% endif %}
+{% for c in config.authentication.jwt.claims %}
+{% if c.name not in ['user_id', 'email', 'role', 'verified'] %}
+{% set field_name = c.name | replace('_', ' ') | title | replace(' ', '') %}
+		{{ field_name }}: user.{{ field_name }},
+{% endif %}
+{% endfor %}
+	}
+
+	token, err := jwtpkg.GenerateJWT(jwtPayload)
 	if err != nil {
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "token_generation_failed")
 	}
 
 {% if auth.refresh_token.enabled %}
-	refreshToken, err := jwtpkg.GenerateRefreshJWT(user.ID, user.Fullname, user.Email, true)
+	refreshToken, err := jwtpkg.GenerateRefreshJWT(jwtPayload)
 	if err != nil {
 		return errorspkg.SendError(c, fiber.StatusInternalServerError, "token_generation_failed")
 	}
@@ -346,36 +437,32 @@ func FacebookLogin(c *fiber.Ctx) error {
 {% if auth.refresh_token.enabled %}
 		RefreshToken: refreshToken,
 {% endif %}
-		User: &dtopkg.dtopkg.UserResponse{
-			ID:       user.ID,
-			Email:    user.Email,
-			Fullname: user.Fullname,
-		},
+	
 	})
 }
-
+{% endif %}
+{% if auth.social_auth.facebook.endpoints.web.enabled %}
 // FacebookLoginWeb initiates Facebook OAuth flow (for web)
 // @Summary Initiate Facebook OAuth (Web)
 // @Description Redirects to Facebook OAuth consent screen
 // @Tags Social Authentication
-// @Router /auth/facebook/login [get]
-func FacebookLoginWeb(c *fiber.Ctx) error {
+// @Router {{ auth.social_auth.facebook.endpoints.web.login_path }} [get]
+func (h *SocialAuthHandler) FacebookLoginWeb(c *fiber.Ctx) error {
 	state := utilspkg.GenerateRandomState()
 {% if auth.session.enabled %}
-	sess, _ := utilspkg.GetSession(c)
+	sess, _ := authpkg.GetSession(c)
 	sess.Set("oauth_state", state)
 	sess.Save()
 {% endif %}
 	url := facebookOauthConfig.AuthCodeURL(state)
 	return c.Redirect(url)
 }
-
 // FacebookCallbackWeb handles Facebook OAuth callback (for web)
 // @Summary Facebook OAuth callback (Web)
 // @Description Handles Facebook OAuth redirect
 // @Tags Social Authentication
-// @Router /auth/facebook/callback [get]
-func FacebookCallbackWeb(c *fiber.Ctx) error {
+// @Router {{ auth.social_auth.facebook.endpoints.web.callback_path }} [get]
+func (h *SocialAuthHandler) FacebookCallbackWeb(c *fiber.Ctx) error {
 	code := c.Query("code")
 	
 	// Exchange code for token
@@ -400,32 +487,46 @@ func FacebookCallbackWeb(c *fiber.Ctx) error {
 	if err := json.NewDecoder(resp.Body).Decode(&facebookUser); err != nil {
 		return c.Redirect("/login?error=oauth_failed")
 	}
+	dbConn := utilspkg.GetDB(c)
+	if dbConn == nil {
+		return errorspkg.SendError(c, fiber.StatusInternalServerError, "server_error")
+	}
 
-	{{ repo_var }} := utilspkg.Get{{ config.project.repository_name }}(c)
+	{{ repo_var }} := dbConn.Auth
 	if {{ repo_var }} == nil {
 		return c.Redirect("/login?error=server_error")
 	}
 
+	{% set fb_sess_fields = ['"id"', '"email"', '"auth_provider"'] %}
+	{% set _ = fb_sess_fields.append('"' ~ config.authentication.identifier.name_field | lower ~ '"') if config.authentication.identifier.name_field else fb_sess_fields.append('"fullname"') %}
+	{% if config.rbac.enabled %}
+		{% set _ = fb_sess_fields.append('"role"') %}
+	{% endif %}
+	{% if auth.session.claims %}
+		{% for claim in auth.session.claims %}
+			{% if claim.name not in ['user_id', 'role', 'is_verified', 'authenticated', 'exp', 'iat', 'type', 'verified'] %}
+				{% set _ = fb_sess_fields.append('"' ~ claim.name ~ '"') %}
+			{% endif %}
+		{% endfor %}
+	{% endif %}
 	// Find or create user
-	user, err := {{ repo_var }} .{{ auth.social_auth.facebook.repository_method }}(facebookUser.ID)
+	user, err := {{ repo_var }}.{{ auth.social_auth.facebook.repository_method }}(facebookUser.ID, {{ fb_sess_fields | join(', ') }})
 	if err != nil {
-{% set field_mapping = auth.social_auth.facebook.field_mapping %}
+		{% set field_mapping = auth.social_auth.facebook.field_mapping %}
 		newUser := domain.{{ config.project.user_model_name }}{
+			FacebookID:   &facebookUser.ID,
+			Email:        facebookUser.Email,
 {% for mapping in field_mapping %}
-{% if mapping.source == 'email' %}
-			{{ mapping.target }}: facebookUser.Email,
-{% elif mapping.source == 'name' %}
+{% if mapping.source == 'name' %}
 			{{ mapping.target }}: facebookUser.Name,
-{% elif mapping.source == 'id' %}
-			{{ mapping.target }}: &facebookUser.ID,
 {% endif %}
 {% endfor %}
 			AuthProvider: "facebook",
-{% if auth.email_password.email_verification.enabled %}
-			{{ auth.email_password.email_verification.model_field }}: true,
+{% if auth.email_verification.enabled %}
+			Verified: true,
 {% endif %}
 {% if config.rbac.enabled %}
-			{{ config.rbac.model_field }}: "{{ config.rbac.default_role }}",
+			Role: "{{ config.rbac.default_role }}",
 {% endif %}
 		}
 
@@ -437,22 +538,34 @@ func FacebookCallbackWeb(c *fiber.Ctx) error {
 
 	// Set session for web flow
 {% if auth.session.enabled %}
-	sess, err := utilspkg.GetSession(c)
+	sess, err := authpkg.GetSession(c)
 	if err != nil {
 		return c.Redirect("/login?error=session_error")
 	}
 	sess.Destroy()
 	sess.Set("authenticated", true)
 	sess.Set("user_id", user.ID)
+	{% if auth.email_verification.enabled %}
+		sess.Set("is_verified", true) // Facebook accounts are pre-verified
+	{% endif %}
+	{% if config.rbac.enabled %}
+		sess.Set("role", user.Role)
+	{% endif %}
+{% set use_email = config.authentication.email_password.enabled or config.authentication.social_auth.google.enabled or config.authentication.social_auth.facebook.enabled %}
+{% if use_email %}
 	sess.Set("email", user.Email)
-{% if auth.email_password.email_verification.enabled %}
-	sess.Set("is_verified", true) // Facebook accounts are pre-verified
 {% endif %}
-{% if config.rbac.enabled %}
-	sess.Set("role", user.{{ config.rbac.model_field }})
-{% endif %}
-	sess.Save()
+	{% if auth.session.claims %}
+			{% for claim in auth.session.claims %}
+			{% if claim.name not in ['user_id', 'role', 'is_verified', 'authenticated', 'email', 'verified'] %}
+			{% set field_name = claim.name | replace('_', ' ') | title | replace(' ', '') %}
+			sess.Set("{{ claim.name }}", user.{{ field_name }})
+			{% endif %}
+			{% endfor %}
+		{% endif %}	
+		sess.Save()
 {% endif %}
 	return c.Redirect("{{ auth.social_auth.facebook.success_redirect }}")
 }
+{% endif %}
 {% endif %}
