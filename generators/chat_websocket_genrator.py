@@ -11,7 +11,7 @@ Usage (standalone):
     python chat_websocket_genrator.py --config config.yaml --templates ./tool/templates --output ./generated
 
 Usage (imported):
-    from chat_websocket_genrator import run
+    from generators.chat_websocket_genrator import run
     run(config_path, templates_dir, output_dir)
 """
 
@@ -20,7 +20,7 @@ import sys
 import argparse
 import yaml
 from typing import Dict, Any
-from help_utils import render_all
+from generators.help_utils import render_all
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -196,7 +196,7 @@ def main():
     run(args.config, args.templates, args.output)
     print('=' * 60 + '\n  DONE\n' + '=' * 60)
 
-    from format_generated_code import codeFormat
+    from generators.format_generated_code import codeFormat
     codeFormat(args.output)
 
 

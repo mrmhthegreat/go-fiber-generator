@@ -19,7 +19,7 @@ Usage (standalone):
     python api_client_generator.py --config master_config.yaml --output ./api_client_generated.py
 
 Usage (imported by generator.py):
-    from api_client_generator import run
+    from generators.api_client_generator import run
     run(config_path, templates_dir, output_dir)
 """
 

@@ -1,160 +1,139 @@
-# Go Fiber Generator — README
+# Go Fiber Generator
 
-Professional Go Fiber backend generator. This repository contains a set of Python generators and Jinja2 templates that produce a complete Go project scaffold (config, models, repositories, DTOs, controllers, middleware, infra, web templates, docs, etc.).
+A comprehensive, configuration-driven code generator for Go Fiber backends. This toolset leverages Python and Jinja2 templates to produce a fully-featured, production-ready Go backend scaffold based on a declarative YAML configuration. 
 
-## Quick links
-- Generator orchestrator: [`MasterGenerator`](master_generator.py) — see [master_generator.py](master_generator.py)  
-- Main configuration: [master_config.yaml](master_config.yaml)  
-- App generator: [app_generate.py](app_generate.py)  
-- Model/repo/dto generator: [`ModelGenerator.generate_all`](repo_model_config_generate.py) — see [repo_model_config_generate.py](repo_model_config_generate.py)  
-- Route documentation generator: [`RouteGenerator.generate`](routes.py) — see [routes.py](routes.py)  
-- Templates directory: [`tool/templates`](tool/templates)  
-- Format helper: [format_generated_code.py](format_generated_code.py)  
-- Example infra README template: [tool/templates/infra/README.md.j2](tool/templates/infra/README.md.j2)
+It handles everything from routing, controllers, and database models to authentication, RBAC, WebSockets, and Flutter client APIs.
 
----
+## 🚀 Key Features
 
-## Overview
-
-This workspace is a generator toolset that reads a YAML configuration (canonical: [master_config.yaml](master_config.yaml)) and renders a ready-to-run Go backend using Jinja2 templates under `tool/templates/`. The generator is split into focused scripts so you can run full generation or only the parts you need.
-
-Main capabilities:
-- Generate app scaffold (config, database, main, routes, infra) — via [app_generate.py](app_generate.py)
-- Generate models, repositories, DTOs, responses — via [repo_model_config_generate.py](repo_model_config_generate.py)
-- Generate authentication (JWT, email/password, social, web) — via [auth_generate.py](auth_generate.py)
-- Generate RBAC service and controller — via [rbac_generate.py](rbac_generate.py)
-- Generate IMAP, chat/websocket, notifications — via [imap_generate.py](imap_generate.py) and [chat_websocket_genrator.py](chat_websocket_genrator.py)
-- Generate middleware code and docs — via [middleware_generator.py](middleware_generator.py)
-- Helpers (storage, FCM, email) — via [storage_generate.py](storage_generate.py) and related scripts
+*   **App Scaffolding:** Generates the core foundation (config, database connectivity, main application entry point, routing skeleton, and infrastructure files like Dockerfile and Makefiles).
+*   **Database & Models:** Auto-generates Models, Repositories, DTOs, and Controllers from your schema configuration.
+*   **Authentication & Security:** Supports generating endpoints and logic for JWT authentication, Email/Password login, Social Login (OAuth), and Web auth.
+*   **RBAC (Role-Based Access Control):** Completely scaffolded authorization logic.
+*   **Real-time & Communication:** Built-in generators for WebSockets (chat), IMAP (email integration), and Notifications.
+*   **Client Generation:** Need to interact with your API? Generate a complete client API SDK (`api_client_generator.py`).
+*   **AI-Assisted Configuration:** Use the included `AI_YML_GENERATOR_PROMPT.md` to have an LLM automatically write complex `master_config.yaml` files for your domain.
+*   **Native GUI:** A native graphical interface (`native_vifber_gui.py`) to manage and run generation without touching the command line.
 
 ---
 
-## Prerequisites
+## 📋 Prerequisites
 
-- Python 3.8+
-- Jinja2 and PyYAML installed (used by the generators)
-- Go toolchain for the generated project (go 1.20+ recommended)
-- Optional: Docker for container builds
+*   **Python 3.8+**
+*   **Jinja2** and **PyYAML** (Python packages used by the code generators)
+*   **Go 1.20+** (For compiling and running the generated application)
+*   *Optional: Docker (if you want to build and deploy via containers)*
 
-Install Python deps quickly:
+---
+
+## 🛠️ Installation & Setup
+
+1. **Clone the repository:**
+   ```bash
+   git clone <your-repo-url>
+   cd go_vifber_bio
+   ```
+
+2. **Create a virtual environment (recommended):**
+   ```bash
+   python -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   ```
+
+3. **Install the required dependencies:**
+   ```bash
+   pip install jinja2 pyyaml
+   ```
+
+---
+
+## 🏁 Quickstart
+
+The fastest way to generate a complete Go project is using the master generator script alongside the canonical `master_config.yaml`.
+
+1. **Review/Edit your configuration:**
+   Open `master_config.yaml` and define your project's models, routes, and settings.
+   
+   *(Tip: Pass the `AI_YML_GENERATOR_PROMPT.md` to an AI like ChatGPT/Claude to quickly generate this config for your specific use case!)*
+
+2. **Run the master orchestrator:**
+   ```bash
+   python generator.py --config master_config.yaml --output ./generated
+   ```
+   *Note: This orchestrator calls all individual generators sequentially.*
+
+3. **Format the generated Go code:**
+   ```bash
+   python format_generated_code.py ./generated
+   ```
+
+4. **Run your new Go backend:**
+   ```bash
+   cd generated
+   go mod tidy
+   go run ./cmd/server/main.go
+   # Or using the generated makefile: make run
+   ```
+
+---
+
+## 🧰 Individual Generators
+
+You don't have to generate the entire project at once. The system is modular, allowing you to update specific components individually. All generators typically accept `--config`, `--templates` (pointing to `./tool/templates`), and `--output`.
+
+*   **App Scaffold (`app_generate.py`)**  
+    Generates configuration loaders, database setup, caching architecture, and fundamental structure.
+    
+*   **Models, Repositories, DTOs & Controllers (`repo_model_config_generate.py`)**  
+    The backbone of your domain logic. Maps YAML schema to Go structs and generates REST endpoints.
+    
+*   **Authentication (`auth_generate.py`)**  
+    Generates authentication routes, middleware, and credential processing logic.
+    
+*   **Role-Based Access Control (`rbac_generate.py`)**  
+    Generates roles, permission mappings, and access enforcement code logic.
+    
+*   **WebSockets & Chat (`chat_websocket_genrator.py`)**  
+    Scaffolds WebSocket handlers and connections for real-time messaging.
+    
+*   **Routes & Documentation (`routes.py`)**  
+    Consolidates API endpoints from your configs and generates a structured view or routing file.
+
+*   **Client API Generator (`api_client_generator.py`)**  
+    Generates frontend-ready SDKs (like Flutter API clients) based on the current backend specification.
+
+---
+
+## 🖥️ Native GUI Builder
+
+If you prefer a visual approach over the CLI, run the built-in GUI configuration and generation tool:
+
 ```bash
-python -m pip install jinja2 pyyaml
+python native_vifber_gui.py
 ```
+This tool provides a user-friendly way to validate configs and trigger specific Python generation scripts visually.
 
 ---
 
-## Quickstart — Generate full project
+## 🗂️ Templates and Customization
 
-1. Edit your configuration: start from [master_config.yaml](master_config.yaml).
-2. Run the master orchestrator to generate all parts:
+The Go files are generated using Jinja2 templates located in the `tool/templates/` directory.
 
-```bash
-python master_generator.py --config master_config.yaml --output ./generated
-```
-
-`master_generator.py` calls the individual generators in order (see the class [`MasterGenerator`](master_generator.py)). The generated project will be placed in `./generated/` by default.
+*   To change the pattern of generated handlers, edit `tool/templates/pkg/controller/controller.go.j2`.
+*   To adjust infrastructure (Docker, Makefile), edit `tool/templates/infra/`.
+*   Variables injected into these templates align exactly with the schema inside `master_config.yaml`.
 
 ---
 
-## Run single generators
+## 🤝 Contributing
 
-- App scaffold:
-```bash
-python app_generate.py --config master_config.yaml --templates ./tool/templates --output ./generated
-```
-
-- Models / Repos / DTOs / Controllers:
-```bash
-python repo_model_config_generate.py --config master_config.yaml --templates ./tool/templates --output ./generated --module github.com/your/module
-```
-See [`ModelGenerator.generate_all`](repo_model_config_generate.py) for how models/controllers are produced.
-
-- Auth:
-```bash
-python auth_generate.py --config master_config.yaml --templates ./tool/templates --output ./generated
-```
-
-- Middleware docs:
-```bash
-python middleware_generator.py --config master_config.yaml --templates ./tool/templates --output ./generated --docs
-```
-
-- Route documentation:
-```bash
-python routes.py --auth-config authenticaton_config.yaml --chat-config chat_noti_web.yaml --middleware-config middleware_config.yaml --repo-config repo_model_config.yaml -o complete_routes.yaml
-```
-See [`RouteGenerator.generate`](routes.py).
+1. Extend or fix the Jinja2 templates inside `tool/templates/`.
+2. Add new functionalities by creating a focused `*_generate.py` script and integrating it into `generator.py`.
+3. If changing template structure requirements, update `master_config.yaml` to prevent breaking generation.
+4. Keep the code generation decoupled and domain-agnostic.
 
 ---
 
-## Templates and customization
+## 📜 License
 
-- Templates live in: `tool/templates`. Inspect and modify to change the generated Go code and web templates.
-  - Example: `tool/templates/pkg/dto/dto.go.j2` generates DTO structs.
-  - Example infra templates: `tool/templates/infra/*` (Dockerfile, Makefile, README, .gitignore)
-- The generator functions use Jinja2; keep the template variables in sync with your `master_config.yaml`.
-
----
-
-## Generated project notes
-
-- The generated Go project expects standard layout per `tool/templates/infra/README.md.j2`.
-- To run the generated app:
-  - Change to generated folder:
-    ```bash
-    cd generated
-    go mod tidy
-    go run ./cmd/server/main.go
-    ```
-  - Or use the generated `Makefile`:
-    ```bash
-    make run
-    ```
-
-- To format generated Go code run the included formatter script:
-```bash
-python format_generated_code.py ./generated
-```
-
----
-
-## Files of interest in this workspace
-
-- [master_generator.py](master_generator.py) — master orchestrator that runs all generators
-- [master_config.yaml](master_config.yaml) — canonical configuration used by generators
-- [app_generate.py](app_generate.py) — creates top-level app scaffold (config, main, infra)
-- [repo_model_config_generate.py](repo_model_config_generate.py) — generates models, repos, DTOs, controllers
-- [auth_generate.py](auth_generate.py), [rbac_generate.py](rbac_generate.py), [imap_generate.py](imap_generate.py)
-- [middleware_generator.py](middleware_generator.py) — middleware code + docs
-- [routes.py](routes.py) — generate consolidated route documentation
-- [tool/templates](tool/templates) — Jinja2 templates used to render Go project
-- [format_generated_code.py](format_generated_code.py) — helper to format generated .go files
-- [.gitignore](.gitignore) — repository ignore rules (generated infra also includes a `.gitignore` template)
-
----
-
-## Contributing
-
-- Update or add templates in `tool/templates` and test by running the appropriate generator.
-- Keep `master_config.yaml` up-to-date and add configuration examples under `configexample/`.
-- When adding new generator scripts, follow existing patterns (build_context, get_templates, run/render_all).
-
----
-
-## Troubleshooting
-
-- Missing template errors: confirm `--templates` path points to `tool/templates`.
-- Template variable errors: inspect the config keys used by the template and ensure defaults exist in the generator's `build_context`.
-- If a generator aborts, check its printed error and the stack trace — generators exit with a non-zero code on fatal template/write errors.
-
----
-
-## License
-
-MIT
-
----
-
-If you want, I can:
-- generate a minimal `.env.example` and `.gitignore` in `generated/`;
-- or produce a short CONTRIBUTING.md based on the
+MIT License.

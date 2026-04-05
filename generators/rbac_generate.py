@@ -8,7 +8,7 @@ Usage (standalone):
     python rbac_generate.py --config config.yaml --templates ./tool/templates --output ./generated
 
 Usage (imported):
-    from rbac_generate import run
+    from generators.rbac_generate import run
     run(config_path, templates_dir, output_dir)
 """
 
@@ -16,7 +16,7 @@ import os
 import sys
 import argparse
 import yaml
-from help_utils import render_all
+from generators.help_utils import render_all
 
 
 # ─────────────────────────────────────────────────────────────────────────────

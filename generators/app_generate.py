@@ -18,7 +18,7 @@ Usage (standalone):
     python app_generate.py --config master_config.yaml --templates ./tool/templates --output ./generated
 
 Usage (imported):
-    from app_generate import run
+    from generators.app_generate import run
     run(config_path, templates_dir, output_dir)
 """
 
@@ -29,7 +29,7 @@ import argparse
 import yaml
 from pathlib import Path
 from jinja2 import Environment, FileSystemLoader
-from help_utils import render_all
+from generators.help_utils import render_all
 
 
 # ─────────────────────────────────────────────────────────────────────────────

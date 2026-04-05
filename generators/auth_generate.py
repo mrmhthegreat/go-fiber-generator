@@ -7,7 +7,7 @@ Usage (standalone):
     python auth_generate.py --config config.yaml --templates ./tool/templates --output ./generated
 
 Usage (imported):
-    from auth_generate import run
+    from generators.auth_generate import run
     run(config_path, templates_dir, output_dir)
 """
 
@@ -16,7 +16,7 @@ import sys
 import argparse
 import yaml
 from jinja2 import Environment, FileSystemLoader
-from help_utils import render_all
+from generators.help_utils import render_all
 
 def build_context(config_path: str) -> dict:
     with open(config_path, 'r') as f:
@@ -252,7 +252,7 @@ def main():
     print("=" * 60)
     run(args.config, args.templates, args.output)
     print("=" * 60 + "\n  DONE\n" + "=" * 60)
-    from format_generated_code import codeFormat
+    from generators.format_generated_code import codeFormat
     codeFormat(args.output)
 
 if __name__ == "__main__":

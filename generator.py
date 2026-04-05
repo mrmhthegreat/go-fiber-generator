@@ -68,54 +68,54 @@ def _run_step(label: str, fn, *args, **kwargs):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def step_validate(config_path: str, strict: bool):
-    from validate_config import validate_or_exit
+    from generators.validate_config import validate_or_exit
     validate_or_exit(config_path, strict=strict)
 
 
 def step_app(config_path: str, templates_dir: str, output_dir: str):
-    import app_generate
+    from generators import app_generate
     app_generate.run(config_path, templates_dir, output_dir)
 
 
 def step_auth(config_path: str, templates_dir: str, output_dir: str):
-    import auth_generate
+    from generators import auth_generate
     auth_generate.run(config_path, templates_dir, output_dir)
 
 
 def step_middleware(config_path: str, templates_dir: str, output_dir: str):
-    from middleware_generator import run as mw_run
+    from generators.middleware_generator import run as mw_run
     mw_run(config_path, templates_dir, output_dir)
 
 
 def step_rbac(config_path: str, templates_dir: str, output_dir: str):
-    import rbac_generate
+    from generators import rbac_generate
     rbac_generate.run(config_path, templates_dir, output_dir)
 
 
 def step_storage(config_path: str, templates_dir: str, output_dir: str):
-    import storage_generate
+    from generators import storage_generate
     storage_generate.run(config_path, templates_dir, output_dir)
 
 
 def step_imap(config_path: str, templates_dir: str, output_dir: str):
-    import imap_generate
+    from generators import imap_generate
     imap_generate.run(config_path, templates_dir, output_dir)
 
 
 def step_notifications(config_path: str, templates_dir: str, output_dir: str):
-    import notification_genrator as notif
+    from generators import notification_genrator as notif
     notif.run(config_path, templates_dir, output_dir)
 
 
 def step_chat_websocket(config_path: str, templates_dir: str, output_dir: str):
-    import chat_websocket_genrator as chat
+    from generators import chat_websocket_genrator as chat
     chat.run(config_path, templates_dir, output_dir)
 
 
 def step_models(config_path: str, templates_dir: str, output_dir: str):
     """Run the class-based ModelGenerator for all models in config."""
     import yaml
-    from repo_model_config_generate import ModelGenerator
+    from generators.repo_model_config_generate import ModelGenerator
 
     with open(config_path) as f:
         cfg = yaml.safe_load(f) or {}
@@ -132,7 +132,7 @@ def step_models(config_path: str, templates_dir: str, output_dir: str):
 
 def step_routes(config_path: str, output_dir: str):
     """Run the route extractor — writes complete_routes.yaml next to config."""
-    from routes import RouteGenerator
+    from generators.routes import RouteGenerator
 
     out_file = str(Path(output_dir) / "complete_routes.yaml")
     gen = RouteGenerator(config_path=config_path)
@@ -141,7 +141,7 @@ def step_routes(config_path: str, output_dir: str):
 
 def step_format(output_dir: str):
     try:
-        from format_generated_code import codeFormat
+        from generators.format_generated_code import codeFormat
         codeFormat(output_dir)
     except ImportError:
         print("  ⚠️  format_generated_code not found — skipping goimports/gofmt step")
@@ -151,7 +151,7 @@ def step_format(output_dir: str):
 
 def step_api_client(config_path: str, templates_dir: str, output_dir: str):
     """Generate a Tkinter api_client.py test tool from the config."""
-    from api_client_generator import run as ac_run
+    from generators.api_client_generator import run as ac_run
     ac_run(config_path, templates_dir, output_dir)
 
 

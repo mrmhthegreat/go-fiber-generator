@@ -166,3 +166,5 @@ id_rsa.pub
 # Misc
 .DS_Store
 Thumbs.db
+.generated/
+generated/

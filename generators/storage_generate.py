@@ -11,7 +11,7 @@ Usage (standalone):
     python helpers_generate.py --config config.yaml --templates ./tool/templates --output ./generated
 
 Usage (imported):
-    from helpers_generate import run
+    from generators.helpers_generate import run
     run(config_path, templates_dir, output_dir)
 """
 
@@ -19,7 +19,7 @@ import os
 import sys
 import argparse
 import yaml
-from help_utils import render_all
+from generators.help_utils import render_all
 
 
 # ─────────────────────────────────────────────────────────────────────────────
