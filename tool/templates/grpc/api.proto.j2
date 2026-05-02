@@ -1,0 +1,74 @@
+syntax = "proto3";
+
+package [[ config.grpc.package ]];
+option go_package = "[[ config.grpc.go_package ]]";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+import "google/api/annotations.proto";
+import "protoc-gen-openapiv2/options/annotations.proto";
+
+option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_swagger) = {
+  info: {
+    title: "[[ config.project.module ]] API";
+    version: "1.0";
+  };
+  host: "[[ config.server.host | default('localhost') ]]";
+  base_path: "/";
+  schemes: HTTP;
+  schemes: HTTPS;
+  consumes: "application/json";
+  produces: "application/json";
+};
+
+[% for service in config._grpc_services %]
+service [[ service.name ]] {
+[% for method in service.methods %]
+  rpc [[ method.name ]]([[ method.input ]]) returns ([[ method.output ]]) {
+    option (google.api.http) = {
+      [[ method.http_method | lower ]]: "[[ method.http_path ]]"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      tags: "[[ service.name ]]"
+    };
+  }
+[% endfor %]
+}
+
+[% endfor %]
+
+[% for model in config.models if model.name in config.grpc.services|map(attribute='models')|flatten|unique %]
+// [[ model.name ]] messages
+message [[ model.name ]] {
+[% for field in model.fields if field.json != '-' %]
+  [[ field.proto_type | default('string') ]] [[ field.name | snake_case ]] = [[ loop.index ]];
+[% endfor %]
+[% if model.timestamps %]
+  google.protobuf.Timestamp created_at = [[ model.fields|length + 1 ]];
+  google.protobuf.Timestamp updated_at = [[ model.fields|length + 2 ]];
+[% endif %]
+}
+
+message Create[[ model.name ]]Request {
+[% for field in model.fields if field.name not in ['ID', 'CreatedAt', 'UpdatedAt', 'DeletedAt'] and field.json != '-' %]
+  [[ field.proto_type | default('string') ]] [[ field.name | snake_case ]] = [[ loop.index ]];
+[% endfor %]
+}
+
+message Update[[ model.name ]]Request {
+  uint64 id = 1;
+[% for field in model.fields if field.name not in ['ID', 'CreatedAt', 'UpdatedAt', 'DeletedAt'] and field.json != '-' %]
+  [[ field.proto_type | default('string') ]] [[ field.name | snake_case ]] = [[ loop.index + 1 ]];
+[% endfor %]
+}
+
+message [[ model.name ]]ByIDRequest {
+  uint64 id = 1;
+}
+
+message List[[ model.name ]]sResponse {
+  repeated [[ model.name ]] items = 1;
+  int32 total = 2;
+}
+
+[% endfor %]

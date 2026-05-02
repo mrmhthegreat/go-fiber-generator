@@ -103,16 +103,16 @@ def step_imap(config_path: str, templates_dir: str, output_dir: str):
 
 
 def step_notifications(config_path: str, templates_dir: str, output_dir: str):
-    from generators import notification_genrator as notif
+    from generators import notification_generator as notif
     notif.run(config_path, templates_dir, output_dir)
 
 
 def step_chat_websocket(config_path: str, templates_dir: str, output_dir: str):
-    from generators import chat_websocket_genrator as chat
+    from generators import chat_websocket_generator as chat
     chat.run(config_path, templates_dir, output_dir)
 
 
-def step_models(config_path: str, templates_dir: str, output_dir: str):
+def step_models(config_path: str, templates_dir: str, output_dir: str, generate_graphql: bool = False, generate_grpc: bool = False, generate_dtos: bool = False, generate_responses: bool = False, generate_repositories: bool = False, generate_controllers: bool = False, generate_handlers: bool = False, generate_models: bool = False):
     """Run the class-based ModelGenerator for all models in config."""
     import yaml
     from generators.repo_model_config_generate import ModelGenerator
@@ -127,7 +127,7 @@ def step_models(config_path: str, templates_dir: str, output_dir: str):
         templates_dir=templates_dir,
         output_dir=output_dir,
     )
-    gen.generate_all(module_path=module_path)
+    gen.generate_all(module_path=module_path, generate_graphql=generate_graphql, generate_grpc=generate_grpc, generate_dtos=generate_dtos, generate_responses=generate_responses, generate_repositories=generate_repositories, generate_controllers=generate_controllers, generate_handlers=generate_handlers, generate_models=generate_models)
 
 
 def step_routes(config_path: str, output_dir: str):
@@ -154,6 +154,13 @@ def step_api_client(config_path: str, templates_dir: str, output_dir: str):
     from generators.api_client_generator import run as ac_run
     ac_run(config_path, templates_dir, output_dir)
 
+def step_graphql(config_path: str, templates_dir: str, output_dir: str):
+    from generators import graphql_generator
+    graphql_generator.run(config_path, templates_dir, output_dir)
+
+def step_grpc(config_path: str, templates_dir: str, output_dir: str):
+    from generators import grpc_generator
+    grpc_generator.run(config_path, templates_dir, output_dir)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ALL_STEPS — ordered list of (key, label, step_fn)
@@ -171,6 +178,14 @@ ALL_STEP_KEYS = [
     "notifications",
     "chat",
     "models",
+    "models_handler",
+    "models_dtos",
+    "models_repo",
+    "models_response",
+    "models_controller",
+    "models_graphql",
+    "graphql",      # ← Add this
+    "grpc",         # ← Add this
     "routes",
     "api_client",
     "format",
@@ -265,8 +280,25 @@ def run_all(
     # ── 10. Models ────────────────────────────────────────────────────────────
     if _should("models"):
         _header("Step 10 / 12 — Models, Repositories, DTOs")
-        _run_step("Model generator", step_models, config_path, templates_dir, output_dir)
-
+        _run_step("Model generator", step_models, config_path, templates_dir, output_dir, generate_models=True)
+    if _should("models_response"):
+        _header("Step 10 / 12 — Models, Repositories, DTOs")
+        _run_step("Model generator", step_models, config_path, templates_dir, output_dir, generate_responses=True)
+    if _should("models_repo"):
+        _header("Step 10 / 12 — Models, Repositories, DTOs")
+        _run_step("Model generator", step_models, config_path, templates_dir, output_dir, generate_repositories=True)
+    if _should("models_controller"):
+        _header("Step 10 / 12 — Models, Repositories, DTOs")
+        _run_step("Model generator", step_models, config_path, templates_dir, output_dir, generate_controllers=True)
+    if _should("models_handler"):
+        _header("Step 10 / 12 — Models, Repositories, DTOs")
+        _run_step("Model generator", step_models, config_path, templates_dir, output_dir, generate_handlers=True)
+    if _should("models_dtos"):
+        _header("Step 10 / 12 — Models, Repositories, DTOs")
+        _run_step("Model generator", step_models, config_path, templates_dir, output_dir, generate_dtos=True)
+    if _should("models_graphql"):
+        _header("Step 10 / 12 — Models, Repositories, DTOs")
+        _run_step("Model generator", step_models, config_path, templates_dir, output_dir, generate_graphql=True)
     # ── 11. Routes ────────────────────────────────────────────────────────────
     if _should("routes"):
         _header("Step 11 / 13 — Route Map  (complete_routes.yaml)")
@@ -282,7 +314,14 @@ def run_all(
         _header("Step 13 / 13 — Format Go Code")
         step_format(output_dir)
         _ok("Code formatter", 0.0)
+    if _should("graphql"):
+        _header("Step X / Y — GraphQL Schema & Resolvers")
+        _run_step("GraphQL generator", step_graphql, config_path, templates_dir, output_dir)
 
+    if _should("grpc"):
+        _header("Step X / Y — gRPC Protocol & Services")
+        _run_step("gRPC generator", step_grpc, config_path, templates_dir, output_dir)
+    
     # ── Summary ───────────────────────────────────────────────────────────────
     elapsed = time.perf_counter() - total_start
     print(f"\n{STEP_SEP}")
@@ -317,10 +356,11 @@ Examples:
         default="master_config.yaml",
         help="Path to master_config.yaml  (default: master_config.yaml)",
     )
+    base_dir = os.path.dirname(os.path.abspath(__file__))
     parser.add_argument(
         "--templates", "-t",
-        default="./tool/templates",
-        help="Root of Jinja2 template tree  (default: ./tool/templates)",
+        default=os.path.join(base_dir, "tool", "templates"),
+        help="Root of Jinja2 template tree  (default: [package_dir]/tool/templates)",
     )
     parser.add_argument(
         "--output", "-o",

@@ -11,16 +11,14 @@ It handles everything from routing, controllers, and database models to authenti
 *   **Authentication & Security:** Supports generating endpoints and logic for JWT authentication, Email/Password login, Social Login (OAuth), and Web auth.
 *   **RBAC (Role-Based Access Control):** Completely scaffolded authorization logic.
 *   **Real-time & Communication:** Built-in generators for WebSockets (chat), IMAP (email integration), and Notifications.
-*   **Client Generation:** Need to interact with your API? Generate a complete client API SDK (`api_client_generator.py`).
+*   **Client Generation:** Need to interact with your API? Generate a complete client API SDK.
 *   **AI-Assisted Configuration:** Use the included `AI_YML_GENERATOR_PROMPT.md` to have an LLM automatically write complex `master_config.yaml` files for your domain.
-*   **Native GUI:** A native graphical interface (`native_vifber_gui.py`) to manage and run generation without touching the command line.
 
 ---
 
 ## 📋 Prerequisites
 
 *   **Python 3.8+**
-*   **Jinja2** and **PyYAML** (Python packages used by the code generators)
 *   **Go 1.20+** (For compiling and running the generated application)
 *   *Optional: Docker (if you want to build and deploy via containers)*
 
@@ -28,43 +26,30 @@ It handles everything from routing, controllers, and database models to authenti
 
 ## 🛠️ Installation & Setup
 
-1. **Clone the repository:**
+1. **Install from Source (Recommended):**
+   This command installs the core dependencies (Jinja2, PyYAML) and registers the global `gofiber-gen` and `gofiber-gui` commands on your computer.
    ```bash
-   git clone <your-repo-url>
-   cd go_vifber_bio
-   ```
-
-2. **Create a virtual environment (recommended):**
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-
-3. **Install the required dependencies:**
-   ```bash
-   pip install jinja2 pyyaml
+   pip install -e .
    ```
 
 ---
 
 ## 🏁 Quickstart
 
-The fastest way to generate a complete Go project is using the master generator script alongside the canonical `master_config.yaml`.
+Once installed, the `gofiber-gen` command is available globally.
 
 1. **Review/Edit your configuration:**
    Open `master_config.yaml` and define your project's models, routes, and settings.
-   
-   *(Tip: Pass the `AI_YML_GENERATOR_PROMPT.md` to an AI like ChatGPT/Claude to quickly generate this config for your specific use case!)*
 
-2. **Run the master orchestrator:**
+2. **Run the generator:**
    ```bash
-   python generator.py --config master_config.yaml --output ./generated
+   gofiber-gen --config master_config.yaml --output ./generated
    ```
-   *Note: This orchestrator calls all individual generators sequentially.*
 
 3. **Format the generated Go code:**
    ```bash
-   python format_generated_code.py ./generated
+   # Formatter is also available via the package
+   python -m generators.format_generated_code ./generated
    ```
 
 4. **Run your new Go backend:**
@@ -84,8 +69,20 @@ You don't have to generate the entire project at once. The system is modular, al
 *   **App Scaffold (`app_generate.py`)**  
     Generates configuration loaders, database setup, caching architecture, and fundamental structure.
     
-*   **Models, Repositories, DTOs & Controllers (`repo_model_config_generate.py`)**  
-    The backbone of your domain logic. Maps YAML schema to Go structs and generates REST endpoints.
+*   **Domain Models (`model_generator.py`)**  
+    Maps YAML schema to Go structs for GORM models in `internal/domain`.
+    
+*   **DTOs & Responses (`dto_generator.py`)**  
+    Generates data transfer objects and standardized API response structures.
+
+*   **Repositories (`repository_generator.py`)**  
+    Generates GORM-based repository logic for database interaction.
+
+*   **Controllers (`controller_generator.py`)**  
+    Generates REST API handlers and endpoint logic.
+
+*   **Web Handlers (`web_handler_generator.py`)**  
+    Generates HTML/Web-based handlers and integrates with templates.
     
 *   **Authentication (`auth_generate.py`)**  
     Generates authentication routes, middleware, and credential processing logic.
@@ -104,13 +101,14 @@ You don't have to generate the entire project at once. The system is modular, al
 
 ---
 
-## 🖥️ Native GUI Builder
+## 🖥️ Native Visual Launcher (GUI)
 
-If you prefer a visual approach over the CLI, run the built-in GUI configuration and generation tool:
+If you prefer a visual approach over the CLI, we provide a robust Native Desktop Control Panel. This launcher allows you to select your YAML configuration files via a file picker, open the developer prompts, and use checkboxes to natively toggle which generator scripts run.
 
 ```bash
-python native_vifber_gui.py
+gofiber-gui
 ```
+*(Alternatively, run `python launcher.py` directly if you skipped global installation).*
 This tool provides a user-friendly way to validate configs and trigger specific Python generation scripts visually.
 
 ---

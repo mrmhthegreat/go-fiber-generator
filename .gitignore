@@ -162,7 +162,7 @@ id_rsa.pub
 *.tar.gz
 *.tar.bz2
 *.rar
-
+temp/
 # Misc
 .DS_Store
 Thumbs.db

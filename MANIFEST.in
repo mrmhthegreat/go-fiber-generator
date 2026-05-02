@@ -1,0 +1,5 @@
+recursive-include tool *
+recursive-include html *
+recursive-include configexample *
+include master_config.yaml
+include AI_YML_GENERATOR_PROMPT.md

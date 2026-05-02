@@ -1,0 +1,101 @@
+# GraphQL Schema - Auto-generated from master_config.yaml
+# Do not edit manually
+
+scalar Timestamp
+scalar Upload
+
+[% if config.graphql.directives %]
+directive @auth on FIELD_DEFINITION
+directive @hasRole(role: String!) on FIELD_DEFINITION
+directive @rateLimit(max: Int!, window: String!) on FIELD_DEFINITION
+[% endif %]
+
+[% for model in config._gql_models %]
+type [[ model.name ]] {
+[% for field in model.fields %]
+  [[ field.graphql_name ]][% if not field.is_required %][% endif %]: [[ field.type ]]
+[% endfor %]
+[% if model.has_timestamps %]
+  createdAt: Timestamp!
+  updatedAt: Timestamp!
+[% endif %]
+[% if model.has_soft_delete %]
+  deletedAt: Timestamp
+[% endif %]
+}
+
+input Create[[ model.name ]]Input {
+[% for field in model.fields if not field.is_relation and field.name not in ['ID', 'CreatedAt', 'UpdatedAt', 'DeletedAt'] %]
+  [[ field.graphql_name ]][% if not field.type.endswith('!') and field.go_type.startswith('*') %][% endif %]: [[ field.type | replace('!', '') ]]
+[% endfor %]
+}
+
+input Update[[ model.name ]]Input {
+[% for field in model.fields if not field.is_relation and field.name not in ['ID', 'CreatedAt', 'UpdatedAt', 'DeletedAt'] %]
+  [[ field.graphql_name ]]: [[ field.type | replace('!', '') ]]
+[% endfor %]
+}
+
+[% endfor %]
+
+# Pagination types
+type PageInfo {
+  totalCount: Int!
+  hasNextPage: Boolean!
+  endCursor: String
+}
+
+[% for model in config._gql_models %]
+type [[ model.name ]]Connection {
+  edges: [[ model.name ]]Edge!
+  pageInfo: PageInfo!
+}
+
+type [[ model.name ]]Edge {
+  node: [[ model.name ]]!
+  cursor: String!
+}
+
+[% endfor %]
+
+type Query {
+[% for model in config._gql_models %]
+  # [[ model.name ]] queries
+  [[ model.name | lower ]]s(
+    first: Int = 20
+    after: String
+    filter: [[ model.name ]]Filter
+  ): [[ model.name ]]Connection!
+  
+  [[ model.name | lower ]](id: ID!): [[ model.name ]]
+  
+[% endfor %]
+[% for query in config.graphql.queries %]
+  [[ query.name ]][% if query.args %]([% for arg in query.args %][[ arg.name ]]: [[ arg.type ]][% if not loop.last %], [% endif %][% endfor %])[% endif %]: [[ query.type ]][% if query.list %]![% endif %][% if query.auth_required %] @auth[% endif %]
+[% endfor %]
+}
+
+type Mutation {
+[% for model in config._gql_models %]
+  # [[ model.name ]] mutations
+  create[[ model.name ]](input: Create[[ model.name ]]Input!): [[ model.name ]]! @auth
+  update[[ model.name ]](id: ID!, input: Update[[ model.name ]]Input!): [[ model.name ]]! @auth
+  delete[[ model.name ]](id: ID!): Boolean! @auth
+  
+[% endfor %]
+[% for mutation in config.graphql.mutations %]
+  [[ mutation.name ]](input: [[ mutation.input ]]!): [[ mutation.type ]]![% if mutation.auth_required %] @auth[% endif %][% if mutation.permissions %] @hasRole(role: "[[ mutation.permissions[0] ]]")[% endif %]
+[% endfor %]
+}
+
+[% if config.graphql.subscriptions.enabled %]
+type Subscription {
+[% for model in config._gql_models %]
+  [[ model.name | lower ]]Created: [[ model.name ]]!
+  [[ model.name | lower ]]Updated: [[ model.name ]]!
+[% endfor %]
+[% for sub in config.graphql.subscriptions.events %]
+  [[ sub.name ]]: [[ sub.type ]]!
+[% endfor %]
+}
+[% endif %]

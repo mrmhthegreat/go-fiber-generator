@@ -3140,3 +3140,83 @@ models:
     - name: AdditionalImages
       type: '[]UpdateProductImageInput'
       json: additional_images
+# ─────────────────────────────────────────────────────────────
+# API Protocols
+# ─────────────────────────────────────────────────────────────
+
+graphql:
+  enabled: true
+  path: /graphql
+  playground: true              # GraphiQL in dev
+  introspection: true           # Schema introspection
+  complexity_limit: 1000        # Query depth protection
+  
+  # Schema generation
+  models:
+    include: [User, Post, Category, Comment]  # Expose these models
+    exclude_fields: [password, secret_token, reset_token]  # Global blacklist
+    
+  # Custom queries beyond CRUD
+  queries:
+    - name: me
+      type: User
+      resolver: GetCurrentUser
+      auth_required: true
+      
+    - name: searchPosts
+      type: Post
+      list: true
+      pagination: true
+      args:
+        - name: query
+          type: String!
+        - name: filters
+          type: PostSearchInput    # References DTO/input type
+          
+  mutations:
+    - name: publishPost
+      input: PublishPostInput
+      type: Post
+      resolver: PublishPost
+      auth_required: true
+      permissions: [post.publish]
+      
+  subscriptions:                  # Real-time (uses your WebSocket)
+    enabled: true
+    path: /graphql/ws
+    events:
+      - name: postCreated
+        type: Post
+        filter: public_posts     # Optional filtering logic
+
+grpc:
+  enabled: true
+  port: 50051
+  tls:
+    enabled: false
+    cert_env: GRPC_TLS_CERT
+    key_env: GRPC_TLS_KEY
+    
+  # Proto generation settings
+  package: blogapi              # proto package name
+  go_package: github.com/user/project/internal/proto
+  
+  # HTTP transcoding (REST fallback via grpc-gateway)
+  gateway:
+    enabled: true
+    port: 8081                  # HTTP port for gRPC-Gateway
+    
+  services:
+    - name: PostService
+      models: [Post]            # Auto-generate CRUD RPCs
+      custom_methods:
+        - name: PublishPost
+          input: PublishPostRequest
+          output: Post
+          http_mapping:
+            method: POST
+            path: /api/v1/posts/{id}/publish
+            
+    - name: UserService
+      models: [User]
+      exclude_operations: [Delete]  # Skip delete for users
