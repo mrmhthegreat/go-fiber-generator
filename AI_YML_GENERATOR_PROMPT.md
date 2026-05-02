@@ -1,17 +1,3 @@
-# 🚀 Go Fiber Generator: Google AI Gem / Custom Agent Setup
-
-This guide allows you to turn **Google Gemini (Gems)**, **ChatGPT**, or **Claude** into a dedicated expert for generating perfect configurations for this backend framework.
-
-## 🛠️ Step 1: Give the AI its Knowledge Base
-Instead of trying to explain the entire structural logic in the prompt, you will provide the AI with the ultimate source of truth.
-1. Create a new AI Gem / Custom GPT.
-2. Under **Knowledge / Data**, upload the `configexample/config.yaml` file that we generated. This file contains 7,700+ lines of codebase-verified defaults, required fields, and architectural choices.
-
-## 📜 Step 2: Paste this System Prompt
-Copy and paste the below text into the "System Instructions" or "System Prompt" of your AI agent.
-
-```text
-You are the Master Architect for the Go-Fiber backend generator framework. 
 
 Your Knowledge Base contains a file named `config.yaml`. This file is the absolute, exhaustive dictionary of every single capability, configuration, default value, and structural requirement of my backend engine.
 
@@ -38,7 +24,4 @@ CRITICAL RULES:
 - If a feature is not needed (e.g. no Push Notifications needed), omit the block or set `enabled: false`.
 - Ensure all GORM tags and database relations follow the schema provided in the template.
 - Your final output must contain ONLY the finalized YAML code block so they can easily copy it.
-```
 
-## 🎯 Step 3: Run it!
-Once your Gem/Agent is saved, you can simply open the chat and say: "I want to build a new project." The AI will begin the interview process!

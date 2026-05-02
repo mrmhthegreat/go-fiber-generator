@@ -70,6 +70,16 @@ class FiberGeneratorLauncher(ctk.CTk):
         self.btn_browse = ctk.CTkButton(self.config_frame, text="Browse", width=80, command=self.browse_config)
         self.btn_browse.grid(row=0, column=2, padx=(0, 10))
 
+        # Output Folder Picker
+        ctk.CTkLabel(self.config_frame, text="Output Directory:", font=ctk.CTkFont(weight="bold")).grid(row=1, column=0, padx=10, pady=(0, 10))
+        
+        self.output_var = ctk.StringVar(value="./generated")
+        self.output_entry = ctk.CTkEntry(self.config_frame, textvariable=self.output_var)
+        self.output_entry.grid(row=1, column=1, sticky="ew", padx=(0, 10), pady=(0, 10))
+        
+        self.btn_browse_out = ctk.CTkButton(self.config_frame, text="Browse", width=80, command=self.browse_output)
+        self.btn_browse_out.grid(row=1, column=2, padx=(0, 10), pady=(0, 10))
+
         # 2. Generator Options (Checkbox Grid)
         self.opts_frame = ctk.CTkScrollableFrame(self.main_frame, label_text="Generator Modules (Uncheck to Skip)", label_font=ctk.CTkFont(weight="bold"), height=200)
         self.opts_frame.grid(row=1, column=0, sticky="ew", pady=(0, 20))
@@ -117,6 +127,15 @@ class FiberGeneratorLauncher(ctk.CTk):
             except ValueError:
                 self.config_var.set(filename)
 
+    def browse_output(self):
+        dirname = filedialog.askdirectory(title="Select Output Directory")
+        if dirname:
+            try:
+                rel_path = os.path.relpath(dirname, os.getcwd())
+                self.output_var.set(rel_path)
+            except ValueError:
+                self.output_var.set(dirname)
+
     def open_file(self, filepath):
         if not os.path.exists(filepath):
             messagebox.showerror("File Not Found", f"Cannot locate: {filepath}")
@@ -141,6 +160,11 @@ class FiberGeneratorLauncher(ctk.CTk):
             return
 
         cmd = [sys.executable, "generator.py", "--config", config_path]
+        
+        out_path = self.output_var.get()
+        if out_path.strip():
+            cmd.extend(["--output", out_path])
+            
         if self.strict_var.get():
             cmd.append("--strict")
             

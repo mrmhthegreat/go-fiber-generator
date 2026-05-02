@@ -7,7 +7,7 @@ with open(os.path.join(os.path.dirname(__file__), "README.md"), "r", encoding="u
 
 setup(
     name="gofiber-generator",  # A professional and descriptive name
-    version="0.1.1",
+    version="0.1.2",
     author="Mrmhthegreat",     # Replace this with your actual name/handle
     author_email="mrmhthegreat@gmail.com", # Replace with your email
     description="A complete configuration-driven generator for Go Fiber applications",
