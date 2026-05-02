@@ -2027,68 +2027,81 @@ class ModelGenerator:
             
         return models_dir, dto_dir, response_dir, repository_dir, controller_dir, handler_dir
 
-    def generate_all(self, module_path: str = "your-module/path"):
+    def generate_all(self, module_path: str = "your-module/path", **kwargs):
         """Generate all models, DTOs, responses, repositories, and controllers"""
-        models_dir, dto_dir, response_dir, repository_dir, controller_dir,handler_dir = self.create_directories()
+        models_dir, dto_dir, response_dir, repository_dir, controller_dir, handler_dir = self.create_directories()
         
+        # Extract toggles (default to True for backward compatibility if not passed, 
+        # but generator.py passes them explicitly)
+        do_models = kwargs.get('generate_models', True)
+        do_dtos = kwargs.get('generate_dtos', True)
+        do_responses = kwargs.get('generate_responses', True)
+        do_repos = kwargs.get('generate_repositories', True)
+        do_controllers = kwargs.get('generate_controllers', True)
+        do_handlers = kwargs.get('generate_handlers', True)
+
         if 'models' not in self.config:
             print("Error: No models found in configuration")
             return
         
         print(f"Generating {len(self.config['models'])} models...")
         for raw_model in self.config['models']:
-            
             model = self.process_model(raw_model)
             model['_module_path'] = module_path
             model_name = model['name']
             
+            if do_models:
+                model_code = self.generate_model(model)
+                with open(models_dir / f"{model_name.lower()}.go", 'w') as f:
+                    f.write(model_code)
+                print(f"    ✓ Model generated")
             
-            model_code = self.generate_model(model)
-            with open(models_dir / f"{model_name.lower()}.go", 'w') as f:
-                f.write(model_code)
-            print(f"    ✓ Model generated")
-            
-            if model.get('dtos') and len(model.get('dtos', [])) > 0:
+            if do_dtos and model.get('dtos') and len(model.get('dtos', [])) > 0:
                 dto_code = self.generate_dto(model)
                 with open(dto_dir / f"{model_name.lower()}_dto.go", 'w') as f:
                     f.write(dto_code)
                 print(f"    ✓ DTO generated")
             
-            has_custom_getter_response = any(
-                g.get('response_type') == 'custom' and g.get('custom_response')
-                for g in model.get('custom_getters', [])
-            )
-            if model.get('list_response', {}).get('enabled') or \
-               model.get('detail_response', {}).get('enabled') or \
-               has_custom_getter_response:
-                response_code = self.generate_response(model)
-                with open(response_dir / f"{model_name.lower()}_response.go", 'w') as f:
-                    f.write(response_code)
-                print(f"    ✓ Response generated")
+            if do_responses:
+                has_custom_getter_response = any(
+                    g.get('response_type') == 'custom' and g.get('custom_response')
+                    for g in model.get('custom_getters', [])
+                )
+                if model.get('list_response', {}).get('enabled') or \
+                   model.get('detail_response', {}).get('enabled') or \
+                   has_custom_getter_response:
+                    response_code = self.generate_response(model)
+                    with open(response_dir / f"{model_name.lower()}_response.go", 'w') as f:
+                        f.write(response_code)
+                    print(f"    ✓ Response generated")
             
-            repo_code = self.generate_repository(model, module_path)
-            with open(repository_dir / f"{model_name.lower()}_repository.go", 'w') as f:
-                f.write(repo_code)
-            print(f"    ✓ Repository generated")
+            if do_repos:
+                repo_code = self.generate_repository(model, module_path)
+                with open(repository_dir / f"{model_name.lower()}_repository.go", 'w') as f:
+                    f.write(repo_code)
+                print(f"    ✓ Repository generated")
             
             # Generate controller if configured
-            ctrl_ctx = self.process_controller(model)
-            if ctrl_ctx:
-                ctrl_ctx['module_path'] = module_path
-                ctrl_code = self.generate_controller(ctrl_ctx)
-                with open(controller_dir / f"{model_name.lower()}_handler.go", 'w') as f:
-                    f.write(ctrl_code)
-                print(f"    ✓ Controller generated")
-            handler_ctx = self.process_web_handler(model)
-            if handler_ctx:
-                handler_ctx['module_path'] = module_path
-                handler_code = self.generate_web_handler(handler_ctx)
-                with open(handler_dir / f"{model_name.lower()}_handler.go", 'w') as f:
-                    f.write(handler_code)
-                print(f"    ✓ Web Handler generated")
-                
-                # Generate HTML templates
-                self.generate_web_templates(model, handler_ctx)
+            if do_controllers:
+                ctrl_ctx = self.process_controller(model)
+                if ctrl_ctx:
+                    ctrl_ctx['module_path'] = module_path
+                    ctrl_code = self.generate_controller(ctrl_ctx)
+                    with open(controller_dir / f"{model_name.lower()}_handler.go", 'w') as f:
+                        f.write(ctrl_code)
+                    print(f"    ✓ Controller generated")
+
+            if do_handlers:
+                handler_ctx = self.process_web_handler(model)
+                if handler_ctx:
+                    handler_ctx['module_path'] = module_path
+                    handler_code = self.generate_web_handler(handler_ctx)
+                    with open(handler_dir / f"{model_name.lower()}_handler.go", 'w') as f:
+                        f.write(handler_code)
+                    print(f"    ✓ Web Handler generated")
+                    
+                    # Generate HTML templates
+                    self.generate_web_templates(model, handler_ctx)
         
         print(f"\n✅ Generation complete! Files saved to: {self.output_dir}")
 
