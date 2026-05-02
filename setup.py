@@ -7,7 +7,7 @@ with open(os.path.join(os.path.dirname(__file__), "README.md"), "r", encoding="u
 
 setup(
     name="gofiber-generator",  # A professional and descriptive name
-    version="0.1.3",
+    version="0.2.0",
     author="Mrmhthegreat",     # Replace this with your actual name/handle
     author_email="mrmhthegreat@gmail.com", # Replace with your email
     description="A complete configuration-driven generator for Go Fiber applications",
@@ -18,17 +18,24 @@ setup(
         "Bug Tracker": "https://github.com/mrmhthegreat/go-fiber-generator/issues",
     },
     packages=find_packages(),
-    py_modules=["generator", "launcher"],
+    py_modules=["generator", "launcher", "server"],
     include_package_data=True,
+    package_data={
+        "": ["web_assets/*", "web_assets/**/*"],
+    },
     install_requires=[
         "Jinja2>=3.0.0",
         "PyYAML>=6.0",
         "customtkinter>=5.2.0",
+        "fastapi",
+        "uvicorn",
+        "pydantic",
     ],
     entry_points={
         "console_scripts": [
             "gofiber-gen=generator:main",
             "gofiber-gui=launcher:main",
+            "gofiber-serve=server:main",
         ],
     },
     classifiers=[
